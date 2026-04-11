@@ -13,6 +13,7 @@
 #include "slideio/viewer/infra/SlideIOAdapterPool.h"
 #include "slideio/viewer/infra/TileLoadScheduler.h"
 
+#include <QImage>
 #include <QMetaObject>
 #include <QMouseEvent>
 #include <QTimer>
@@ -289,6 +290,12 @@ ViewportWidget::ViewportWidget(QWidget* parent)
 {
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
+
+    // Prevent Qt from painting a background over the OpenGL content.
+    // Without these, the parent's stylesheet background can cover the FBO.
+    setAttribute(Qt::WA_OpaquePaintEvent, true);
+    setAttribute(Qt::WA_NoSystemBackground, true);
+    setAutoFillBackground(false);
 }
 
 ViewportWidget::~ViewportWidget()
@@ -351,6 +358,68 @@ void ViewportWidget::openSlide(const std::string& filePath)
         m_impl->controller->requestVisibleTiles();
 
         m_impl->slideOpen = true;
+
+        // Generate a thumbnail from the coarsest pyramid level for the minimap
+        {
+            int coarsestLevel = m_impl->pyramid->numLevels() - 1;
+            const auto& coarseLvl = m_impl->pyramid->levelInfo(coarsestLevel);
+            // Read the entire coarsest level as a single resampled block
+            constexpr int kMaxThumbDim = 400;
+            int thumbW = coarseLvl.width;
+            int thumbH = coarseLvl.height;
+            if (thumbW > kMaxThumbDim || thumbH > kMaxThumbDim) {
+                double ratio = std::min(static_cast<double>(kMaxThumbDim) / thumbW,
+                                        static_cast<double>(kMaxThumbDim) / thumbH);
+                thumbW = std::max(1, static_cast<int>(thumbW * ratio));
+                thumbH = std::max(1, static_cast<int>(thumbH * ratio));
+            }
+            try {
+                auto thumbLoan = m_impl->adapterPool->acquire();
+                int numCh = m_impl->slideInfo.numChannels;
+                QImage::Format imgFmt = (numCh >= 3) ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
+
+                // Assemble tiles into a full-resolution image of the coarsest level,
+                // then scale to thumbnail size once to avoid tile-boundary seams.
+                QImage levelImg(coarseLvl.width, coarseLvl.height, imgFmt);
+                levelImg.fill(Qt::white);
+
+                for (int r = 0; r < coarseLvl.tilesY; ++r) {
+                    for (int c = 0; c < coarseLvl.tilesX; ++c) {
+                        core::TileKey tileKey(coarsestLevel, c, r);
+                        auto tileData = thumbLoan->readTile(tileKey);
+                        if (tileData.isEmpty() || tileData.isError()) continue;
+                        int tw = tileData.width();
+                        int th = tileData.height();
+                        int tCh = tileData.numChannels();
+                        int tileX0 = c * coarseLvl.tileWidth;
+                        int tileY0 = r * coarseLvl.tileHeight;
+                        const uint8_t* src = tileData.buffer().data();
+                        // Copy tile pixels directly into the level image
+                        for (int y = 0; y < th && (tileY0 + y) < coarseLvl.height; ++y) {
+                            uint8_t* dst = levelImg.scanLine(tileY0 + y);
+                            for (int x = 0; x < tw && (tileX0 + x) < coarseLvl.width; ++x) {
+                                int srcIdx = (y * tw + x) * tCh;
+                                if (numCh >= 3) {
+                                    int dstIdx = (tileX0 + x) * 3;
+                                    dst[dstIdx + 0] = src[srcIdx + 0];
+                                    dst[dstIdx + 1] = src[srcIdx + 1];
+                                    dst[dstIdx + 2] = src[srcIdx + 2];
+                                } else {
+                                    dst[tileX0 + x] = src[srcIdx];
+                                }
+                            }
+                        }
+                    }
+                }
+
+                QImage thumbnail = levelImg.scaled(thumbW, thumbH,
+                    Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+                spdlog::info("ViewportWidget::openSlide: generated thumbnail {}x{}", thumbW, thumbH);
+                emit thumbnailReady(thumbnail);
+            } catch (const std::exception& ex) {
+                spdlog::warn("ViewportWidget::openSlide: failed to generate thumbnail: {}", ex.what());
+            }
+        }
 
         spdlog::info("ViewportWidget::openSlide: slide {}x{}, {} levels, {} channels, magnification={}",
                      m_impl->slideInfo.width, m_impl->slideInfo.height,
@@ -496,14 +565,12 @@ void ViewportWidget::initializeGL()
     m_impl->glInitialized = true;
 }
 
-void ViewportWidget::resizeGL(int w, int h)
+void ViewportWidget::resizeGL(int /*w*/, int /*h*/)
 {
-    if (m_impl->gl) {
-        m_impl->gl->glViewport(0, 0, w, h);
-    }
-
+    // Viewport and controller use logical (widget) pixels.
+    // The actual glViewport is set in paintGL using devicePixelRatio.
     if (m_impl->controller) {
-        m_impl->controller->resize(w, h);
+        m_impl->controller->resize(width(), height());
         emit viewportChanged();
     }
 }
@@ -514,6 +581,10 @@ void ViewportWidget::paintGL()
         return;
     }
 
+    // Use framebuffer dimensions for both viewport and shader
+    int fbWidth = static_cast<int>(width() * devicePixelRatioF());
+    int fbHeight = static_cast<int>(height() * devicePixelRatioF());
+    m_impl->gl->glViewport(0, 0, fbWidth, fbHeight);
     m_impl->gl->glClear(GL_COLOR_BUFFER_BIT);
 
     if (!m_impl->controller || !m_impl->slideOpen) {
@@ -527,9 +598,11 @@ void ViewportWidget::paintGL()
 
     static int paintCount = 0;
     if (++paintCount <= 5 || paintCount % 100 == 0) {
-        spdlog::info("paintGL[{}]: {} visible tiles, {} textures uploaded, scale={:.4f}, viewport={}x{}",
+        spdlog::info("paintGL[{}]: {} visible tiles, {} textures uploaded, scale={:.4f}, "
+                     "viewport={}x{}, fb={}x{}, widget={}x{}, dpr={:.2f}",
                      paintCount, visibleKeys.size(), m_impl->textures.size(),
-                     viewport.scale(), viewport.screenWidth(), viewport.screenHeight());
+                     viewport.scale(), viewport.screenWidth(), viewport.screenHeight(),
+                     fbWidth, fbHeight, width(), height(), devicePixelRatioF());
     }
 
     if (visibleKeys.empty()) {
@@ -537,8 +610,9 @@ void ViewportWidget::paintGL()
     }
 
     m_impl->tileShader->bind();
+    // Use the same dimensions that the ViewportController uses for screen rects
     m_impl->tileShader->setUniformValue("uViewportSize",
-        static_cast<float>(width()), static_cast<float>(height()));
+        static_cast<float>(viewport.screenWidth()), static_cast<float>(viewport.screenHeight()));
 
     m_impl->gl->glBindVertexArray(m_impl->quadVAO);
     m_impl->gl->glActiveTexture(GL_TEXTURE0);

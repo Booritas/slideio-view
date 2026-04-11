@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QImage>
 #include <QOpenGLWidget>
 
 #include <memory>
@@ -38,6 +39,7 @@ signals:
     void cursorMoved(double slideX, double slideY);
     void slideOpened(const std::string& filePath);
     void slideClosed();
+    void thumbnailReady(const QImage& thumbnail);
 
 protected:
     void initializeGL() override;

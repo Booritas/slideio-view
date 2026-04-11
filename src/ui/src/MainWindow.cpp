@@ -184,6 +184,11 @@ struct MainWindow::Impl
                 }
             });
 
+        QObject::connect(viewportWidget, &ViewportWidget::thumbnailReady, owner,
+            [this](const QImage& thumbnail) {
+                minimapWidget->setThumbnail(thumbnail);
+            });
+
         QObject::connect(viewportWidget, &ViewportWidget::slideClosed, owner, [this]() {
             closeAction->setEnabled(false);
             minimapWidget->clearThumbnail();
@@ -313,9 +318,9 @@ MainWindow::MainWindow(QWidget* parent)
     setWindowTitle("SlideIO Viewer");
     setAcceptDrops(true);
 
-    // Apply dark theme
+    // Apply dark theme — do NOT style QMainWindow background directly,
+    // as it can paint over the QOpenGLWidget (central widget) content on Qt 6.
     setStyleSheet(
-        "QMainWindow { background: #2D2D2D; }"
         "QMenuBar { background: #333333; color: #CCCCCC; }"
         "QMenuBar::item:selected { background: #505050; }"
         "QMenu { background: #333333; color: #CCCCCC; border: 1px solid #555555; }"

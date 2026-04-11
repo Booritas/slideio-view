@@ -16,6 +16,8 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 if(NOT SLIDEIO_ROOT)
     set(SLIDEIO_ROOT "D:/Projects/slideio/slideio/build/install" CACHE PATH "SlideIO install directory")
 endif()
+# Normalize path to forward slashes to avoid CMake escape issues
+file(TO_CMAKE_PATH "${SLIDEIO_ROOT}" SLIDEIO_ROOT)
 find_package(SlideIO REQUIRED)
 
 # Conan-provided dependencies

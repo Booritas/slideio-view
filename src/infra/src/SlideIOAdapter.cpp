@@ -99,7 +99,30 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath)
             auto levelSize = srcLevel->getSize();
             lvl.width = levelSize.width;
             lvl.height = levelSize.height;
-            lvl.scale = srcLevel->getScale();
+            // Normalize scale to the project's convention:
+            //   level.scale = level_pixels / slide_pixels
+            // so level 0 is ~1.0 and coarser levels are <1.0.
+            // Some backends report the inverse (downsample factor > 1), so we
+            // derive from level dimensions first and only fall back to metadata.
+            double scaleFromMetadata = srcLevel->getScale();
+            double scaleFromSize = 0.0;
+            if (m_slideInfo.width > 0 && m_slideInfo.height > 0 && lvl.width > 0 && lvl.height > 0) {
+                double sx = static_cast<double>(lvl.width) / static_cast<double>(m_slideInfo.width);
+                double sy = static_cast<double>(lvl.height) / static_cast<double>(m_slideInfo.height);
+                scaleFromSize = std::min(sx, sy);
+            }
+
+            if (scaleFromSize > 0.0) {
+                lvl.scale = scaleFromSize;
+            } else if (scaleFromMetadata > 1.0) {
+                lvl.scale = 1.0 / scaleFromMetadata;
+            } else {
+                lvl.scale = scaleFromMetadata;
+            }
+
+            if (lvl.scale <= 0.0) {
+                lvl.scale = 1.0;
+            }
             lvl.magnification = srcLevel->getMagnification();
 
             auto tileSize = srcLevel->getTileSize();
