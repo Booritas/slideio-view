@@ -393,9 +393,67 @@ The application provides:
 
 ---
 
-## 8. Non-Functional Requirements
+## 8. Scripting Support
 
-### 8.1 Performance
+Scripting enables power users and researchers to automate workflows, perform batch operations, and run image analysis algorithms within the application. Scripting is planned for a later release (not v1).
+
+### 8.1 Scripting Engine
+
+| ID | Requirement | Priority |
+|----|------------|----------|
+| FR-SCR-01 | The application shall embed a Python interpreter for executing user scripts. | Must |
+| FR-SCR-02 | The embedded Python interpreter shall run in a background thread and shall not block the UI thread. | Must |
+| FR-SCR-03 | Scripts shall run to completion once started. The user shall be able to cancel a running script. | Must |
+| FR-SCR-04 | The application shall provide an interactive script console (REPL) for entering and executing Python code. | Must |
+| FR-SCR-05 | The application shall allow executing script files (.py) from disk via a menu action or the script console. | Must |
+| FR-SCR-06 | Script execution results, print output, and errors shall be displayed in the script console. | Must |
+| FR-SCR-07 | The application shall provide a built-in script editor with Python syntax highlighting. | Should |
+
+### 8.2 Scripting API
+
+| ID | Requirement | Priority |
+|----|------------|----------|
+| FR-SCR-10 | Scripts shall be able to query slide metadata (dimensions, resolution, pyramid levels, format, scanner info). | Must |
+| FR-SCR-11 | Scripts shall be able to read pixel data from arbitrary regions and pyramid levels of the open slide. | Must |
+| FR-SCR-12 | Scripts shall be able to create, modify, and delete annotations on the open slide. Annotation changes shall be reflected in the viewport in real time. | Must |
+| FR-SCR-13 | Scripts shall be able to control viewport navigation (pan, zoom, go to coordinates, switch pyramid level). | Must |
+| FR-SCR-14 | Scripts shall be able to open and close slides and iterate over slides in a case. | Must |
+| FR-SCR-15 | Scripts shall be able to access measurement and calibration data (microns-per-pixel, scale). | Must |
+| FR-SCR-16 | Scripts shall be able to perform batch operations across multiple slides (e.g., export annotations from all slides in a case). | Must |
+| FR-SCR-17 | Scripts shall be able to write messages to the application log. | Must |
+| FR-SCR-18 | Pixel data shall be accessible to scripts as NumPy arrays. | Must |
+| FR-SCR-19 | Scripts shall be able to access and modify annotation properties (label, classification, color, layer, notes). | Must |
+| FR-SCR-20 | Scripts shall be able to create and manage annotation layers. | Should |
+
+### 8.3 Image Analysis
+
+| ID | Requirement | Priority |
+|----|------------|----------|
+| FR-SCR-30 | The scripting API shall support image analysis workflows: read a region, process pixel data, create annotations from results. | Must |
+| FR-SCR-31 | Scripts shall be able to report progress to the UI (progress bar or percentage) during long-running analysis tasks. | Should |
+| FR-SCR-32 | Scripts shall be able to use third-party Python packages installed in the Python environment (e.g., NumPy, scikit-image, OpenCV, PyTorch). | Must |
+
+### 8.4 Debugging
+
+| ID | Requirement | Priority |
+|----|------------|----------|
+| FR-SCR-40 | The application shall support script debugging with breakpoints, step-over, step-into, and variable inspection. | Must |
+| FR-SCR-41 | The user shall be able to set breakpoints in the built-in script editor. | Must |
+| FR-SCR-42 | The debugger shall display the current call stack and local/global variable values. | Should |
+
+### 8.5 Script Management
+
+| ID | Requirement | Priority |
+|----|------------|----------|
+| FR-SCR-50 | Scripts shall be standard Python files (.py) that can be shared, copied, and version-controlled by users. | Must |
+| FR-SCR-51 | The application shall maintain a configurable list of script directories from which scripts can be loaded. | Should |
+| FR-SCR-52 | Recently executed scripts shall be listed for quick re-execution. | Should |
+
+---
+
+## 9. Non-Functional Requirements
+
+### 9.1 Performance
 
 | ID | Requirement | Target | Priority |
 |----|------------|--------|----------|
@@ -411,7 +469,7 @@ The application provides:
 | NFR-PERF-10 | Memory usage for single-slide viewing | < 4 GB | Must |
 | NFR-PERF-11 | Memory usage for multi-slide comparison (4 slides) | < 8 GB | Should |
 
-### 8.2 Reliability
+### 9.2 Reliability
 
 | ID | Requirement | Priority |
 |----|------------|----------|
@@ -420,7 +478,7 @@ The application provides:
 | NFR-REL-03 | Corrupt or incomplete slide files shall be handled gracefully (error message, not crash). Individual corrupt tiles shall display a hatched pattern. | Must |
 | NFR-REL-04 | Session recovery on restart: open slides, viewport positions, and unsaved annotations restored from auto-save. | Must |
 
-### 8.3 Scalability
+### 9.3 Scalability
 
 | ID | Requirement | Priority |
 |----|------------|----------|
@@ -429,7 +487,7 @@ The application provides:
 | NFR-SCALE-03 | For annotation counts exceeding 5,000, incremental save (delta log with periodic compaction) should be used to maintain save performance. | Should |
 | NFR-SCALE-04 | The slide tray panel should support virtual scrolling for cases with 100+ slides. | Should |
 
-### 8.4 Cross-Platform Compatibility
+### 9.4 Cross-Platform Compatibility
 
 | ID | Requirement | Priority |
 |----|------------|----------|
@@ -439,7 +497,7 @@ The application provides:
 | NFR-CROSS-04 | The rendering layer shall be abstracted behind an `ITileRenderer` interface to support alternative backends (Metal, Vulkan, Qt RHI) when OpenGL is deprecated on a target platform. This is critical given Apple's OpenGL deprecation. | Must |
 | NFR-CROSS-05 | All keyboard shortcuts shall be tested on all target platforms with US and at least one European keyboard layout. A shortcut conflict detector shall run at startup. All shortcuts shall be user-configurable. | Must |
 
-### 8.5 Accessibility
+### 9.5 Accessibility
 
 | ID | Requirement | Priority |
 |----|------------|----------|
@@ -449,7 +507,7 @@ The application provides:
 | NFR-ACC-04 | Adjustable font sizes in all UI panels. | Should |
 | NFR-ACC-05 | High-contrast annotation mode (white outer stroke, colored inner stroke) for visibility against any tissue stain. | Must |
 
-### 8.6 Maintainability
+### 9.6 Maintainability
 
 | ID | Requirement | Priority |
 |----|------------|----------|
@@ -461,9 +519,9 @@ The application provides:
 
 ---
 
-## 9. Security and Compliance Requirements
+## 10. Security and Compliance Requirements
 
-### 9.1 Patient Data Protection
+### 10.1 Patient Data Protection
 
 | ID | Requirement | Priority |
 |----|------------|----------|
@@ -473,7 +531,7 @@ The application provides:
 | NFR-SEC-04 | The application shall support annotation file encryption at rest for institutional deployments. | Should |
 | NFR-SEC-05 | The application shall not require real patient identifiers. Anonymized/pseudonymized IDs shall be supported for research. | Must |
 
-### 9.2 Audit Trail
+### 10.2 Audit Trail
 
 | ID | Requirement | Priority |
 |----|------------|----------|
@@ -481,7 +539,7 @@ The application provides:
 | NFR-SEC-07 | Audit logs shall be stored in a separate, append-only file. | Must |
 | NFR-SEC-08 | For institutional deployments, audit events should be forwardable to an external SIEM/audit system via syslog or webhook. | Should |
 
-### 9.3 Application Security
+### 10.3 Application Security
 
 | ID | Requirement | Priority |
 |----|------------|----------|
@@ -495,20 +553,21 @@ The application provides:
 
 ---
 
-## 10. Open Items and Future Scope
+## 11. Open Items and Future Scope
 
-### 10.1 Deferred to v2
+### 11.1 Deferred to v2
 
 - **Real-time multi-user annotation** -- collaborative editing of annotations across network (requires annotation server architecture).
 - **Cloud-native slide storage** -- direct S3/Azure Blob access as a slide source.
-- **AI integration framework** -- standardized interface for deep learning model inference plugins.
+- **Python scripting support** -- embedded Python interpreter with scripting API, interactive console, debugger, and image analysis workflows (see Section 8).
+- **AI integration framework** -- standardized interface for deep learning model inference, built on the scripting engine.
 - **DICOM WSI first-class support** -- native DICOM query/retrieve, not just file-based access.
 - **Regulatory compliance** -- FDA 510(k) / CE marking assessment if the viewer is used for primary diagnosis.
 - **SQLite annotation backend** -- for annotation sets exceeding 10,000 per slide.
 - **Vulkan/Metal rendering** -- for improved GPU memory control and macOS future-proofing.
 - **Web companion viewer** -- browser-based lightweight viewer sharing the same tile server.
 
-### 10.2 Decisions Required
+### 11.2 Decisions Required
 
 1. **Annotation interoperability standard:** The native format is GeoJSON-based. Should we also adopt W3C Web Annotation as a secondary export format?
 2. **Offline caching depth:** How many slides should be cacheable locally for offline clinical use?

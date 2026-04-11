@@ -1,0 +1,38 @@
+# Build directories
+build/
+cmake-build-*/
+out/
+
+# Conan
+CMakeUserPresets.json
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.sln.docstates
+
+# Compiled objects
+*.obj
+*.o
+*.lib
+*.a
+*.dll
+*.so
+*.dylib
+*.exe
+*.pdb
+*.ilk
+*.exp
+
+# Logs
+*.log
+
+# Claude Code
+.claude/
+
+# OS
+Thumbs.db
+.DS_Store
