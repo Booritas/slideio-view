@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <unordered_map>
 #include <vector>
 
@@ -65,21 +66,212 @@ in vec2 vTexCoord;
 
 uniform sampler2D uTileTexture;
 uniform float uAlpha;
+uniform float uDisplayMin;
+uniform float uDisplayMax;
 
 out vec4 fragColor;
 
 void main()
 {
     vec4 texel = texture(uTileTexture, vTexCoord);
-    fragColor = vec4(texel.rgb, texel.a * uAlpha);
+    float range = uDisplayMax - uDisplayMin;
+    float invRange = (range > 0.0) ? (1.0 / range) : 1.0;
+    vec3 mapped = clamp((texel.rgb - uDisplayMin) * invRange, 0.0, 1.0);
+    fragColor = vec4(mapped, texel.a * uAlpha);
 }
 )glsl";
+
+using DataType = slideio::viewer::core::DataType;
 
 constexpr int kMaxTextureUploadsPerFrame = 8;
 constexpr double kZoomInFactor = 1.25;
 constexpr double kZoomOutFactor = 1.0 / 1.25;
 constexpr double kPanPixels = 20.0;
 constexpr double kWheelZoomFactor = 1.1;
+
+// --- Data type support helpers ---
+
+struct GlTextureFormat
+{
+    GLenum internalFormat;
+    GLenum format;
+    GLenum type;
+    bool requiresCpuConversion;
+};
+
+GlTextureFormat glTextureFormatForDataType(DataType dataType, int numChannels)
+{
+    // Select base internal format and type per data type
+    GLenum baseInternal1 = GL_R8;
+    GLenum baseInternal3 = GL_RGB8;
+    GLenum glType = GL_UNSIGNED_BYTE;
+    bool cpuConvert = false;
+
+    switch (dataType) {
+    case DataType::Byte:
+        baseInternal1 = GL_R8;       baseInternal3 = GL_RGB8;       glType = GL_UNSIGNED_BYTE;    break;
+    case DataType::Int8:
+        baseInternal1 = GL_R8_SNORM; baseInternal3 = GL_RGB8_SNORM; glType = GL_BYTE;             break;
+    case DataType::UInt16:
+        baseInternal1 = GL_R16;      baseInternal3 = GL_RGB16;      glType = GL_UNSIGNED_SHORT;   break;
+    case DataType::Int16:
+        baseInternal1 = GL_R16_SNORM;baseInternal3 = GL_RGB16_SNORM;glType = GL_SHORT;            break;
+    case DataType::Float32:
+        baseInternal1 = GL_R32F;     baseInternal3 = GL_RGB32F;     glType = GL_FLOAT;            break;
+    case DataType::Float16:
+        baseInternal1 = GL_R16F;     baseInternal3 = GL_RGB16F;     glType = GL_HALF_FLOAT;       break;
+    case DataType::UInt32:
+    case DataType::Int32:
+    case DataType::Int64:
+    case DataType::UInt64:
+    case DataType::Float64:
+        baseInternal1 = GL_R32F;     baseInternal3 = GL_RGB32F;     glType = GL_FLOAT;
+        cpuConvert = true;
+        break;
+    default:
+        break;
+    }
+
+    // Select format and internal format based on channel count
+    GLenum format = GL_RGB;
+    GLenum internalFormat = baseInternal3;
+    if (numChannels == 1) {
+        format = GL_RED;
+        internalFormat = baseInternal1;
+    } else if (numChannels == 2) {
+        format = GL_RG;
+        // Derive 2-channel internal format from 1-channel by pattern
+        // GL_R8 -> GL_RG8, GL_R16 -> GL_RG16, GL_R32F -> GL_RG32F, etc.
+        if (baseInternal1 == GL_R8)        internalFormat = GL_RG8;
+        else if (baseInternal1 == GL_R8_SNORM)  internalFormat = GL_RG8_SNORM;
+        else if (baseInternal1 == GL_R16)       internalFormat = GL_RG16;
+        else if (baseInternal1 == GL_R16_SNORM) internalFormat = GL_RG16_SNORM;
+        else if (baseInternal1 == GL_R16F)      internalFormat = GL_RG16F;
+        else if (baseInternal1 == GL_R32F)      internalFormat = GL_RG32F;
+        else internalFormat = GL_RG8;
+    } else if (numChannels == 4) {
+        format = GL_RGBA;
+        if (baseInternal3 == GL_RGB8)        internalFormat = GL_RGBA8;
+        else if (baseInternal3 == GL_RGB8_SNORM)  internalFormat = GL_RGBA8_SNORM;
+        else if (baseInternal3 == GL_RGB16)       internalFormat = GL_RGBA16;
+        else if (baseInternal3 == GL_RGB16_SNORM) internalFormat = GL_RGBA16_SNORM;
+        else if (baseInternal3 == GL_RGB16F)      internalFormat = GL_RGBA16F;
+        else if (baseInternal3 == GL_RGB32F)      internalFormat = GL_RGBA32F;
+        else internalFormat = GL_RGBA8;
+    }
+
+    return {internalFormat, format, glType, cpuConvert};
+}
+
+std::vector<uint8_t> convertBufferToFloat32(const uint8_t* src, size_t pixelCount,
+                                             DataType srcType)
+{
+    std::vector<uint8_t> result(pixelCount * sizeof(float));
+    float* dst = reinterpret_cast<float*>(result.data());
+
+    switch (srcType) {
+    case DataType::UInt32: {
+        const uint32_t* s = reinterpret_cast<const uint32_t*>(src);
+        for (size_t i = 0; i < pixelCount; ++i) dst[i] = static_cast<float>(s[i]);
+        break;
+    }
+    case DataType::Int32: {
+        const int32_t* s = reinterpret_cast<const int32_t*>(src);
+        for (size_t i = 0; i < pixelCount; ++i) dst[i] = static_cast<float>(s[i]);
+        break;
+    }
+    case DataType::Int64: {
+        const int64_t* s = reinterpret_cast<const int64_t*>(src);
+        for (size_t i = 0; i < pixelCount; ++i) dst[i] = static_cast<float>(s[i]);
+        break;
+    }
+    case DataType::UInt64: {
+        const uint64_t* s = reinterpret_cast<const uint64_t*>(src);
+        for (size_t i = 0; i < pixelCount; ++i) dst[i] = static_cast<float>(s[i]);
+        break;
+    }
+    case DataType::Float64: {
+        const double* s = reinterpret_cast<const double*>(src);
+        for (size_t i = 0; i < pixelCount; ++i) dst[i] = static_cast<float>(s[i]);
+        break;
+    }
+    default:
+        break;
+    }
+    return result;
+}
+
+// Convert raw pixel-space min/max to the range that the GL sampler outputs
+// after normalized texture format upload.
+std::pair<float, float> toSamplerRange(double rawMin, double rawMax, DataType dataType)
+{
+    switch (dataType) {
+    case DataType::Byte:
+        return {static_cast<float>(rawMin / 255.0), static_cast<float>(rawMax / 255.0)};
+    case DataType::Int8:
+        return {static_cast<float>(rawMin / 127.0), static_cast<float>(rawMax / 127.0)};
+    case DataType::UInt16:
+        return {static_cast<float>(rawMin / 65535.0), static_cast<float>(rawMax / 65535.0)};
+    case DataType::Int16:
+        return {static_cast<float>(rawMin / 32767.0), static_cast<float>(rawMax / 32767.0)};
+    default:
+        // Float32, CPU-converted types: values pass through as-is
+        return {static_cast<float>(rawMin), static_cast<float>(rawMax)};
+    }
+}
+
+// Min/max scanning helpers for auto-detection
+template<typename T>
+std::pair<double, double> scanMinMax(const uint8_t* data, size_t pixelCount)
+{
+    const T* typed = reinterpret_cast<const T*>(data);
+    T minVal = typed[0];
+    T maxVal = typed[0];
+    for (size_t i = 1; i < pixelCount; ++i) {
+        if (typed[i] < minVal) minVal = typed[i];
+        if (typed[i] > maxVal) maxVal = typed[i];
+    }
+    return {static_cast<double>(minVal), static_cast<double>(maxVal)};
+}
+
+std::pair<double, double> computeMinMax(const uint8_t* data, size_t totalElements,
+                                         DataType dataType)
+{
+    if (totalElements == 0) return {0.0, 1.0};
+    switch (dataType) {
+    case DataType::Byte:    return scanMinMax<uint8_t>(data, totalElements);
+    case DataType::Int8:    return scanMinMax<int8_t>(data, totalElements);
+    case DataType::UInt16:  return scanMinMax<uint16_t>(data, totalElements);
+    case DataType::Int16:   return scanMinMax<int16_t>(data, totalElements);
+    case DataType::UInt32:  return scanMinMax<uint32_t>(data, totalElements);
+    case DataType::Int32:   return scanMinMax<int32_t>(data, totalElements);
+    case DataType::Float32: return scanMinMax<float>(data, totalElements);
+    case DataType::Float64: return scanMinMax<double>(data, totalElements);
+    default: return {0.0, 1.0};
+    }
+}
+
+// Map a pixel element from native type through [min,max] -> [0,255] for thumbnails
+uint8_t mapPixelToUint8(const uint8_t* buffer, size_t elementIndex,
+                        DataType dataType, double minVal, double maxVal)
+{
+    double value = 0.0;
+    switch (dataType) {
+    case DataType::Byte:    value = static_cast<double>(buffer[elementIndex]); break;
+    case DataType::Int8:    value = static_cast<double>(reinterpret_cast<const int8_t*>(buffer)[elementIndex]); break;
+    case DataType::UInt16:  value = static_cast<double>(reinterpret_cast<const uint16_t*>(buffer)[elementIndex]); break;
+    case DataType::Int16:   value = static_cast<double>(reinterpret_cast<const int16_t*>(buffer)[elementIndex]); break;
+    case DataType::UInt32:  value = static_cast<double>(reinterpret_cast<const uint32_t*>(buffer)[elementIndex]); break;
+    case DataType::Int32:   value = static_cast<double>(reinterpret_cast<const int32_t*>(buffer)[elementIndex]); break;
+    case DataType::Float32: value = static_cast<double>(reinterpret_cast<const float*>(buffer)[elementIndex]); break;
+    case DataType::Float64: value = static_cast<double>(reinterpret_cast<const double*>(buffer)[elementIndex]); break;
+    default: value = static_cast<double>(buffer[elementIndex]); break;
+    }
+    double range = maxVal - minVal;
+    if (range <= 0.0) return 0;
+    double normalized = (value - minVal) / range;
+    return static_cast<uint8_t>(std::clamp(normalized * 255.0, 0.0, 255.0));
+}
 
 } // anonymous namespace
 
@@ -153,31 +345,29 @@ struct ViewportWidget::Impl
         gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-        GLenum format = GL_RGB;
-        GLenum internalFormat = GL_RGB8;
         int channels = tile.numChannels();
 
+        // Swizzle R -> RGB for single-channel textures so shader's texel.rgb reads grayscale
         if (channels == 1) {
-            format = GL_RED;
-            internalFormat = GL_R8;
-            // Swizzle R -> RGB so the shader's texel.rgb reads grayscale
             gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, GL_RED);
             gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_RED);
-        } else if (channels == 2) {
-            format = GL_RG;
-            internalFormat = GL_RG8;
-        } else if (channels == 3) {
-            format = GL_RGB;
-            internalFormat = GL_RGB8;
-        } else if (channels == 4) {
-            format = GL_RGBA;
-            internalFormat = GL_RGBA8;
         }
 
+        auto glFmt = glTextureFormatForDataType(tile.dataType(), channels);
+
         gl->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        gl->glTexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(internalFormat),
-                         tile.width(), tile.height(), 0, format, GL_UNSIGNED_BYTE,
-                         tile.buffer().data());
+
+        if (glFmt.requiresCpuConversion) {
+            size_t pixelCount = static_cast<size_t>(tile.width()) * tile.height() * channels;
+            auto converted = convertBufferToFloat32(tile.buffer().data(), pixelCount, tile.dataType());
+            gl->glTexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(glFmt.internalFormat),
+                             tile.width(), tile.height(), 0, glFmt.format, glFmt.type,
+                             converted.data());
+        } else {
+            gl->glTexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(glFmt.internalFormat),
+                             tile.width(), tile.height(), 0, glFmt.format, glFmt.type,
+                             tile.buffer().data());
+        }
 
         gl->glBindTexture(GL_TEXTURE_2D, 0);
         return texId;
@@ -359,11 +549,10 @@ void ViewportWidget::openSlide(const std::string& filePath)
 
         m_impl->slideOpen = true;
 
-        // Generate a thumbnail from the coarsest pyramid level for the minimap
+        // Generate thumbnail and auto-detect display range from coarsest pyramid level
         {
             int coarsestLevel = m_impl->pyramid->numLevels() - 1;
             const auto& coarseLvl = m_impl->pyramid->levelInfo(coarsestLevel);
-            // Read the entire coarsest level as a single resampled block
             constexpr int kMaxThumbDim = 400;
             int thumbW = coarseLvl.width;
             int thumbH = coarseLvl.height;
@@ -376,17 +565,49 @@ void ViewportWidget::openSlide(const std::string& filePath)
             try {
                 auto thumbLoan = m_impl->adapterPool->acquire();
                 int numCh = m_impl->slideInfo.numChannels;
-                QImage::Format imgFmt = (numCh >= 3) ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
+                DataType dt = m_impl->slideInfo.channelDataType;
 
-                // Assemble tiles into a full-resolution image of the coarsest level,
-                // then scale to thumbnail size once to avoid tile-boundary seams.
-                QImage levelImg(coarseLvl.width, coarseLvl.height, imgFmt);
-                levelImg.fill(Qt::white);
+                // Pass 1: Read all coarsest-level tiles and compute global min/max
+                std::vector<core::TileData> coarseTiles;
+                double globalMin = std::numeric_limits<double>::max();
+                double globalMax = std::numeric_limits<double>::lowest();
 
                 for (int r = 0; r < coarseLvl.tilesY; ++r) {
                     for (int c = 0; c < coarseLvl.tilesX; ++c) {
                         core::TileKey tileKey(coarsestLevel, c, r);
                         auto tileData = thumbLoan->readTile(tileKey);
+                        if (tileData.isEmpty() || tileData.isError()) {
+                            coarseTiles.push_back(std::move(tileData));
+                            continue;
+                        }
+                        size_t totalElements = static_cast<size_t>(tileData.width())
+                                             * static_cast<size_t>(tileData.height())
+                                             * static_cast<size_t>(tileData.numChannels());
+                        auto [tMin, tMax] = computeMinMax(
+                            tileData.buffer().data(), totalElements, dt);
+                        globalMin = std::min(globalMin, tMin);
+                        globalMax = std::max(globalMax, tMax);
+                        coarseTiles.push_back(std::move(tileData));
+                    }
+                }
+
+                // Store auto-detected display range
+                if (globalMin < globalMax) {
+                    m_impl->slideInfo.displayRange.displayMin = globalMin;
+                    m_impl->slideInfo.displayRange.displayMax = globalMax;
+                    m_impl->slideInfo.displayRange.autoDetected = true;
+                    spdlog::info("ViewportWidget::openSlide: displayRange: min={} max={}", globalMin, globalMax);
+                }
+
+                // Pass 2: Generate thumbnail QImage using detected range
+                QImage::Format imgFmt = (numCh >= 3) ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
+                QImage levelImg(coarseLvl.width, coarseLvl.height, imgFmt);
+                levelImg.fill(Qt::white);
+
+                int tileIdx = 0;
+                for (int r = 0; r < coarseLvl.tilesY; ++r) {
+                    for (int c = 0; c < coarseLvl.tilesX; ++c) {
+                        const auto& tileData = coarseTiles[static_cast<size_t>(tileIdx++)];
                         if (tileData.isEmpty() || tileData.isError()) continue;
                         int tw = tileData.width();
                         int th = tileData.height();
@@ -394,18 +615,18 @@ void ViewportWidget::openSlide(const std::string& filePath)
                         int tileX0 = c * coarseLvl.tileWidth;
                         int tileY0 = r * coarseLvl.tileHeight;
                         const uint8_t* src = tileData.buffer().data();
-                        // Copy tile pixels directly into the level image
+
                         for (int y = 0; y < th && (tileY0 + y) < coarseLvl.height; ++y) {
                             uint8_t* dst = levelImg.scanLine(tileY0 + y);
                             for (int x = 0; x < tw && (tileX0 + x) < coarseLvl.width; ++x) {
-                                int srcIdx = (y * tw + x) * tCh;
+                                size_t srcElem = static_cast<size_t>((y * tw + x) * tCh);
                                 if (numCh >= 3) {
                                     int dstIdx = (tileX0 + x) * 3;
-                                    dst[dstIdx + 0] = src[srcIdx + 0];
-                                    dst[dstIdx + 1] = src[srcIdx + 1];
-                                    dst[dstIdx + 2] = src[srcIdx + 2];
+                                    dst[dstIdx + 0] = mapPixelToUint8(src, srcElem + 0, dt, globalMin, globalMax);
+                                    dst[dstIdx + 1] = mapPixelToUint8(src, srcElem + 1, dt, globalMin, globalMax);
+                                    dst[dstIdx + 2] = mapPixelToUint8(src, srcElem + 2, dt, globalMin, globalMax);
                                 } else {
-                                    dst[tileX0 + x] = src[srcIdx];
+                                    dst[tileX0 + x] = mapPixelToUint8(src, srcElem, dt, globalMin, globalMax);
                                 }
                             }
                         }
@@ -418,6 +639,17 @@ void ViewportWidget::openSlide(const std::string& filePath)
                 emit thumbnailReady(thumbnail);
             } catch (const std::exception& ex) {
                 spdlog::warn("ViewportWidget::openSlide: failed to generate thumbnail: {}", ex.what());
+            }
+
+            // Fallback display range if auto-detection failed
+            if (!m_impl->slideInfo.displayRange.autoDetected) {
+                switch (m_impl->slideInfo.channelDataType) {
+                case DataType::Byte:    m_impl->slideInfo.displayRange = {0.0, 255.0, false}; break;
+                case DataType::UInt16:  m_impl->slideInfo.displayRange = {0.0, 65535.0, false}; break;
+                case DataType::Int16:   m_impl->slideInfo.displayRange = {0.0, 32767.0, false}; break;
+                case DataType::Float32: m_impl->slideInfo.displayRange = {0.0, 1.0, false}; break;
+                default:                      m_impl->slideInfo.displayRange = {0.0, 255.0, false}; break;
+                }
             }
         }
 
@@ -617,6 +849,14 @@ void ViewportWidget::paintGL()
     m_impl->gl->glBindVertexArray(m_impl->quadVAO);
     m_impl->gl->glActiveTexture(GL_TEXTURE0);
     m_impl->tileShader->setUniformValue("uTileTexture", 0);
+
+    // Set display range uniforms for contrast mapping (global, once per frame)
+    auto [samplerMin, samplerMax] = toSamplerRange(
+        m_impl->slideInfo.displayRange.displayMin,
+        m_impl->slideInfo.displayRange.displayMax,
+        m_impl->slideInfo.channelDataType);
+    m_impl->tileShader->setUniformValue("uDisplayMin", samplerMin);
+    m_impl->tileShader->setUniformValue("uDisplayMax", samplerMax);
 
     core::CoordinateSystem coordSystem(*m_impl->pyramid);
 

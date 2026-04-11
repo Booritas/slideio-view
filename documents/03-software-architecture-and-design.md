@@ -1536,6 +1536,28 @@ The current implementation is `OpenGLTileRenderer`. A `MetalTileRenderer` (for m
 | Annotation creation | < 100 ms response | Input-to-render latency |
 | Memory under single-slide load | < 4 GB | RSS monitoring |
 
+### 15.6 Multi-Data-Type Display
+
+The rendering pipeline supports all pixel data types provided by SlideIO: 8-bit (unsigned/signed), 16-bit (unsigned/signed), 32-bit integer, 64-bit integer, and floating-point (16/32/64-bit).
+
+**OpenGL texture format mapping:**
+
+| Data Type | GL Internal Format | GL Type | Strategy |
+|-----------|-------------------|---------|----------|
+| Byte (uint8) | `GL_R8` / `GL_RGB8` | `GL_UNSIGNED_BYTE` | Normalized [0,1] |
+| Int8 | `GL_R8_SNORM` / `GL_RGB8_SNORM` | `GL_BYTE` | Normalized [-1,1] |
+| UInt16 | `GL_R16` / `GL_RGB16` | `GL_UNSIGNED_SHORT` | Normalized [0,1] |
+| Int16 | `GL_R16_SNORM` / `GL_RGB16_SNORM` | `GL_SHORT` | Normalized [-1,1] |
+| Float16 | `GL_R16F` / `GL_RGB16F` | `GL_HALF_FLOAT` | Raw float |
+| Float32 | `GL_R32F` / `GL_RGB32F` | `GL_FLOAT` | Raw float |
+| UInt32, Int32, Int64, UInt64, Float64 | `GL_R32F` / `GL_RGB32F` | `GL_FLOAT` | CPU-convert to float32 |
+
+**Display range auto-detection:** On slide open, the coarsest pyramid level is scanned to compute global min/max across all channels. This range is stored in `SlideInfo::displayRange` and passed to the fragment shader as `uDisplayMin`/`uDisplayMax` uniforms. The shader maps `[min, max] → [0, 1]` via linear contrast: `mapped = clamp((value - min) / (max - min), 0, 1)`.
+
+For normalized GL formats (uint8, uint16), the raw min/max are converted to sampler output space (e.g., uint16 range 0–65535 maps to 0.0–1.0) before being passed as uniforms.
+
+**Thumbnail generation:** The minimap thumbnail converts non-8-bit pixel data to uint8 using the detected display range, ensuring correct display for all data types.
+
 ---
 
 *This document provides the complete software architecture and design for SlideIO Viewer, incorporating findings from all five design phases including the critical review. It serves as the definitive technical reference for implementation.*

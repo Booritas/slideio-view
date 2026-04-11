@@ -45,6 +45,13 @@ inline size_t dataTypeSize(DataType dt)
     return 0;
 }
 
+struct DisplayRange
+{
+    double displayMin = 0.0;
+    double displayMax = 255.0;
+    bool autoDetected = false;
+};
+
 struct SlideInfo
 {
     std::string filePath;
@@ -57,6 +64,7 @@ struct SlideInfo
     double resolutionX = 0.0;
     double resolutionY = 0.0;
     std::string driverName;
+    DisplayRange displayRange;
 };
 
 struct LevelInfo
