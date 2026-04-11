@@ -1,4 +1,5 @@
 #include "slideio/viewer/ui/MainWindow.h"
+#include "slideio/viewer/ui/ChannelMixerPanel.h"
 #include "slideio/viewer/ui/MinimapWidget.h"
 #include "slideio/viewer/ui/StatusBarManager.h"
 #include "slideio/viewer/ui/ViewportController.h"
@@ -35,6 +36,7 @@ struct MainWindow::Impl
     MinimapWidget* minimapWidget = nullptr;
     ZoomIndicatorWidget* zoomIndicatorWidget = nullptr;
     StatusBarManager* statusBarManager = nullptr;
+    ChannelMixerPanel* channelMixerPanel = nullptr;
 
     // Recent files
     QMenu* recentFilesMenu = nullptr;
@@ -50,6 +52,7 @@ struct MainWindow::Impl
     QAction* actualPixelsAction = nullptr;
     QAction* fullScreenAction = nullptr;
     QAction* minimapToggleAction = nullptr;
+    QAction* channelMixerToggleAction = nullptr;
 
     void createActions()
     {
@@ -115,6 +118,7 @@ struct MainWindow::Impl
         viewMenu->addSeparator();
         viewMenu->addAction(fullScreenAction);
         viewMenu->addAction(minimapToggleAction);
+        viewMenu->addAction(channelMixerToggleAction);
     }
 
     void connectSignals()
@@ -182,6 +186,16 @@ struct MainWindow::Impl
                     minimapWidget->setViewport(vp, ctrl->slideWidth(), ctrl->slideHeight());
                     zoomIndicatorWidget->setZoomLevel(vp.scale(), ctrl->baseMagnification());
                 }
+
+                // Show/hide channel mixer based on slide type
+                const auto& info = viewportWidget->slideInfo();
+                if (!info.isBrightfield && info.numChannels > 1) {
+                    channelMixerPanel->setChannels(info.channels);
+                    channelMixerPanel->show();
+                } else {
+                    channelMixerPanel->clearChannels();
+                    channelMixerPanel->hide();
+                }
             });
 
         QObject::connect(viewportWidget, &ViewportWidget::thumbnailReady, owner,
@@ -195,7 +209,15 @@ struct MainWindow::Impl
             statusBarManager->updateCursorPosition(0.0, 0.0);
             statusBarManager->updateMagnification(1.0, 0.0);
             statusBarManager->updateScaleBar(0.0);
+            channelMixerPanel->clearChannels();
+            channelMixerPanel->hide();
         });
+
+        // Channel mixer panel: push settings changes to viewport
+        QObject::connect(channelMixerPanel, &ChannelMixerPanel::channelSettingsChanged, owner,
+            [this](const std::vector<core::ChannelInfo>& channels) {
+                viewportWidget->setChannelSettings(channels);
+            });
 
         // Minimap navigation
         QObject::connect(minimapWidget, &MinimapWidget::navigationRequested, owner,
@@ -341,8 +363,17 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->statusBarManager = new StatusBarManager(this);
     m_impl->statusBarManager->setup(statusBar());
 
+    // Create channel mixer dock widget (hidden by default)
+    m_impl->channelMixerPanel = new ChannelMixerPanel(this);
+    addDockWidget(Qt::RightDockWidgetArea, m_impl->channelMixerPanel);
+    m_impl->channelMixerPanel->hide();
+
     // Create actions and menus
     m_impl->createActions();
+    m_impl->channelMixerToggleAction = m_impl->channelMixerPanel->toggleViewAction();
+    m_impl->channelMixerToggleAction->setText("&Channels");
+    m_impl->channelMixerToggleAction->setShortcut(QKeySequence("Ctrl+Shift+C"));
+    m_impl->channelMixerToggleAction->setStatusTip("Toggle the channel mixer panel");
     m_impl->createMenus();
     m_impl->connectSignals();
 
@@ -354,11 +385,19 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_impl->viewportWidget, &ViewportWidget::viewportChanged, this, [this]() {
         m_impl->repositionOverlays();
     });
+
+    // Restore saved window geometry and dock layout
+    QSettings settings;
+    restoreGeometry(settings.value("mainWindow/geometry").toByteArray());
+    restoreState(settings.value("mainWindow/state").toByteArray());
 }
 
 MainWindow::~MainWindow()
 {
-    // Impl destroyed automatically; Qt children destroyed by Qt parent chain
+    // Save window geometry and dock layout
+    QSettings settings;
+    settings.setValue("mainWindow/geometry", saveGeometry());
+    settings.setValue("mainWindow/state", saveState());
 }
 
 void MainWindow::openSlide(const std::string& path)

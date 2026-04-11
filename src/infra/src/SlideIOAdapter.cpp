@@ -81,6 +81,32 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath)
 
     m_slideInfo.driverName = m_slide->getDriverId();
 
+    // Read per-channel info (names, data types, default colors)
+    m_slideInfo.channels.resize(static_cast<size_t>(m_slideInfo.numChannels));
+    for (int ch = 0; ch < m_slideInfo.numChannels; ++ch) {
+        auto& info = m_slideInfo.channels[static_cast<size_t>(ch)];
+        try {
+            info.name = m_scene->getChannelName(ch);
+        } catch (...) {
+            info.name = "Channel " + std::to_string(ch);
+        }
+        info.dataType = convertSlideIODataType(m_scene->getChannelDataType(ch));
+        info.visible = true;
+        core::assignDefaultFluorescenceColor(info, ch);
+    }
+
+    // Determine if this is a brightfield slide
+    m_slideInfo.isBrightfield =
+        (m_slideInfo.numChannels == 1) ||
+        (m_slideInfo.numChannels == 3 && m_slideInfo.channelDataType == core::DataType::Byte);
+
+    spdlog::info("SlideIOAdapter: isBrightfield={}, {} channels", m_slideInfo.isBrightfield, m_slideInfo.numChannels);
+    for (int ch = 0; ch < m_slideInfo.numChannels; ++ch) {
+        const auto& info = m_slideInfo.channels[static_cast<size_t>(ch)];
+        spdlog::info("  channel {}: name='{}' color=({:.2f},{:.2f},{:.2f})",
+                     ch, info.name, info.colorR, info.colorG, info.colorB);
+    }
+
     // Build level info
     int numZoomLevels = m_scene->getNumZoomLevels();
     m_slideInfo.numZoomLevels = numZoomLevels;

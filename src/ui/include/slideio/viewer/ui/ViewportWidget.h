@@ -1,10 +1,13 @@
 #pragma once
 
+#include "slideio/viewer/core/Types.h"
+
 #include <QImage>
 #include <QOpenGLWidget>
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace slideio::viewer::ui
 {
@@ -33,6 +36,9 @@ public:
     void zoomIn();
     void zoomOut();
     void panByPixels(double dx, double dy);
+
+    void setChannelSettings(const std::vector<core::ChannelInfo>& channels);
+    const core::SlideInfo& slideInfo() const;
 
 signals:
     void viewportChanged();

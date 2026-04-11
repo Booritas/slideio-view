@@ -1,9 +1,11 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace slideio::viewer::core
 {
@@ -52,6 +54,66 @@ struct DisplayRange
     bool autoDetected = false;
 };
 
+struct ChannelInfo
+{
+    std::string name;
+    DataType dataType = DataType::None;
+    float colorR = 1.0f;
+    float colorG = 1.0f;
+    float colorB = 1.0f;
+    float intensity = 1.0f; // 0.0–1.0 brightness multiplier
+    bool visible = true;
+    DisplayRange displayRange;
+};
+
+/// Assign a default pseudo-color for fluorescence channels.
+/// Matches known dye names first, then falls back to index-based defaults.
+inline void assignDefaultFluorescenceColor(ChannelInfo& ch, int channelIndex)
+{
+    struct DefaultColor { float r, g, b; };
+    static const DefaultColor kIndexDefaults[] = {
+        {0.0f, 0.4f, 1.0f},  // blue (DAPI-like)
+        {0.0f, 1.0f, 0.0f},  // green (FITC-like)
+        {1.0f, 0.0f, 0.0f},  // red (Cy3-like)
+        {1.0f, 0.0f, 1.0f},  // magenta (Cy5-like)
+        {0.0f, 1.0f, 1.0f},  // cyan
+        {1.0f, 1.0f, 0.0f},  // yellow
+        {1.0f, 1.0f, 1.0f},  // white
+    };
+
+    // Name-based matching (case-insensitive prefix)
+    auto nameUpper = ch.name;
+    std::transform(nameUpper.begin(), nameUpper.end(), nameUpper.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+
+    if (nameUpper.find("DAPI") != std::string::npos) {
+        ch.colorR = 0.0f; ch.colorG = 0.4f; ch.colorB = 1.0f; return;
+    }
+    if (nameUpper.find("FITC") != std::string::npos ||
+        nameUpper.find("GFP") != std::string::npos ||
+        nameUpper.find("ALEXA488") != std::string::npos ||
+        nameUpper.find("ALEXA 488") != std::string::npos) {
+        ch.colorR = 0.0f; ch.colorG = 1.0f; ch.colorB = 0.0f; return;
+    }
+    if (nameUpper.find("CY3") != std::string::npos ||
+        nameUpper.find("TRITC") != std::string::npos ||
+        nameUpper.find("ALEXA555") != std::string::npos ||
+        nameUpper.find("ALEXA 555") != std::string::npos) {
+        ch.colorR = 1.0f; ch.colorG = 0.0f; ch.colorB = 0.0f; return;
+    }
+    if (nameUpper.find("CY5") != std::string::npos ||
+        nameUpper.find("ALEXA647") != std::string::npos ||
+        nameUpper.find("ALEXA 647") != std::string::npos) {
+        ch.colorR = 1.0f; ch.colorG = 0.0f; ch.colorB = 1.0f; return;
+    }
+
+    // Fallback to index-based defaults
+    int idx = channelIndex % 7;
+    ch.colorR = kIndexDefaults[idx].r;
+    ch.colorG = kIndexDefaults[idx].g;
+    ch.colorB = kIndexDefaults[idx].b;
+}
+
 struct SlideInfo
 {
     std::string filePath;
@@ -65,6 +127,8 @@ struct SlideInfo
     double resolutionY = 0.0;
     std::string driverName;
     DisplayRange displayRange;
+    std::vector<ChannelInfo> channels;
+    bool isBrightfield = false;
 };
 
 struct LevelInfo

@@ -1558,6 +1558,34 @@ For normalized GL formats (uint8, uint16), the raw min/max are converted to samp
 
 **Thumbnail generation:** The minimap thumbnail converts non-8-bit pixel data to uint8 using the detected display range, ensuring correct display for all data types.
 
+### 15.7 Channel Mixing (Fluorescence Rendering)
+
+The viewer uses two rendering paths based on slide type:
+
+**Brightfield detection:** A slide is classified as brightfield if `numChannels == 1` or `(numChannels == 3 && channelDataType == Byte)`. All other slides are treated as fluorescence/multi-channel.
+
+**Brightfield path:** Single texture per tile, standard alpha blending, RGB passthrough. The channel mixer panel is hidden.
+
+**Fluorescence path:** One GL_RED texture per channel per tile, multi-pass additive blending with pseudo-colors:
+
+1. **Texture upload:** The interleaved tile buffer is split into per-channel single-channel (GL_RED) textures at upload time. Each channel gets its own OpenGL texture object.
+
+2. **Rendering:** For each tile, each visible channel is rendered as a separate draw call:
+   - Background cleared to black `(0, 0, 0)` for correct additive compositing
+   - Blending mode: `glBlendFunc(GL_ONE, GL_ONE)` — pure additive
+   - The channel fragment shader applies: `color = channelColor * clamp((value - min) / (max - min), 0, 1)`
+
+3. **Per-channel display range:** Each channel has independent `DisplayRange` (min/max), auto-detected from the coarsest pyramid level during slide open.
+
+4. **Default pseudo-colors:** Assigned by matching channel names from SlideIO metadata against known fluorescence dye names (DAPI→blue, FITC→green, Cy3→red, Cy5→magenta). Falls back to index-based defaults for unnamed channels.
+
+**Channel Mixer Panel:** A `QDockWidget` providing per-channel controls:
+- Visibility toggle (QCheckBox) per channel
+- Pseudo-color picker (QPushButton → QColorDialog) per channel
+- Channel name label
+- Dockable, floatable, closable; position persisted via `QMainWindow::saveState()`/`restoreState()` with `QSettings`
+- Hidden for brightfield slides; shown automatically for fluorescence slides
+
 ---
 
 *This document provides the complete software architecture and design for SlideIO Viewer, incorporating findings from all five design phases including the critical review. It serves as the definitive technical reference for implementation.*

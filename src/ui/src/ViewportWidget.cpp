@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <unordered_map>
 #include <vector>
@@ -78,6 +79,28 @@ void main()
     float invRange = (range > 0.0) ? (1.0 / range) : 1.0;
     vec3 mapped = clamp((texel.rgb - uDisplayMin) * invRange, 0.0, 1.0);
     fragColor = vec4(mapped, texel.a * uAlpha);
+}
+)glsl";
+
+const char* kChannelFragmentShaderSource = R"glsl(
+#version 330 core
+
+in vec2 vTexCoord;
+
+uniform sampler2D uTileTexture;
+uniform float uDisplayMin;
+uniform float uDisplayMax;
+uniform vec3 uChannelColor;
+
+out vec4 fragColor;
+
+void main()
+{
+    float value = texture(uTileTexture, vTexCoord).r;
+    float range = uDisplayMax - uDisplayMin;
+    float invRange = (range > 0.0) ? (1.0 / range) : 1.0;
+    float mapped = clamp((value - uDisplayMin) * invRange, 0.0, 1.0);
+    fragColor = vec4(uChannelColor * mapped, 1.0);
 }
 )glsl";
 
@@ -234,6 +257,39 @@ std::pair<double, double> scanMinMax(const uint8_t* data, size_t pixelCount)
     return {static_cast<double>(minVal), static_cast<double>(maxVal)};
 }
 
+template<typename T>
+void scanMinMaxStrided(const uint8_t* data, size_t pixelCount, int numChannels, int channelIndex,
+                       double& outMin, double& outMax)
+{
+    const T* typed = reinterpret_cast<const T*>(data);
+    T minVal = typed[channelIndex];
+    T maxVal = typed[channelIndex];
+    for (size_t p = 1; p < pixelCount; ++p) {
+        T v = typed[p * numChannels + channelIndex];
+        if (v < minVal) minVal = v;
+        if (v > maxVal) maxVal = v;
+    }
+    outMin = std::min(outMin, static_cast<double>(minVal));
+    outMax = std::max(outMax, static_cast<double>(maxVal));
+}
+
+void computeMinMaxStrided(const uint8_t* data, size_t pixelCount, int numChannels,
+                          int channelIndex, DataType dataType, double& outMin, double& outMax)
+{
+    if (pixelCount == 0) return;
+    switch (dataType) {
+    case DataType::Byte:    scanMinMaxStrided<uint8_t>(data, pixelCount, numChannels, channelIndex, outMin, outMax); break;
+    case DataType::Int8:    scanMinMaxStrided<int8_t>(data, pixelCount, numChannels, channelIndex, outMin, outMax); break;
+    case DataType::UInt16:  scanMinMaxStrided<uint16_t>(data, pixelCount, numChannels, channelIndex, outMin, outMax); break;
+    case DataType::Int16:   scanMinMaxStrided<int16_t>(data, pixelCount, numChannels, channelIndex, outMin, outMax); break;
+    case DataType::UInt32:  scanMinMaxStrided<uint32_t>(data, pixelCount, numChannels, channelIndex, outMin, outMax); break;
+    case DataType::Int32:   scanMinMaxStrided<int32_t>(data, pixelCount, numChannels, channelIndex, outMin, outMax); break;
+    case DataType::Float32: scanMinMaxStrided<float>(data, pixelCount, numChannels, channelIndex, outMin, outMax); break;
+    case DataType::Float64: scanMinMaxStrided<double>(data, pixelCount, numChannels, channelIndex, outMin, outMax); break;
+    default: break;
+    }
+}
+
 std::pair<double, double> computeMinMax(const uint8_t* data, size_t totalElements,
                                          DataType dataType)
 {
@@ -290,6 +346,15 @@ struct ViewportWidget::Impl
     std::unordered_map<core::TileKey, GLuint> textures;
     std::vector<core::TileKey> pendingUploads;
     std::mutex pendingUploadsMutex;
+
+    // Fluorescence rendering
+    std::unique_ptr<QOpenGLShaderProgram> channelShader;
+
+    struct TileTextures
+    {
+        std::vector<GLuint> channelTexIds;
+    };
+    std::unordered_map<core::TileKey, TileTextures> fluorescenceTextures;
 
     // Slide management
     std::shared_ptr<infra::SlideIOAdapterPool> adapterPool;
@@ -389,6 +454,62 @@ struct ViewportWidget::Impl
         }
         textures.clear();
         pendingUploads.clear();
+    }
+
+    TileTextures uploadTileChannelTextures(const core::TileData& tile)
+    {
+        TileTextures result;
+        int numChannels = tile.numChannels();
+        size_t pixelCount = static_cast<size_t>(tile.width()) * tile.height();
+        size_t bytesPerElement = core::dataTypeSize(tile.dataType());
+        auto glFmt = glTextureFormatForDataType(tile.dataType(), 1);
+
+        for (int ch = 0; ch < numChannels; ++ch) {
+            GLuint texId = 0;
+            gl->glGenTextures(1, &texId);
+            gl->glBindTexture(GL_TEXTURE_2D, texId);
+
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+            gl->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+            // Extract single-channel data from interleaved buffer
+            std::vector<uint8_t> channelData(pixelCount * bytesPerElement);
+            const uint8_t* src = tile.buffer().data();
+            for (size_t p = 0; p < pixelCount; ++p) {
+                const uint8_t* srcElem = src + (p * numChannels + ch) * bytesPerElement;
+                uint8_t* dstElem = channelData.data() + p * bytesPerElement;
+                std::memcpy(dstElem, srcElem, bytesPerElement);
+            }
+
+            if (glFmt.requiresCpuConversion) {
+                auto converted = convertBufferToFloat32(channelData.data(), pixelCount, tile.dataType());
+                gl->glTexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(glFmt.internalFormat),
+                                 tile.width(), tile.height(), 0, glFmt.format, glFmt.type,
+                                 converted.data());
+            } else {
+                gl->glTexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(glFmt.internalFormat),
+                                 tile.width(), tile.height(), 0, glFmt.format, glFmt.type,
+                                 channelData.data());
+            }
+
+            gl->glBindTexture(GL_TEXTURE_2D, 0);
+            result.channelTexIds.push_back(texId);
+        }
+        return result;
+    }
+
+    void clearFluorescenceTextures()
+    {
+        for (auto& pair : fluorescenceTextures) {
+            for (GLuint texId : pair.second.channelTexIds) {
+                gl->glDeleteTextures(1, &texId);
+            }
+        }
+        fluorescenceTextures.clear();
     }
 
     // Returns true if there are still pending uploads remaining
@@ -493,6 +614,7 @@ ViewportWidget::~ViewportWidget()
     makeCurrent();
     if (m_impl->glInitialized) {
         m_impl->clearAllTextures();
+        m_impl->clearFluorescenceTextures();
         if (m_impl->quadVAO) {
             m_impl->gl->glDeleteVertexArrays(1, &m_impl->quadVAO);
         }
@@ -599,6 +721,33 @@ void ViewportWidget::openSlide(const std::string& filePath)
                     spdlog::info("ViewportWidget::openSlide: displayRange: min={} max={}", globalMin, globalMax);
                 }
 
+                // Per-channel min/max detection for fluorescence slides
+                if (!m_impl->slideInfo.isBrightfield) {
+                    std::vector<double> channelMin(numCh, std::numeric_limits<double>::max());
+                    std::vector<double> channelMax(numCh, std::numeric_limits<double>::lowest());
+
+                    for (const auto& tileData : coarseTiles) {
+                        if (tileData.isEmpty() || tileData.isError()) continue;
+                        size_t pixelCount = static_cast<size_t>(tileData.width()) * tileData.height();
+                        for (int ch = 0; ch < numCh; ++ch) {
+                            computeMinMaxStrided(tileData.buffer().data(), pixelCount,
+                                                 numCh, ch, dt, channelMin[ch], channelMax[ch]);
+                        }
+                    }
+
+                    for (int ch = 0; ch < numCh; ++ch) {
+                        if (ch < static_cast<int>(m_impl->slideInfo.channels.size())) {
+                            if (channelMin[ch] < channelMax[ch]) {
+                                m_impl->slideInfo.channels[ch].displayRange.displayMin = channelMin[ch];
+                                m_impl->slideInfo.channels[ch].displayRange.displayMax = channelMax[ch];
+                                m_impl->slideInfo.channels[ch].displayRange.autoDetected = true;
+                                spdlog::info("ViewportWidget::openSlide: channel {} displayRange: min={} max={}",
+                                             ch, channelMin[ch], channelMax[ch]);
+                            }
+                        }
+                    }
+                }
+
                 // Pass 2: Generate thumbnail QImage using detected range
                 QImage::Format imgFmt = (numCh >= 3) ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
                 QImage levelImg(coarseLvl.width, coarseLvl.height, imgFmt);
@@ -693,6 +842,7 @@ void ViewportWidget::closeSlide()
     if (m_impl->glInitialized) {
         makeCurrent();
         m_impl->clearAllTextures();
+        m_impl->clearFluorescenceTextures();
         doneCurrent();
     }
 
@@ -760,6 +910,19 @@ void ViewportWidget::panByPixels(double dx, double dy)
     }
 }
 
+void ViewportWidget::setChannelSettings(const std::vector<core::ChannelInfo>& channels)
+{
+    if (channels.size() == m_impl->slideInfo.channels.size()) {
+        m_impl->slideInfo.channels = channels;
+        update();
+    }
+}
+
+const core::SlideInfo& ViewportWidget::slideInfo() const
+{
+    return m_impl->slideInfo;
+}
+
 void ViewportWidget::initializeGL()
 {
     m_impl->gl = QOpenGLVersionFunctionsFactory::get<QOpenGLFunctions_3_3_Core>(QOpenGLContext::currentContext());
@@ -791,6 +954,15 @@ void ViewportWidget::initializeGL()
     }
     spdlog::info("ViewportWidget: shader compiled: vs={} fs={} link={}", vsOk, fsOk, linkOk);
 
+    // Compile channel (fluorescence) shader
+    m_impl->channelShader = std::make_unique<QOpenGLShaderProgram>();
+    m_impl->channelShader->addShaderFromSourceCode(QOpenGLShader::Vertex, kTileVertexShaderSource);
+    m_impl->channelShader->addShaderFromSourceCode(QOpenGLShader::Fragment, kChannelFragmentShaderSource);
+    if (!m_impl->channelShader->link()) {
+        spdlog::error("ViewportWidget: channel shader link failed: {}",
+                      m_impl->channelShader->log().toStdString());
+    }
+
     m_impl->createQuadGeometry();
     spdlog::info("ViewportWidget: GL initialized, VAO={} VBO={}", m_impl->quadVAO, m_impl->quadVBO);
 
@@ -817,6 +989,13 @@ void ViewportWidget::paintGL()
     int fbWidth = static_cast<int>(width() * devicePixelRatioF());
     int fbHeight = static_cast<int>(height() * devicePixelRatioF());
     m_impl->gl->glViewport(0, 0, fbWidth, fbHeight);
+
+    // Set clear color based on imaging mode
+    if (m_impl->slideOpen && !m_impl->slideInfo.isBrightfield) {
+        m_impl->gl->glClearColor(0.0f, 0.0f, 0.0f, 1.0f); // Black for fluorescence
+    } else {
+        m_impl->gl->glClearColor(0.251f, 0.251f, 0.251f, 1.0f); // #404040 for brightfield
+    }
     m_impl->gl->glClear(GL_COLOR_BUFFER_BIT);
 
     if (!m_impl->controller || !m_impl->slideOpen) {
@@ -831,89 +1010,157 @@ void ViewportWidget::paintGL()
     static int paintCount = 0;
     if (++paintCount <= 5 || paintCount % 100 == 0) {
         spdlog::info("paintGL[{}]: {} visible tiles, {} textures uploaded, scale={:.4f}, "
-                     "viewport={}x{}, fb={}x{}, widget={}x{}, dpr={:.2f}",
+                     "viewport={}x{}, fb={}x{}, widget={}x{}, dpr={:.2f}, brightfield={}",
                      paintCount, visibleKeys.size(), m_impl->textures.size(),
                      viewport.scale(), viewport.screenWidth(), viewport.screenHeight(),
-                     fbWidth, fbHeight, width(), height(), devicePixelRatioF());
+                     fbWidth, fbHeight, width(), height(), devicePixelRatioF(),
+                     m_impl->slideInfo.isBrightfield);
     }
 
     if (visibleKeys.empty()) {
         return;
     }
 
-    m_impl->tileShader->bind();
-    // Use the same dimensions that the ViewportController uses for screen rects
-    m_impl->tileShader->setUniformValue("uViewportSize",
-        static_cast<float>(viewport.screenWidth()), static_cast<float>(viewport.screenHeight()));
-
-    m_impl->gl->glBindVertexArray(m_impl->quadVAO);
-    m_impl->gl->glActiveTexture(GL_TEXTURE0);
-    m_impl->tileShader->setUniformValue("uTileTexture", 0);
-
-    // Set display range uniforms for contrast mapping (global, once per frame)
-    auto [samplerMin, samplerMax] = toSamplerRange(
-        m_impl->slideInfo.displayRange.displayMin,
-        m_impl->slideInfo.displayRange.displayMax,
-        m_impl->slideInfo.channelDataType);
-    m_impl->tileShader->setUniformValue("uDisplayMin", samplerMin);
-    m_impl->tileShader->setUniformValue("uDisplayMax", samplerMax);
-
     core::CoordinateSystem coordSystem(*m_impl->pyramid);
-
     int tilesRendered = 0;
     int tilesSkipped = 0;
-    for (const auto& key : visibleKeys) {
-        auto screenRect = coordSystem.tileScreenRect(key, viewport);
 
-        GLuint texId = 0;
-        float alpha = 1.0f;
+    if (m_impl->slideInfo.isBrightfield) {
+        // --- Brightfield rendering path (existing logic, unchanged) ---
+        m_impl->tileShader->bind();
+        m_impl->tileShader->setUniformValue("uViewportSize",
+            static_cast<float>(viewport.screenWidth()), static_cast<float>(viewport.screenHeight()));
 
-        auto texIt = m_impl->textures.find(key);
-        if (texIt != m_impl->textures.end()) {
-            texId = texIt->second;
-        } else {
-            // Not in texture map yet — check if it's in the tile cache and upload directly
-            auto tileData = m_impl->tileCache->lookup(key);
-            if (tileData && !tileData->isEmpty() && !tileData->isError()) {
-                texId = m_impl->uploadTileTexture(*tileData);
-                m_impl->textures[key] = texId;
+        m_impl->gl->glBindVertexArray(m_impl->quadVAO);
+        m_impl->gl->glActiveTexture(GL_TEXTURE0);
+        m_impl->tileShader->setUniformValue("uTileTexture", 0);
+
+        auto [samplerMin, samplerMax] = toSamplerRange(
+            m_impl->slideInfo.displayRange.displayMin,
+            m_impl->slideInfo.displayRange.displayMax,
+            m_impl->slideInfo.channelDataType);
+        m_impl->tileShader->setUniformValue("uDisplayMin", samplerMin);
+        m_impl->tileShader->setUniformValue("uDisplayMax", samplerMax);
+
+        for (const auto& key : visibleKeys) {
+            auto screenRect = coordSystem.tileScreenRect(key, viewport);
+
+            GLuint texId = 0;
+            float alpha = 1.0f;
+
+            auto texIt = m_impl->textures.find(key);
+            if (texIt != m_impl->textures.end()) {
+                texId = texIt->second;
             } else {
-                if (paintCount <= 5) {
-                    spdlog::info("  SKIP tile {} - cached={} empty={} error={}", key.toString(),
-                                 tileData != nullptr,
-                                 tileData ? tileData->isEmpty() : true,
-                                 tileData ? tileData->isError() : false);
+                auto tileData = m_impl->tileCache->lookup(key);
+                if (tileData && !tileData->isEmpty() && !tileData->isError()) {
+                    texId = m_impl->uploadTileTexture(*tileData);
+                    m_impl->textures[key] = texId;
+                } else {
+                    if (paintCount <= 5) {
+                        spdlog::info("  SKIP tile {} - cached={} empty={} error={}", key.toString(),
+                                     tileData != nullptr,
+                                     tileData ? tileData->isEmpty() : true,
+                                     tileData ? tileData->isError() : false);
+                    }
+                    ++tilesSkipped;
+                    continue;
                 }
-                ++tilesSkipped;
-                continue;
             }
+
+            if (paintCount <= 3) {
+                spdlog::info("  tile {} -> screenRect({:.1f},{:.1f},{:.1f},{:.1f}) texId={} alpha={:.1f}",
+                             key.toString(), screenRect.x, screenRect.y,
+                             screenRect.width, screenRect.height, texId, alpha);
+            }
+
+            m_impl->tileShader->setUniformValue("uScreenRect",
+                static_cast<float>(screenRect.x),
+                static_cast<float>(screenRect.y),
+                static_cast<float>(screenRect.width),
+                static_cast<float>(screenRect.height));
+            m_impl->tileShader->setUniformValue("uAlpha", alpha);
+
+            m_impl->gl->glBindTexture(GL_TEXTURE_2D, texId);
+            m_impl->gl->glDrawArrays(GL_TRIANGLES, 0, 6);
+            ++tilesRendered;
         }
 
-        if (paintCount <= 3) {
-            spdlog::info("  tile {} -> screenRect({:.1f},{:.1f},{:.1f},{:.1f}) texId={} alpha={:.1f}",
-                         key.toString(), screenRect.x, screenRect.y,
-                         screenRect.width, screenRect.height, texId, alpha);
+        m_impl->gl->glBindVertexArray(0);
+        m_impl->gl->glBindTexture(GL_TEXTURE_2D, 0);
+        m_impl->tileShader->release();
+
+    } else {
+        // --- Fluorescence rendering path ---
+        m_impl->channelShader->bind();
+        m_impl->channelShader->setUniformValue("uViewportSize",
+            static_cast<float>(viewport.screenWidth()), static_cast<float>(viewport.screenHeight()));
+
+        m_impl->gl->glBindVertexArray(m_impl->quadVAO);
+        m_impl->gl->glActiveTexture(GL_TEXTURE0);
+        m_impl->channelShader->setUniformValue("uTileTexture", 0);
+
+        // Enable additive blending for fluorescence channel compositing
+        m_impl->gl->glEnable(GL_BLEND);
+        m_impl->gl->glBlendFunc(GL_ONE, GL_ONE);
+
+        for (const auto& key : visibleKeys) {
+            auto screenRect = coordSystem.tileScreenRect(key, viewport);
+
+            // Get or upload per-channel textures
+            auto texIt = m_impl->fluorescenceTextures.find(key);
+            if (texIt == m_impl->fluorescenceTextures.end()) {
+                auto tileData = m_impl->tileCache->lookup(key);
+                if (!tileData || tileData->isEmpty() || tileData->isError()) {
+                    if (paintCount <= 5) {
+                        spdlog::info("  SKIP fluor tile {} - cached={} empty={} error={}", key.toString(),
+                                     tileData != nullptr,
+                                     tileData ? tileData->isEmpty() : true,
+                                     tileData ? tileData->isError() : false);
+                    }
+                    ++tilesSkipped;
+                    continue;
+                }
+                m_impl->fluorescenceTextures[key] = m_impl->uploadTileChannelTextures(*tileData);
+                texIt = m_impl->fluorescenceTextures.find(key);
+            }
+
+            m_impl->channelShader->setUniformValue("uScreenRect",
+                static_cast<float>(screenRect.x),
+                static_cast<float>(screenRect.y),
+                static_cast<float>(screenRect.width),
+                static_cast<float>(screenRect.height));
+
+            // Render each visible channel with its pseudo-color
+            for (size_t ch = 0; ch < texIt->second.channelTexIds.size(); ++ch) {
+                if (ch >= m_impl->slideInfo.channels.size()) break;
+                const auto& chInfo = m_impl->slideInfo.channels[ch];
+                if (!chInfo.visible) continue;
+
+                auto [chSamplerMin, chSamplerMax] = toSamplerRange(
+                    chInfo.displayRange.displayMin, chInfo.displayRange.displayMax, chInfo.dataType);
+                m_impl->channelShader->setUniformValue("uDisplayMin", chSamplerMin);
+                m_impl->channelShader->setUniformValue("uDisplayMax", chSamplerMax);
+                float intensity = std::clamp(chInfo.intensity, 0.0f, 1.0f);
+                m_impl->channelShader->setUniformValue("uChannelColor",
+                    chInfo.colorR * intensity, chInfo.colorG * intensity, chInfo.colorB * intensity);
+
+                m_impl->gl->glBindTexture(GL_TEXTURE_2D, texIt->second.channelTexIds[ch]);
+                m_impl->gl->glDrawArrays(GL_TRIANGLES, 0, 6);
+            }
+            ++tilesRendered;
         }
 
-        m_impl->tileShader->setUniformValue("uScreenRect",
-            static_cast<float>(screenRect.x),
-            static_cast<float>(screenRect.y),
-            static_cast<float>(screenRect.width),
-            static_cast<float>(screenRect.height));
-        m_impl->tileShader->setUniformValue("uAlpha", alpha);
-
-        m_impl->gl->glBindTexture(GL_TEXTURE_2D, texId);
-        m_impl->gl->glDrawArrays(GL_TRIANGLES, 0, 6);
-        ++tilesRendered;
+        // Restore standard alpha blending
+        m_impl->gl->glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        m_impl->gl->glBindVertexArray(0);
+        m_impl->gl->glBindTexture(GL_TEXTURE_2D, 0);
+        m_impl->channelShader->release();
     }
 
     if (paintCount <= 5 || paintCount % 100 == 0) {
         spdlog::info("paintGL[{}]: rendered={} skipped={}", paintCount, tilesRendered, tilesSkipped);
     }
-
-    m_impl->gl->glBindVertexArray(0);
-    m_impl->gl->glBindTexture(GL_TEXTURE_2D, 0);
-    m_impl->tileShader->release();
 
     // If tiles were skipped (not yet loaded), schedule repaints until all are rendered
     if (tilesSkipped > 0 || morePending) {

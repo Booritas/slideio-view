@@ -136,7 +136,14 @@ The primary users -- clinical pathologists -- review 40-80 slides per day under 
 
   4. **Layers Tab:** Annotation layer management. Toggle visibility (eye icon), lock/unlock (padlock icon), set opacity (slider), reorder (drag-and-drop). Create, rename, delete, merge layers. Active layer clearly indicated. Filter by author toggle.
 
-  5. **Channels Tab** (appears only for multi-channel fluorescence slides): Per-channel visibility toggles, pseudo-color assignment (color picker per channel), per-channel brightness/contrast sliders, composite view toggle. Channels listed by name (e.g., DAPI, FITC, Cy3) with their assigned display color.
+  5. **Channels Panel** (appears only for multi-channel fluorescence slides): Implemented as a **dockable QDockWidget** (not a tab in the right panel) that can be moved to any dock area, floated, or closed. Position and dock state are persisted across sessions via QSettings. The panel is shown automatically when a fluorescence slide opens and hidden for brightfield slides. The View menu provides a toggle (Ctrl+Shift+C). Contents:
+     - **Per-channel row**: Each channel is displayed as a horizontal row with:
+       - **Visibility toggle** (QCheckBox): checked = visible in the composite
+       - **Channel name** (QLabel): from SlideIO metadata, or "Channel N" if unavailable
+       - **Color swatch** (QPushButton): shows the current pseudo-color; click opens QColorDialog for custom color selection
+     - **Default color assignment**: Channels are matched by name to known fluorescence dyes (DAPI→blue, FITC/GFP→green, Cy3/TRITC→red, Cy5→magenta). Unnamed channels receive index-based defaults (blue, green, red, magenta, cyan, yellow, white).
+     - **Compositing**: Visible channels are composited with **additive blending** against a black background. The OpenGL pipeline renders each channel as a separate pass with `glBlendFunc(GL_ONE, GL_ONE)`.
+     - **Per-channel brightness/contrast sliders**: Deferred to a later phase (infrastructure supports per-channel DisplayRange).
 
 ### 2.5 Main Toolbar
 
