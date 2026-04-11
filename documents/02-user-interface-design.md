@@ -85,6 +85,8 @@ The primary users -- clinical pathologists -- review 40-80 slides per day under 
 |          |  [Minimap]              [Z-Slider]   |             |
 |          |                                      |             |
 +----------+--------------------------------------+-------------+
+| Application Log (hidden by default)                           |
++--------------------------------------------------------------+
 | Status Bar                                                    |
 +--------------------------------------------------------------+
 ```
@@ -155,7 +157,24 @@ Tools:       [Brightness/Contrast] [Snapshot] [Scale Bar Toggle]
 - **Annotation tool dropdown:** Each shape tool has a small dropdown arrow for variant selection (e.g., the Freehand tool dropdown offers "Polygon" and "Polyline").
 - **Toolbar customization:** Users can show/hide toolbar groups and rearrange them via drag-and-drop.
 
-### 2.6 Status Bar
+### 2.6 Bottom Panel: Application Log
+
+- **Default state:** Hidden. Opened via View > Application Log menu item or Ctrl+Shift+G shortcut.
+- **Position:** Dockable panel at the bottom of the main window, between the viewport area and the status bar.
+- **Default height:** 200px, resizable vertically by dragging the top edge.
+- **Contents:**
+  - Log entries displayed in a scrollable, read-only table with columns: Timestamp, Level, Source, Message.
+  - Entries color-coded by severity: gray (debug), default (info), orange (warning), red (error).
+  - **Level filter:** Dropdown or toggle buttons to show/hide entries by severity (debug, info, warning, error). Default filter: info and above.
+  - **Search field:** Type-ahead text filter across all visible columns.
+  - **Toolbar buttons:** Clear log, Copy selection, Auto-scroll toggle (on by default -- keeps latest entries visible), Export log to file.
+- **Behavior:**
+  - Receives log entries in real time from the application's spdlog sink.
+  - Maximum display buffer: 10,000 entries (oldest entries discarded when exceeded).
+  - Auto-scroll pauses when the user scrolls up to review earlier entries; a "Jump to latest" button appears.
+- **Collapsed state:** When closed, no bottom panel is visible. Log entries continue to accumulate in the background buffer so they are available when the panel is reopened.
+
+### 2.7 Status Bar
 
 Bottom bar showing:
 - **Left:** Current magnification (e.g., "20.0x"), pixel coordinates under cursor (e.g., "X: 45230, Y: 12890"), active layer name.
@@ -163,7 +182,7 @@ Bottom bar showing:
 - **Right:** Tile loading progress indicator (subtle spinner during tile loading), memory usage indicator, connection status for remote slides.
 - **Tool hints:** When an annotation tool is active, the status bar shows contextual usage instructions (e.g., "Freehand Polygon: Click to place vertices, double-click to close").
 
-### 2.7 Menu Structure
+### 2.8 Menu Structure
 
 ```
 File
@@ -215,6 +234,7 @@ View
   Status Bar                 (toggle)
   Toolbar                    (toggle)
   Minimap                    Ctrl+M
+  Application Log            Ctrl+Shift+G
   Scale Bar                  (toggle)
   ---
   Theme                      > Light, Dark, System
@@ -731,6 +751,7 @@ All keyboard shortcuts are user-configurable via Tools > Shortcut Configuration.
 | Ctrl+L | Toggle left panel (slide tray) |
 | Ctrl+R | Toggle right panel (properties) |
 | Ctrl+M | Toggle minimap |
+| Ctrl+Shift+G | Toggle application log panel |
 | Ctrl+2 | Split view 2x1 |
 | Ctrl+3 | Split view 1x2 |
 | Ctrl+4 | Split view 2x2 |
@@ -858,6 +879,7 @@ All side panels can be detached from the main window:
 Detachable panels:
 - Left panel (slide tray / case panel)
 - Right panel (annotations / properties / metadata / layers / channels)
+- Bottom panel (application log)
 - Bookmark panel
 - Minimap (as a standalone floating window)
 

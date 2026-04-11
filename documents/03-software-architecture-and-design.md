@@ -564,7 +564,7 @@ private:
 
 ### 6.5 SlideIO Version Pinning
 
-SlideIO is pinned to a specific version in `vcpkg.json` or `FetchContent`. A compatibility test suite opens one reference slide in each supported format (SVS, NDPI, MRXS, SCN, BIF, CZI, TIFF, DICOM WSI) and validates:
+SlideIO is pinned to a specific version in `conanfile.py` or `FetchContent`. A compatibility test suite opens one reference slide in each supported format (SVS, NDPI, MRXS, SCN, BIF, CZI, TIFF, DICOM WSI) and validates:
 - Metadata extraction (dimensions, resolution, pyramid levels).
 - Tile decode at level 0 (pixel data matches a stored reference checksum).
 - Thumbnail generation.
@@ -1450,7 +1450,7 @@ Structured audit events logged to `~/.slideio-viewer/audit/audit.log`:
 | **Slide Library** | SlideIO (pinned version) | Multi-format WSI access; adapter pattern isolates API changes |
 | **Rendering** | OpenGL 3.3+ behind `ITileRenderer` abstraction | Sufficient for 2D tile compositing; widely supported; abstraction enables future Metal/Vulkan |
 | **Build System** | CMake 3.21+ | Industry standard; Qt 6 integration; cross-platform |
-| **Package Manager** | vcpkg (manifest mode) | Cross-platform dependency management |
+| **Package Manager** | Conan 2 | Cross-platform dependency management |
 | **JSON** | nlohmann/json | Ergonomic API for annotation serialization |
 | **Logging** | spdlog | Structured logging with rotation |
 | **Testing** | Catch2 3.x | Unit and integration testing |
@@ -1486,7 +1486,7 @@ The current implementation is `OpenGLTileRenderer`. A `MetalTileRenderer` (for m
 
 ### 14.4 Build and CI
 
-- CMake with `FetchContent` for header-only libraries, vcpkg for compiled dependencies.
+- CMake with `FetchContent` for header-only libraries, Conan for compiled dependencies.
 - CI: GitHub Actions with matrix builds (Windows MSVC 2022, macOS AppleClang, Ubuntu 22.04 GCC 12).
 - Sanitizers: AddressSanitizer on Linux/macOS in debug builds.
 - Static analysis: clang-tidy with project `.clang-tidy` configuration.
@@ -1511,9 +1511,12 @@ The current implementation is `OpenGLTileRenderer`. A `MetalTileRenderer` (for m
 
 ### 15.3 Logging
 
-- `spdlog` with two sinks: rotating file (debug level, 10 MB x 5 files) and console (info level in debug builds).
-- Location: `~/.slideio-viewer/logs/viewer.log`.
+- `spdlog` with three sinks:
+  1. **Rotating file** (debug level, 10 MB x 5 files) — persistent log at `~/.slideio-viewer/logs/viewer.log`.
+  2. **Console** (info level, debug builds only) — stderr output for development.
+  3. **Ring-buffer sink** (debug level, 10,000 entries) — in-memory buffer backing the Application Log panel in the UI. The `LogPanelWidget` reads from this sink and displays entries in real time. The sink is always active regardless of whether the panel is visible, so entries are available when the user opens the panel.
 - Format: `[2026-03-13 14:30:00.123] [info] [TileCache] Cache hit ratio: 94.2%`.
+- The `LogPanelWidget` connects to the ring-buffer sink via a Qt signal bridged from spdlog's custom sink callback, ensuring thread-safe delivery to the UI thread.
 
 ### 15.4 Session Recovery
 

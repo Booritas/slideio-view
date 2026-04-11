@@ -227,7 +227,7 @@
 
 **Impact:** Medium. Expected to happen roughly once per year.
 
-**Recommendation:** Pin SlideIO to a specific version in vcpkg.json. Maintain a compatibility test suite that opens a reference slide in each supported format and verifies metadata and tile data. Run this test suite against new SlideIO versions before upgrading. Keep the adapter interface narrow to minimize the surface area affected by API changes.
+**Recommendation:** Pin SlideIO to a specific version in conanfile.py. Maintain a compatibility test suite that opens a reference slide in each supported format and verifies metadata and tile data. Run this test suite against new SlideIO versions before upgrading. Keep the adapter interface narrow to minimize the surface area affected by API changes.
 
 ### 6.2 Qt 6 Major Version Migration
 

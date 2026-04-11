@@ -305,6 +305,18 @@ The application provides:
 | FR-MEAS-04 | A manual calibration override shall allow the user to set microns-per-pixel when metadata is missing or incorrect. | Must |
 | FR-MEAS-05 | A warning badge shall be displayed on measurements when calibration metadata is absent. | Must |
 
+### 5.7 Application Log
+
+| ID | Requirement | Priority |
+|----|------------|----------|
+| FR-LOG-01 | The application shall provide a log panel that displays application log messages in real time. | Must |
+| FR-LOG-02 | The log panel shall be hidden by default and opened on user request (via menu or keyboard shortcut). | Must |
+| FR-LOG-03 | The log panel shall display log entries with timestamp, severity level, source component, and message text. | Must |
+| FR-LOG-04 | The log panel shall support filtering by severity level (debug, info, warning, error). | Should |
+| FR-LOG-05 | The log panel shall support text search within displayed log entries. | Should |
+| FR-LOG-06 | The user shall be able to clear the log panel contents. | Should |
+| FR-LOG-07 | The user shall be able to copy selected log entries to the clipboard. | Should |
+
 ---
 
 ## 6. Image Handling Requirements

@@ -1004,7 +1004,7 @@ constexpr int PLUGIN_API_VERSION_MINOR = 0;
 | **Slide Library** | SlideIO | Multi-format WSI access; Python and C++ bindings; active development |
 | **Rendering** | OpenGL 3.3+ via QOpenGLWidget | Hardware-accelerated tile rendering; widely supported; sufficient for 2D tile compositing |
 | **Build System** | CMake 3.21+ | Industry standard for C++; Qt 6 integration; supports all target platforms |
-| **Package Manager** | vcpkg (manifest mode) | Cross-platform dependency management; large package ecosystem; integrates with CMake |
+| **Package Manager** | Conan 2 | Cross-platform dependency management; large package ecosystem; integrates with CMake via CMakeDeps/CMakeToolchain generators |
 
 ### 12.2 Key Libraries
 
@@ -1037,7 +1037,7 @@ Qt Widgets is chosen over QML for the following reasons:
 
 ### 12.5 Build and CI
 
-- **CMake** with `FetchContent` for header-only libraries, vcpkg for compiled dependencies.
+- **CMake** with `FetchContent` for header-only libraries, Conan for compiled dependencies.
 - **CI/CD:** GitHub Actions with matrix builds for Windows (MSVC 2022), macOS (AppleClang), and Ubuntu 22.04 (GCC 12).
 - **Packaging:** CPack for installers (NSIS on Windows, DMG on macOS, AppImage on Linux).
 

@@ -73,7 +73,7 @@ Formatting:
 ```
 slideio-view/
   CMakeLists.txt                  # Root CMake: project definition, options, subdirectories
-  vcpkg.json                      # vcpkg manifest: dependencies
+  conanfile.py                    # Conan package manager: dependencies
   .clang-format                   # Formatting rules
   .clang-tidy                     # Static analysis rules
   cmake/
@@ -174,6 +174,7 @@ slideio-view/
         StatusBarManager.h
         ShortcutManager.h
         ThemeManager.h
+        LogPanelWidget.h
       src/
         MainWindow.cpp
         ViewportWidget.cpp
@@ -190,6 +191,7 @@ slideio-view/
         StatusBarManager.cpp
         ShortcutManager.cpp
         ThemeManager.cpp
+        LogPanelWidget.cpp
       resources/
         icons/                    # SVG icons
         themes/                   # QSS stylesheets
@@ -1099,25 +1101,31 @@ endif()
 include(cmake/Packaging.cmake)
 ```
 
-### 9.2 Dependency Management (vcpkg)
+### 9.2 Dependency Management (Conan)
 
-```json
-{
-  "name": "slideio-viewer",
-  "version": "0.1.0",
-  "dependencies": [
-    { "name": "qt6-base", "version>=": "6.5.0" },
-    { "name": "qt6-opengl", "version>=": "6.5.0" },
-    { "name": "qt6-networkauth", "version>=": "6.5.0" },
-    { "name": "nlohmann-json", "version>=": "3.11.0" },
-    { "name": "spdlog", "version>=": "1.12.0" },
-    { "name": "catch2", "version>=": "3.4.0" },
-    { "name": "benchmark", "version>=": "1.8.0" }
-  ]
-}
+```python
+# conanfile.py
+from conan import ConanFile
+from conan.tools.cmake import cmake_layout
+
+class SlideioViewerConan(ConanFile):
+    name = "slideio-viewer"
+    version = "0.1.0"
+    settings = "os", "compiler", "build_type", "arch"
+    generators = "CMakeDeps", "CMakeToolchain"
+
+    def requirements(self):
+        self.requires("qt/[>=6.5.0]")
+        self.requires("nlohmann_json/[>=3.11.0]")
+        self.requires("spdlog/[>=1.12.0]")
+        self.requires("catch2/[>=3.4.0]")
+        self.requires("benchmark/[>=1.8.0]")
+
+    def layout(self):
+        cmake_layout(self)
 ```
 
-SlideIO is not in vcpkg; it is brought in via `FetchContent` or as a pre-built external package:
+SlideIO is not in Conan; it is brought in via `FetchContent` or as a pre-built external package:
 
 ```cmake
 # cmake/Dependencies.cmake
@@ -1145,7 +1153,7 @@ matrix:
 
 steps:
   - checkout
-  - install vcpkg dependencies
+  - install Conan dependencies (conan install .)
   - cmake configure with -DSLIDEIO_VIEWER_BUILD_TESTS=ON
   - cmake build
   - run ctest
@@ -1664,7 +1672,7 @@ private:
 
 ### Phase A: Foundation (Weeks 1-3)
 
-1. Project scaffolding: CMake structure, vcpkg setup, CI pipeline.
+1. Project scaffolding: CMake structure, Conan setup, CI pipeline.
 2. Core domain types: `Types.h`, `TileKey`, `TileData`, `TilePyramid`, `Viewport`.
 3. `SlideIOAdapter`: open slide, read metadata, decode tiles.
 4. `LruTileCache`: insert, lookup, evict, memory budget.
