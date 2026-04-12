@@ -38,19 +38,16 @@ add_subdirectory(src/ui)
 add_executable(slideio-viewer WIN32 src/main.cpp)
 target_link_libraries(slideio-viewer PRIVATE slideio-viewer-ui spdlog::spdlog)
 
-# Copy SlideIO DLLs to output directory on Windows
+# Copy SlideIO DLLs to output directory on Windows (config-aware)
 if(WIN32)
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        set(_slideio_bin_dir "${SLIDEIO_ROOT}/debug/bin")
-    else()
-        set(_slideio_bin_dir "${SLIDEIO_ROOT}/release/bin")
-    endif()
-    file(GLOB _slideio_dlls "${_slideio_bin_dir}/*.dll")
-    foreach(_dll ${_slideio_dlls})
-        add_custom_command(TARGET slideio-viewer POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_dll}" "$<TARGET_FILE_DIR:slideio-viewer>"
-        )
-    endforeach()
+    add_custom_command(TARGET slideio-viewer POST_BUILD
+        COMMAND ${CMAKE_COMMAND}
+            -D "CONFIG=$<CONFIG>"
+            -D "SLIDEIO_ROOT=${SLIDEIO_ROOT}"
+            -D "OUTPUT_DIR=$<TARGET_FILE_DIR:slideio-viewer>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopySlideIODlls.cmake"
+        COMMENT "Copying SlideIO DLLs for $<CONFIG>..."
+    )
 endif()
 
 # ── Install rules ──────────────────────────────────────────────────────────────
@@ -64,21 +61,39 @@ install(TARGETS slideio-viewer
 
 # SlideIO DLLs
 if(WIN32)
-    install(DIRECTORY "${_slideio_bin_dir}/"
+    install(DIRECTORY "${SLIDEIO_ROOT}/release/bin/"
         DESTINATION ${CMAKE_INSTALL_BINDIR}
+        CONFIGURATIONS Release RelWithDebInfo MinSizeRel
+        FILES_MATCHING PATTERN "*.dll"
+    )
+    install(DIRECTORY "${SLIDEIO_ROOT}/debug/bin/"
+        DESTINATION ${CMAKE_INSTALL_BINDIR}
+        CONFIGURATIONS Debug
         FILES_MATCHING PATTERN "*.dll"
     )
 endif()
 
 # Qt runtime deployment (copies Qt DLLs, plugins, and platforms)
 # Requires Qt 6.5+ which ships qt_generate_deploy_app_script
+# Note: Conan Qt packages are typically Release-only, so windeployqt
+# fails for Debug configs (missing debug Qt DLLs like Qt6Cored.dll).
+# We skip Qt deployment for Debug; run Debug builds from the build dir instead.
 qt_generate_deploy_app_script(
     TARGET slideio-viewer
     OUTPUT_SCRIPT _qt_deploy_script
     NO_UNSUPPORTED_PLATFORM_ERROR
     NO_TRANSLATIONS
 )
-install(SCRIPT ${_qt_deploy_script})
+# Create a wrapper that skips deployment for Debug config
+set(_qt_deploy_wrapper "${CMAKE_CURRENT_BINARY_DIR}/qt_deploy_wrapper-$<CONFIG>.cmake")
+file(GENERATE OUTPUT "${_qt_deploy_wrapper}" CONTENT
+"if(NOT \"$<CONFIG>\" STREQUAL \"Debug\")
+    include(\"${_qt_deploy_script}\")
+else()
+    message(STATUS \"Skipping Qt deployment for Debug config (Conan Qt is release-only)\")
+endif()
+")
+install(SCRIPT "${_qt_deploy_wrapper}")
 
 # ── Packaging (CPack) ──────────────────────────────────────────────────────────
 

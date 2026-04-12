@@ -37,6 +37,8 @@ public:
     };
 
     explicit SlideIOAdapterPool(const std::string& filePath, int poolSize = 4);
+    SlideIOAdapterPool(const std::string& filePath, int sceneIndex, int poolSize);
+    SlideIOAdapterPool(const std::string& filePath, const std::string& auxImageName, int poolSize);
     ~SlideIOAdapterPool();
 
     SlideIOAdapterPool(const SlideIOAdapterPool&) = delete;
@@ -51,6 +53,9 @@ private:
 
     std::string m_filePath;
     int m_poolSize;
+    int m_sceneIndex = 0;
+    std::string m_auxImageName;
+    bool m_isAuxiliary = false;
     std::vector<std::unique_ptr<core::ISlideSource>> m_available;
     mutable std::mutex m_mutex;
     std::condition_variable m_condition;

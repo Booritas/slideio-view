@@ -5,6 +5,7 @@ add_library(slideio-viewer-ui STATIC
     src/ZoomIndicatorWidget.cpp
     src/StatusBarManager.cpp
     src/ChannelMixerPanel.cpp
+    src/SceneThumbnailPanel.cpp
     src/MainWindow.cpp
 )
 

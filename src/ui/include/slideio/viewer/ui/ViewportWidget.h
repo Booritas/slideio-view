@@ -26,8 +26,12 @@ public:
     ViewportWidget& operator=(const ViewportWidget&) = delete;
 
     void openSlide(const std::string& filePath);
+    void openScene(const std::string& filePath, int sceneIndex);
+    void openAuxImage(const std::string& filePath, const std::string& auxImageName);
+    void generateSceneThumbnails();
     void closeSlide();
     bool isSlideOpen() const;
+    const std::string& currentFilePath() const;
 
     ViewportController* controller() const;
 
@@ -46,6 +50,7 @@ signals:
     void slideOpened(const std::string& filePath);
     void slideClosed();
     void thumbnailReady(const QImage& thumbnail);
+    void sceneThumbnailReady(int sceneIndex, bool isAuxiliary, const std::string& name, const QImage& thumbnail);
 
 protected:
     void initializeGL() override;

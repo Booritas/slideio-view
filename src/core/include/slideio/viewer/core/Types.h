@@ -114,6 +114,17 @@ inline void assignDefaultFluorescenceColor(ChannelInfo& ch, int channelIndex)
     ch.colorB = kIndexDefaults[idx].b;
 }
 
+struct SceneInfo
+{
+    int index = -1;             // scene index (0..N-1); -1 for auxiliary images
+    std::string name;
+    int width = 0;
+    int height = 0;
+    int numChannels = 0;
+    bool isAuxiliary = false;   // true for label/macro images
+    std::string auxiliaryName;  // SlideIO aux image name (for retrieval)
+};
+
 struct SlideInfo
 {
     std::string filePath;
@@ -129,6 +140,8 @@ struct SlideInfo
     DisplayRange displayRange;
     std::vector<ChannelInfo> channels;
     bool isBrightfield = false;
+    std::vector<SceneInfo> scenes;
+    std::vector<SceneInfo> auxImages;
 };
 
 struct LevelInfo

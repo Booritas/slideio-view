@@ -1,5 +1,6 @@
 #include "slideio/viewer/ui/MainWindow.h"
 #include "slideio/viewer/ui/ChannelMixerPanel.h"
+#include "slideio/viewer/ui/SceneThumbnailPanel.h"
 #include "slideio/viewer/ui/MinimapWidget.h"
 #include "slideio/viewer/ui/StatusBarManager.h"
 #include "slideio/viewer/ui/ViewportController.h"
@@ -37,6 +38,7 @@ struct MainWindow::Impl
     ZoomIndicatorWidget* zoomIndicatorWidget = nullptr;
     StatusBarManager* statusBarManager = nullptr;
     ChannelMixerPanel* channelMixerPanel = nullptr;
+    SceneThumbnailPanel* sceneThumbnailPanel = nullptr;
 
     // Recent files
     QMenu* recentFilesMenu = nullptr;
@@ -53,6 +55,7 @@ struct MainWindow::Impl
     QAction* fullScreenAction = nullptr;
     QAction* minimapToggleAction = nullptr;
     QAction* channelMixerToggleAction = nullptr;
+    QAction* sceneThumbnailToggleAction = nullptr;
 
     void createActions()
     {
@@ -119,6 +122,7 @@ struct MainWindow::Impl
         viewMenu->addAction(fullScreenAction);
         viewMenu->addAction(minimapToggleAction);
         viewMenu->addAction(channelMixerToggleAction);
+        viewMenu->addAction(sceneThumbnailToggleAction);
     }
 
     void connectSignals()
@@ -137,6 +141,8 @@ struct MainWindow::Impl
         QObject::connect(closeAction, &QAction::triggered, owner, [this]() {
             viewportWidget->closeSlide();
             closeAction->setEnabled(false);
+            sceneThumbnailPanel->clear();
+            sceneThumbnailPanel->hide();
         });
 
         QObject::connect(exitAction, &QAction::triggered, owner, &QMainWindow::close);
@@ -196,6 +202,7 @@ struct MainWindow::Impl
                     channelMixerPanel->clearChannels();
                     channelMixerPanel->hide();
                 }
+
             });
 
         QObject::connect(viewportWidget, &ViewportWidget::thumbnailReady, owner,
@@ -211,7 +218,39 @@ struct MainWindow::Impl
             statusBarManager->updateScaleBar(0.0);
             channelMixerPanel->clearChannels();
             channelMixerPanel->hide();
+            // Note: scene panel is NOT cleared here because slideClosed also fires
+            // during scene switching (openScene calls closeSlide internally).
+            // The scene panel is cleared explicitly in openSlide() and the close action.
         });
+
+        // Scene thumbnail panel: wire scene switching
+        QObject::connect(viewportWidget, &ViewportWidget::sceneThumbnailReady, owner,
+            [this](int sceneIndex, bool isAuxiliary, const std::string& name, const QImage& thumbnail) {
+                sceneThumbnailPanel->setThumbnail(sceneIndex, isAuxiliary, name, thumbnail);
+            });
+
+        QObject::connect(sceneThumbnailPanel, &SceneThumbnailPanel::sceneSelected, owner,
+            [this](int sceneIndex) {
+                auto filePath = viewportWidget->currentFilePath();
+                if (filePath.empty()) return;
+
+                // openScene calls closeSlide which hides/clears channel mixer via slideClosed signal.
+                // slideOpened handler will re-populate channel mixer if the new scene needs it.
+                viewportWidget->openScene(filePath, sceneIndex);
+                sceneThumbnailPanel->setActiveScene(sceneIndex, false);
+                sceneThumbnailPanel->show();
+            });
+
+        QObject::connect(sceneThumbnailPanel, &SceneThumbnailPanel::auxImageSelected, owner,
+            [this](const std::string& auxImageName) {
+                auto filePath = viewportWidget->currentFilePath();
+                if (filePath.empty()) return;
+                viewportWidget->openAuxImage(filePath, auxImageName);
+                sceneThumbnailPanel->setActiveScene(-1, true);
+                sceneThumbnailPanel->show();
+                // channelMixerPanel is already cleared/hidden by the slideClosed handler
+                // (openAuxImage calls closeSlide internally)
+            });
 
         // Channel mixer panel: push settings changes to viewport
         QObject::connect(channelMixerPanel, &ChannelMixerPanel::channelSettingsChanged, owner,
@@ -368,12 +407,21 @@ MainWindow::MainWindow(QWidget* parent)
     addDockWidget(Qt::RightDockWidgetArea, m_impl->channelMixerPanel);
     m_impl->channelMixerPanel->hide();
 
+    // Create scene thumbnail dock widget (hidden by default)
+    m_impl->sceneThumbnailPanel = new SceneThumbnailPanel(this);
+    addDockWidget(Qt::RightDockWidgetArea, m_impl->sceneThumbnailPanel);
+    m_impl->sceneThumbnailPanel->hide();
+
     // Create actions and menus
     m_impl->createActions();
     m_impl->channelMixerToggleAction = m_impl->channelMixerPanel->toggleViewAction();
     m_impl->channelMixerToggleAction->setText("&Channels");
     m_impl->channelMixerToggleAction->setShortcut(QKeySequence("Ctrl+Shift+C"));
     m_impl->channelMixerToggleAction->setStatusTip("Toggle the channel mixer panel");
+    m_impl->sceneThumbnailToggleAction = m_impl->sceneThumbnailPanel->toggleViewAction();
+    m_impl->sceneThumbnailToggleAction->setText("&Scenes");
+    m_impl->sceneThumbnailToggleAction->setShortcut(QKeySequence("Ctrl+Shift+T"));
+    m_impl->sceneThumbnailToggleAction->setStatusTip("Toggle the scene thumbnail panel");
     m_impl->createMenus();
     m_impl->connectSignals();
 
@@ -402,9 +450,23 @@ MainWindow::~MainWindow()
 
 void MainWindow::openSlide(const std::string& path)
 {
+    m_impl->sceneThumbnailPanel->clear();
+    m_impl->sceneThumbnailPanel->hide();
     m_impl->viewportWidget->openSlide(path);
     setWindowTitle(QString("SlideIO Viewer - %1").arg(QString::fromStdString(path)));
     m_impl->addToRecentFiles(path);
+
+    // Populate scene thumbnail panel (after openSlide returns, scene data is available)
+    if (m_impl->viewportWidget->isSlideOpen()) {
+        const auto& info = m_impl->viewportWidget->slideInfo();
+        if (info.scenes.size() > 1) {
+            m_impl->sceneThumbnailPanel->setScenes(info.scenes, {});
+            m_impl->sceneThumbnailPanel->setActiveScene(0, false);
+            m_impl->sceneThumbnailPanel->show();
+            // Generate thumbnails AFTER panel items exist
+            m_impl->viewportWidget->generateSceneThumbnails();
+        }
+    }
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)

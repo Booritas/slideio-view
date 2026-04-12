@@ -50,8 +50,12 @@ Rect<double> CoordinateSystem::tileSlideRect(const TileKey& key) const
     // Tile position in level-pixel space
     double levelX = static_cast<double>(key.column()) * info.tileWidth;
     double levelY = static_cast<double>(key.row()) * info.tileHeight;
-    double levelW = static_cast<double>(info.tileWidth);
-    double levelH = static_cast<double>(info.tileHeight);
+
+    // Clamp tile size for edge tiles that extend beyond the level dimensions
+    double levelW = std::min(static_cast<double>(info.tileWidth),
+                             static_cast<double>(info.width) - levelX);
+    double levelH = std::min(static_cast<double>(info.tileHeight),
+                             static_cast<double>(info.height) - levelY);
 
     // Convert from level-pixel space to slide-pixel space
     // level_pixels = slide_pixels * scale, so slide_pixels = level_pixels / scale

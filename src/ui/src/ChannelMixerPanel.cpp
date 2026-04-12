@@ -51,23 +51,16 @@ struct ChannelMixerPanel::Impl
 
     void clearRows()
     {
-        for (auto& row : rows) {
-            delete row.checkBox;
-            delete row.nameLabel;
-            delete row.colorButton;
-            delete row.intensitySlider;
-        }
         rows.clear();
 
-        // Remove all items from layout except the terminal stretch
-        while (contentLayout->count() > 0) {
-            QLayoutItem* item = contentLayout->takeAt(0);
-            if (item->layout()) {
-                // Delete the child QHBoxLayout (its widgets are already deleted above)
-                delete item->layout();
-            }
-            delete item;
-        }
+        // Replace the content widget entirely — Qt destroys all child widgets
+        delete contentWidget;
+        contentWidget = new QWidget(scrollArea);
+        contentWidget->setStyleSheet("background-color: #2D2D2D;");
+        contentLayout = new QVBoxLayout(contentWidget);
+        contentLayout->setContentsMargins(4, 4, 4, 4);
+        contentLayout->setSpacing(4);
+        scrollArea->setWidget(contentWidget);
     }
 
     void rebuildRows()
@@ -201,7 +194,6 @@ void ChannelMixerPanel::clearChannels()
 {
     m_impl->channels.clear();
     m_impl->clearRows();
-    m_impl->contentLayout->addStretch();
 }
 
 std::vector<core::ChannelInfo> ChannelMixerPanel::channelSettings() const

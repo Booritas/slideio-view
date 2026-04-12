@@ -1586,6 +1586,24 @@ The viewer uses two rendering paths based on slide type:
 - Dockable, floatable, closable; position persisted via `QMainWindow::saveState()`/`restoreState()` with `QSettings`
 - Hidden for brightfield slides; shown automatically for fluorescence slides
 
+### 15.8 Multi-Scene Support
+
+SlideIO slides can contain multiple scenes (image regions) and auxiliary images (labels, macro overviews). The viewer supports browsing and switching between them.
+
+**SceneInfo struct** in `Types.h` stores per-scene metadata: index, name, dimensions, channel count, and auxiliary image name (for aux images). `SlideInfo` carries `scenes` and `auxImages` vectors populated on slide open.
+
+**SlideIOAdapter** accepts a scene index or auxiliary image name parameter. `enumerateScenes()` is a static method that reads all scene and auxiliary image metadata from a slide file without loading tile data.
+
+**SceneThumbnailPanel** is a `QDockWidget` showing clickable thumbnails:
+- Scene thumbnails (from coarsest pyramid level) with names below
+- Separator line
+- Auxiliary image thumbnails with names below
+- Active scene highlighted with colored border (`#4A90D9`)
+- Thumbnail size configurable via QSettings (`sceneThumbnails/size`, default 256)
+- Position persisted via `QMainWindow::saveState()`/`restoreState()`
+
+**Scene switching** tears down the current tile pipeline (`closeSlide()`) and rebuilds it for the selected scene index or auxiliary image name. The thumbnail panel is not rebuilt on switch — only the highlight changes.
+
 ---
 
 *This document provides the complete software architecture and design for SlideIO Viewer, incorporating findings from all five design phases including the critical review. It serves as the definitive technical reference for implementation.*

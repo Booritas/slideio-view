@@ -44,10 +44,11 @@ constexpr int kDefaultTileSize = 256;
 namespace slideio::viewer::infra
 {
 
-SlideIOAdapter::SlideIOAdapter(const std::string& filePath)
+SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex)
     : m_filePath(filePath)
+    , m_sceneIndex(sceneIndex)
 {
-    spdlog::info("SlideIOAdapter: opening slide '{}'", filePath);
+    spdlog::info("SlideIOAdapter: opening slide '{}', scene {}", filePath, sceneIndex);
 
     m_slide = ::slideio::openSlide(filePath);
     if (!m_slide) {
@@ -59,9 +60,15 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath)
         throw std::runtime_error("SlideIOAdapter: slide '" + filePath + "' has no scenes");
     }
 
-    m_scene = m_slide->getScene(0);
+    if (sceneIndex < 0 || sceneIndex >= numScenes) {
+        throw std::runtime_error("SlideIOAdapter: scene index " + std::to_string(sceneIndex)
+            + " out of range [0, " + std::to_string(numScenes) + ") for slide '" + filePath + "'");
+    }
+
+    m_scene = m_slide->getScene(sceneIndex);
     if (!m_scene) {
-        throw std::runtime_error("SlideIOAdapter: failed to get scene 0 from slide '" + filePath + "'");
+        throw std::runtime_error("SlideIOAdapter: failed to get scene " + std::to_string(sceneIndex)
+            + " from slide '" + filePath + "'");
     }
 
     // Build cached slide info
@@ -199,6 +206,220 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath)
     spdlog::info("SlideIOAdapter: opened slide {}x{}, {} channels, {} levels",
                  m_slideInfo.width, m_slideInfo.height, m_slideInfo.numChannels,
                  static_cast<int>(m_levels.size()));
+}
+
+SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& auxImageName)
+    : m_filePath(filePath)
+    , m_sceneIndex(-1)
+{
+    spdlog::info("SlideIOAdapter: opening slide '{}', aux image '{}'", filePath, auxImageName);
+
+    m_slide = ::slideio::openSlide(filePath);
+    if (!m_slide) {
+        throw std::runtime_error("SlideIOAdapter: failed to open slide '" + filePath + "'");
+    }
+
+    m_scene = m_slide->getAuxImage(auxImageName);
+    if (!m_scene) {
+        throw std::runtime_error("SlideIOAdapter: failed to get aux image '" + auxImageName
+            + "' from slide '" + filePath + "'");
+    }
+
+    // Build cached slide info
+    auto rect = m_scene->getRect();
+    m_slideInfo.filePath = filePath;
+    m_slideInfo.width = std::get<2>(rect);
+    m_slideInfo.height = std::get<3>(rect);
+    m_slideInfo.numChannels = m_scene->getNumChannels();
+    m_slideInfo.channelDataType = (m_slideInfo.numChannels > 0)
+        ? convertSlideIODataType(m_scene->getChannelDataType(0))
+        : core::DataType::None;
+    m_slideInfo.magnification = m_scene->getMagnification();
+
+    auto resolution = m_scene->getResolution();
+    m_slideInfo.resolutionX = std::get<0>(resolution);
+    m_slideInfo.resolutionY = std::get<1>(resolution);
+
+    m_slideInfo.driverName = m_slide->getDriverId();
+
+    // Read per-channel info (names, data types, default colors)
+    m_slideInfo.channels.resize(static_cast<size_t>(m_slideInfo.numChannels));
+    for (int ch = 0; ch < m_slideInfo.numChannels; ++ch) {
+        auto& info = m_slideInfo.channels[static_cast<size_t>(ch)];
+        try {
+            info.name = m_scene->getChannelName(ch);
+        } catch (...) {
+            info.name = "Channel " + std::to_string(ch);
+        }
+        info.dataType = convertSlideIODataType(m_scene->getChannelDataType(ch));
+        info.visible = true;
+        core::assignDefaultFluorescenceColor(info, ch);
+    }
+
+    // Determine if this is a brightfield slide
+    m_slideInfo.isBrightfield =
+        (m_slideInfo.numChannels == 1) ||
+        (m_slideInfo.numChannels == 3 && m_slideInfo.channelDataType == core::DataType::Byte);
+
+    spdlog::info("SlideIOAdapter: isBrightfield={}, {} channels", m_slideInfo.isBrightfield, m_slideInfo.numChannels);
+
+    // Build level info
+    int numZoomLevels = m_scene->getNumZoomLevels();
+    m_slideInfo.numZoomLevels = numZoomLevels;
+
+    if (numZoomLevels > 0) {
+        for (int i = 0; i < numZoomLevels; ++i) {
+            const ::slideio::LevelInfo* srcLevel = m_scene->getLevelInfo(i);
+            if (!srcLevel) {
+                spdlog::warn("SlideIOAdapter: getLevelInfo({}) returned null, skipping", i);
+                continue;
+            }
+
+            core::LevelInfo lvl;
+            lvl.level = srcLevel->getLevel();
+
+            auto levelSize = srcLevel->getSize();
+            lvl.width = levelSize.width;
+            lvl.height = levelSize.height;
+
+            double scaleFromMetadata = srcLevel->getScale();
+            double scaleFromSize = 0.0;
+            if (m_slideInfo.width > 0 && m_slideInfo.height > 0 && lvl.width > 0 && lvl.height > 0) {
+                double sx = static_cast<double>(lvl.width) / static_cast<double>(m_slideInfo.width);
+                double sy = static_cast<double>(lvl.height) / static_cast<double>(m_slideInfo.height);
+                scaleFromSize = std::min(sx, sy);
+            }
+
+            if (scaleFromSize > 0.0) {
+                lvl.scale = scaleFromSize;
+            } else if (scaleFromMetadata > 1.0) {
+                lvl.scale = 1.0 / scaleFromMetadata;
+            } else {
+                lvl.scale = scaleFromMetadata;
+            }
+
+            if (lvl.scale <= 0.0) {
+                lvl.scale = 1.0;
+            }
+            lvl.magnification = srcLevel->getMagnification();
+
+            auto tileSize = srcLevel->getTileSize();
+            lvl.tileWidth = tileSize.width;
+            lvl.tileHeight = tileSize.height;
+
+            if (lvl.tileWidth <= 0 || lvl.tileHeight <= 0) {
+                lvl.tileWidth = std::min(kDefaultTileSize, lvl.width);
+                lvl.tileHeight = std::min(kDefaultTileSize, lvl.height);
+            }
+
+            lvl.tilesX = (lvl.width > 0 && lvl.tileWidth > 0)
+                ? (lvl.width + lvl.tileWidth - 1) / lvl.tileWidth
+                : 1;
+            lvl.tilesY = (lvl.height > 0 && lvl.tileHeight > 0)
+                ? (lvl.height + lvl.tileHeight - 1) / lvl.tileHeight
+                : 1;
+
+            m_levels.push_back(lvl);
+        }
+    }
+
+    // Fallback: create a synthetic single level from full dimensions
+    if (m_levels.empty()) {
+        spdlog::info("SlideIOAdapter: aux image has 0 zoom levels, creating synthetic single level");
+
+        core::LevelInfo lvl;
+        lvl.level = 0;
+        lvl.width = m_slideInfo.width;
+        lvl.height = m_slideInfo.height;
+        lvl.scale = 1.0;
+        lvl.magnification = m_slideInfo.magnification;
+        lvl.tileWidth = std::min(kDefaultTileSize, m_slideInfo.width);
+        lvl.tileHeight = std::min(kDefaultTileSize, m_slideInfo.height);
+        lvl.tilesX = (lvl.width > 0 && lvl.tileWidth > 0)
+            ? (lvl.width + lvl.tileWidth - 1) / lvl.tileWidth
+            : 1;
+        lvl.tilesY = (lvl.height > 0 && lvl.tileHeight > 0)
+            ? (lvl.height + lvl.tileHeight - 1) / lvl.tileHeight
+            : 1;
+
+        m_levels.push_back(lvl);
+        m_slideInfo.numZoomLevels = 1;
+    }
+
+    spdlog::info("SlideIOAdapter: opened aux image '{}' {}x{}, {} channels, {} levels",
+                 auxImageName, m_slideInfo.width, m_slideInfo.height, m_slideInfo.numChannels,
+                 static_cast<int>(m_levels.size()));
+}
+
+std::pair<std::vector<core::SceneInfo>, std::vector<core::SceneInfo>> SlideIOAdapter::enumerateScenes(
+    const std::string& filePath)
+{
+    std::vector<core::SceneInfo> scenes;
+    std::vector<core::SceneInfo> auxImages;
+
+    try {
+        auto slide = ::slideio::openSlide(filePath);
+        if (!slide) {
+            spdlog::error("SlideIOAdapter::enumerateScenes: failed to open slide '{}'", filePath);
+            return {scenes, auxImages};
+        }
+
+        // Enumerate main scenes
+        int numScenes = slide->getNumScenes();
+        for (int i = 0; i < numScenes; ++i) {
+            try {
+                auto scene = slide->getScene(i);
+                if (!scene) {
+                    continue;
+                }
+
+                core::SceneInfo info;
+                info.index = i;
+                info.name = scene->getName();
+                auto rect = scene->getRect();
+                info.width = std::get<2>(rect);
+                info.height = std::get<3>(rect);
+                info.numChannels = scene->getNumChannels();
+                info.isAuxiliary = false;
+
+                scenes.push_back(std::move(info));
+            } catch (const std::exception& ex) {
+                spdlog::warn("SlideIOAdapter::enumerateScenes: failed to read scene {}: {}", i, ex.what());
+            }
+        }
+
+        // Enumerate auxiliary images
+        auto auxNames = slide->getAuxImageNames();
+        for (const auto& auxName : auxNames) {
+            try {
+                auto auxScene = slide->getAuxImage(auxName);
+                if (!auxScene) {
+                    continue;
+                }
+
+                core::SceneInfo info;
+                info.index = -1;
+                info.name = auxScene->getName();
+                auto rect = auxScene->getRect();
+                info.width = std::get<2>(rect);
+                info.height = std::get<3>(rect);
+                info.numChannels = auxScene->getNumChannels();
+                info.isAuxiliary = true;
+                info.auxiliaryName = auxName;
+
+                auxImages.push_back(std::move(info));
+            } catch (const std::exception& ex) {
+                spdlog::warn("SlideIOAdapter::enumerateScenes: failed to read aux image '{}': {}", auxName, ex.what());
+            }
+        }
+    } catch (const std::exception& ex) {
+        spdlog::error("SlideIOAdapter::enumerateScenes: exception opening slide '{}': {}", filePath, ex.what());
+    }
+
+    spdlog::info("SlideIOAdapter::enumerateScenes: '{}' has {} scenes, {} aux images",
+                 filePath, scenes.size(), auxImages.size());
+
+    return {scenes, auxImages};
 }
 
 SlideIOAdapter::~SlideIOAdapter()
