@@ -43,6 +43,8 @@ layout(location = 0) in vec2 aPos;
 
 uniform vec4 uScreenRect;
 uniform vec2 uViewportSize;
+uniform vec2 uTexCoordOffset;  // (0,0) for normal tiles, sub-region offset for fallback
+uniform vec2 uTexCoordScale;   // (1,1) for normal tiles, sub-region scale for fallback
 
 out vec2 vTexCoord;
 
@@ -56,7 +58,7 @@ void main()
 
     gl_Position = vec4(ndcX, ndcY, 0.0, 1.0);
 
-    vTexCoord = vec2(aPos.x, aPos.y);
+    vTexCoord = uTexCoordOffset + vec2(aPos.x, aPos.y) * uTexCoordScale;
 }
 )glsl";
 
@@ -511,6 +513,98 @@ struct ViewportWidget::Impl
             }
         }
         fluorescenceTextures.clear();
+    }
+
+    // Find a fallback tile at a coarser level that covers the given tile's area.
+    // Returns the fallback TileKey and computes the texture sub-region (offset + scale)
+    // that maps to the missing tile's area within the coarser tile.
+    // Returns false if no fallback is available.
+    struct FallbackInfo
+    {
+        core::TileKey key;
+        float texOffsetX = 0.0f, texOffsetY = 0.0f;
+        float texScaleX = 1.0f, texScaleY = 1.0f;
+    };
+
+    bool findFallbackTile(const core::TileKey& missingKey, FallbackInfo& out) const
+    {
+        if (!pyramid) return false;
+
+        int missingLevel = missingKey.level();
+        int missingCol = missingKey.column();
+        int missingRow = missingKey.row();
+        int slideW = pyramid->slideWidth();
+        int slideH = pyramid->slideHeight();
+        if (slideW <= 0 || slideH <= 0) return false;
+
+        const auto& missingLvl = pyramid->levelInfo(missingLevel);
+        if (missingLvl.tileWidth <= 0 || missingLvl.tileHeight <= 0 ||
+            missingLvl.width <= 0 || missingLvl.height <= 0) {
+            return false;
+        }
+
+        // Compute the missing tile's position as a normalized fraction [0,1] of the full slide.
+        // This avoids relying on the 'scale' field for cross-level mapping.
+        double missingLevelX = static_cast<double>(missingCol * missingLvl.tileWidth);
+        double missingLevelY = static_cast<double>(missingRow * missingLvl.tileHeight);
+        double missingLevelW = std::min(static_cast<double>(missingLvl.tileWidth),
+                                        static_cast<double>(missingLvl.width) - missingLevelX);
+        double missingLevelH = std::min(static_cast<double>(missingLvl.tileHeight),
+                                        static_cast<double>(missingLvl.height) - missingLevelY);
+
+        // Normalized position within the full image [0,1]
+        double normX = missingLevelX / missingLvl.width;
+        double normY = missingLevelY / missingLvl.height;
+        double normW = missingLevelW / missingLvl.width;
+        double normH = missingLevelH / missingLvl.height;
+
+        // Walk up to coarser levels
+        for (int fallbackLevel = missingLevel + 1; fallbackLevel < pyramid->numLevels(); ++fallbackLevel) {
+            const auto& fbLvl = pyramid->levelInfo(fallbackLevel);
+            if (fbLvl.tileWidth <= 0 || fbLvl.tileHeight <= 0 ||
+                fbLvl.width <= 0 || fbLvl.height <= 0) {
+                continue;
+            }
+
+            // Convert normalized position to fallback level pixel coords
+            double fbX = normX * fbLvl.width;
+            double fbY = normY * fbLvl.height;
+
+            // Which fallback tile contains this point?
+            int fbCol = static_cast<int>(fbX / fbLvl.tileWidth);
+            int fbRow = static_cast<int>(fbY / fbLvl.tileHeight);
+            fbCol = std::clamp(fbCol, 0, fbLvl.tilesX - 1);
+            fbRow = std::clamp(fbRow, 0, fbLvl.tilesY - 1);
+
+            core::TileKey fbKey(fallbackLevel, fbCol, fbRow);
+
+            // Check if this fallback tile is in the texture cache
+            if (textures.find(fbKey) != textures.end()) {
+                // Actual texture dimensions (clamped for edge tiles)
+                double fbTileOriginX = static_cast<double>(fbCol * fbLvl.tileWidth);
+                double fbTileOriginY = static_cast<double>(fbRow * fbLvl.tileHeight);
+                double fbTexW = std::min(static_cast<double>(fbLvl.tileWidth),
+                                         static_cast<double>(fbLvl.width) - fbTileOriginX);
+                double fbTexH = std::min(static_cast<double>(fbLvl.tileHeight),
+                                         static_cast<double>(fbLvl.height) - fbTileOriginY);
+                if (fbTexW <= 0 || fbTexH <= 0) continue;
+
+                // The missing tile's area within the fallback texture, in pixel coords
+                double localX = fbX - fbTileOriginX;
+                double localY = fbY - fbTileOriginY;
+                double localW = normW * fbLvl.width;
+                double localH = normH * fbLvl.height;
+
+                // Convert to UV coordinates [0,1] within the actual texture
+                out.key = fbKey;
+                out.texOffsetX = static_cast<float>(localX / fbTexW);
+                out.texOffsetY = static_cast<float>(localY / fbTexH);
+                out.texScaleX = static_cast<float>(localW / fbTexW);
+                out.texScaleY = static_cast<float>(localH / fbTexH);
+                return true;
+            }
+        }
+        return false;
     }
 
     // Returns true if there are still pending uploads remaining
@@ -1241,11 +1335,55 @@ void ViewportWidget::paintGL()
         m_impl->tileShader->setUniformValue("uDisplayMin", samplerMin);
         m_impl->tileShader->setUniformValue("uDisplayMax", samplerMax);
 
+        // Default tex coord uniforms (full texture, no sub-region)
+        m_impl->tileShader->setUniformValue("uTexCoordOffset", 0.0f, 0.0f);
+        m_impl->tileShader->setUniformValue("uTexCoordScale", 1.0f, 1.0f);
+        m_impl->tileShader->setUniformValue("uAlpha", 1.0f);
+
+        // Pass 1: Render cached coarser-level tiles as a blurry background.
+        // Walk from coarsest to the level just above the current visible level.
+        int currentLevel = coordSystem.bestLevel(viewport.scale());
+        for (int lvl = m_impl->pyramid->numLevels() - 1; lvl > currentLevel; --lvl) {
+            // Find all tiles at this level that overlap the visible area
+            auto visSlideRect = viewport.visibleSlideRect();
+            auto coarseTiles = m_impl->pyramid->visibleTiles(
+                lvl,
+                std::max(0, static_cast<int>(visSlideRect.x)),
+                std::max(0, static_cast<int>(visSlideRect.y)),
+                static_cast<int>(std::ceil(visSlideRect.width)),
+                static_cast<int>(std::ceil(visSlideRect.height)));
+
+            for (const auto& fbKey : coarseTiles) {
+                auto fbTexIt = m_impl->textures.find(fbKey);
+                if (fbTexIt == m_impl->textures.end()) {
+                    // Also check the tile cache for un-uploaded tiles
+                    auto tileData = m_impl->tileCache->lookup(fbKey);
+                    if (tileData && !tileData->isEmpty() && !tileData->isError()) {
+                        GLuint texId = m_impl->uploadTileTexture(*tileData);
+                        m_impl->textures[fbKey] = texId;
+                        fbTexIt = m_impl->textures.find(fbKey);
+                    } else {
+                        continue;
+                    }
+                }
+
+                auto fbScreenRect = coordSystem.tileScreenRect(fbKey, viewport);
+                m_impl->tileShader->setUniformValue("uScreenRect",
+                    static_cast<float>(fbScreenRect.x),
+                    static_cast<float>(fbScreenRect.y),
+                    static_cast<float>(fbScreenRect.width),
+                    static_cast<float>(fbScreenRect.height));
+
+                m_impl->gl->glBindTexture(GL_TEXTURE_2D, fbTexIt->second);
+                m_impl->gl->glDrawArrays(GL_TRIANGLES, 0, 6);
+            }
+        }
+
+        // Pass 2: Render actual visible tiles on top (overwrites blurry background).
         for (const auto& key : visibleKeys) {
             auto screenRect = coordSystem.tileScreenRect(key, viewport);
 
             GLuint texId = 0;
-            float alpha = 1.0f;
 
             auto texIt = m_impl->textures.find(key);
             if (texIt != m_impl->textures.end()) {
@@ -1256,21 +1394,9 @@ void ViewportWidget::paintGL()
                     texId = m_impl->uploadTileTexture(*tileData);
                     m_impl->textures[key] = texId;
                 } else {
-                    if (paintCount <= 5) {
-                        spdlog::info("  SKIP tile {} - cached={} empty={} error={}", key.toString(),
-                                     tileData != nullptr,
-                                     tileData ? tileData->isEmpty() : true,
-                                     tileData ? tileData->isError() : false);
-                    }
                     ++tilesSkipped;
                     continue;
                 }
-            }
-
-            if (paintCount <= 3) {
-                spdlog::info("  tile {} -> screenRect({:.1f},{:.1f},{:.1f},{:.1f}) texId={} alpha={:.1f}",
-                             key.toString(), screenRect.x, screenRect.y,
-                             screenRect.width, screenRect.height, texId, alpha);
             }
 
             m_impl->tileShader->setUniformValue("uScreenRect",
@@ -1278,7 +1404,6 @@ void ViewportWidget::paintGL()
                 static_cast<float>(screenRect.y),
                 static_cast<float>(screenRect.width),
                 static_cast<float>(screenRect.height));
-            m_impl->tileShader->setUniformValue("uAlpha", alpha);
 
             m_impl->gl->glBindTexture(GL_TEXTURE_2D, texId);
             m_impl->gl->glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -1303,6 +1428,10 @@ void ViewportWidget::paintGL()
         m_impl->gl->glEnable(GL_BLEND);
         m_impl->gl->glBlendFunc(GL_ONE, GL_ONE);
 
+        // Default tex coords (no fallback for fluorescence path currently)
+        m_impl->channelShader->setUniformValue("uTexCoordOffset", 0.0f, 0.0f);
+        m_impl->channelShader->setUniformValue("uTexCoordScale", 1.0f, 1.0f);
+
         for (const auto& key : visibleKeys) {
             auto screenRect = coordSystem.tileScreenRect(key, viewport);
 
@@ -1311,12 +1440,6 @@ void ViewportWidget::paintGL()
             if (texIt == m_impl->fluorescenceTextures.end()) {
                 auto tileData = m_impl->tileCache->lookup(key);
                 if (!tileData || tileData->isEmpty() || tileData->isError()) {
-                    if (paintCount <= 5) {
-                        spdlog::info("  SKIP fluor tile {} - cached={} empty={} error={}", key.toString(),
-                                     tileData != nullptr,
-                                     tileData ? tileData->isEmpty() : true,
-                                     tileData ? tileData->isError() : false);
-                    }
                     ++tilesSkipped;
                     continue;
                 }
