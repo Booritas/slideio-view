@@ -11,11 +11,13 @@ class TileKey
 {
 public:
     TileKey();
-    TileKey(int level, int column, int row);
+    TileKey(int level, int column, int row, int zIndex = 0, int tFrame = 0);
 
     int level() const;
     int column() const;
     int row() const;
+    int zIndex() const;
+    int tFrame() const;
 
     bool operator==(const TileKey& other) const;
     bool operator!=(const TileKey& other) const;
@@ -26,6 +28,8 @@ private:
     int m_level;
     int m_column;
     int m_row;
+    int m_zIndex;
+    int m_tFrame;
 };
 
 } // namespace slideio::viewer::core
@@ -38,13 +42,11 @@ struct hash<slideio::viewer::core::TileKey>
 {
     size_t operator()(const slideio::viewer::core::TileKey& key) const noexcept
     {
-        size_t h1 = hash<int>{}(key.level());
-        size_t h2 = hash<int>{}(key.column());
-        size_t h3 = hash<int>{}(key.row());
-        // Combine hashes using a standard mixing technique
-        size_t seed = h1;
-        seed ^= h2 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-        seed ^= h3 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+        size_t seed = hash<int>{}(key.level());
+        seed ^= hash<int>{}(key.column()) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+        seed ^= hash<int>{}(key.row()) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+        seed ^= hash<int>{}(key.zIndex()) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+        seed ^= hash<int>{}(key.tFrame()) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
         return seed;
     }
 };

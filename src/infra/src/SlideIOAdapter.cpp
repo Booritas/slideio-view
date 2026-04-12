@@ -87,6 +87,8 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex)
     m_slideInfo.resolutionY = std::get<1>(resolution);
 
     m_slideInfo.driverName = m_slide->getDriverId();
+    m_slideInfo.numZSlices = m_scene->getNumZSlices();
+    m_slideInfo.numTFrames = m_scene->getNumTFrames();
 
     // Read per-channel info (names, data types, default colors)
     m_slideInfo.channels.resize(static_cast<size_t>(m_slideInfo.numChannels));
@@ -212,9 +214,10 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex)
         m_slideInfo.numZoomLevels = 1;
     }
 
-    spdlog::info("SlideIOAdapter: opened slide {}x{}, {} channels, {} levels",
+    spdlog::info("SlideIOAdapter: opened slide {}x{}, {} channels, {} levels, Z={}, T={}",
                  m_slideInfo.width, m_slideInfo.height, m_slideInfo.numChannels,
-                 static_cast<int>(m_levels.size()));
+                 static_cast<int>(m_levels.size()),
+                 m_slideInfo.numZSlices, m_slideInfo.numTFrames);
 }
 
 SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& auxImageName)
@@ -250,6 +253,8 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
     m_slideInfo.resolutionY = std::get<1>(resolution);
 
     m_slideInfo.driverName = m_slide->getDriverId();
+    m_slideInfo.numZSlices = m_scene->getNumZSlices();
+    m_slideInfo.numTFrames = m_scene->getNumTFrames();
 
     // Read per-channel info (names, data types, default colors)
     m_slideInfo.channels.resize(static_cast<size_t>(m_slideInfo.numChannels));
@@ -520,7 +525,17 @@ core::TileData SlideIOAdapter::readTile(const core::TileKey& key)
 
         std::vector<uint8_t> buffer(bufSize);
 
-        m_scene->readResampledBlockChannels(blockRect, blockSize, channels, buffer.data(), bufSize);
+        int zIdx = key.zIndex();
+        int tIdx = key.tFrame();
+        if (m_slideInfo.numZSlices > 1 || m_slideInfo.numTFrames > 1) {
+            // Use 4D reading for slides with Z-slices or time frames
+            std::tuple<int, int> zRange(zIdx, zIdx + 1);
+            std::tuple<int, int> tRange(tIdx, tIdx + 1);
+            m_scene->readResampled4DBlockChannels(blockRect, blockSize, channels,
+                                                   zRange, tRange, buffer.data(), bufSize);
+        } else {
+            m_scene->readResampledBlockChannels(blockRect, blockSize, channels, buffer.data(), bufSize);
+        }
 
         return core::TileData(std::move(buffer), tileW, tileH, numChannels, m_slideInfo.channelDataType);
     }

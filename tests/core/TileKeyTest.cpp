@@ -43,3 +43,39 @@ TEST_CASE("TileKey toString", "[core][TileKey]")
     REQUIRE(str.find("10") != std::string::npos);
     REQUIRE(str.find("5") != std::string::npos);
 }
+
+TEST_CASE("TileKey with Z and T", "[core][TileKey]")
+{
+    TileKey a{0, 1, 2, 3, 4};
+    TileKey b{0, 1, 2, 3, 4};
+    TileKey c{0, 1, 2, 5, 4}; // different Z
+
+    REQUIRE(a == b);
+    REQUIRE_FALSE(a == c);
+    REQUIRE(a.zIndex() == 3);
+    REQUIRE(a.tFrame() == 4);
+}
+
+TEST_CASE("TileKey Z/T default to zero", "[core][TileKey]")
+{
+    TileKey a{0, 1, 2};
+    REQUIRE(a.zIndex() == 0);
+    REQUIRE(a.tFrame() == 0);
+
+    // Same as explicitly providing 0,0
+    TileKey b{0, 1, 2, 0, 0};
+    REQUIRE(a == b);
+}
+
+TEST_CASE("TileKey Z/T hashing distinguishes", "[core][TileKey]")
+{
+    std::unordered_map<TileKey, int> map;
+    map[TileKey{0, 0, 0, 0, 0}] = 1;
+    map[TileKey{0, 0, 0, 1, 0}] = 2; // different Z
+    map[TileKey{0, 0, 0, 0, 1}] = 3; // different T
+
+    REQUIRE(map.size() == 3);
+    REQUIRE(map[TileKey{0, 0, 0, 0, 0}] == 1);
+    REQUIRE(map[TileKey{0, 0, 0, 1, 0}] == 2);
+    REQUIRE(map[TileKey{0, 0, 0, 0, 1}] == 3);
+}

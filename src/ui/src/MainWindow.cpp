@@ -5,7 +5,10 @@
 #include "slideio/viewer/ui/StatusBarManager.h"
 #include "slideio/viewer/ui/ViewportController.h"
 #include "slideio/viewer/ui/ViewportWidget.h"
+#include "slideio/viewer/ui/ZTNavigationWidget.h"
 #include "slideio/viewer/ui/ZoomIndicatorWidget.h"
+
+#include <spdlog/spdlog.h>
 
 #include <QAction>
 #include <QDragEnterEvent>
@@ -37,6 +40,7 @@ struct MainWindow::Impl
     MinimapWidget* minimapWidget = nullptr;
     ZoomIndicatorWidget* zoomIndicatorWidget = nullptr;
     StatusBarManager* statusBarManager = nullptr;
+    ZTNavigationWidget* ztNavigationWidget = nullptr;
     ChannelMixerPanel* channelMixerPanel = nullptr;
     SceneThumbnailPanel* sceneThumbnailPanel = nullptr;
 
@@ -203,6 +207,11 @@ struct MainWindow::Impl
                     channelMixerPanel->hide();
                 }
 
+                // Show/hide Z/T navigation
+                spdlog::info("MainWindow: setting Z/T: numZ={}, numT={}", info.numZSlices, info.numTFrames);
+                ztNavigationWidget->setSliceFrameCounts(info.numZSlices, info.numTFrames);
+                ztNavigationWidget->raise();
+
             });
 
         QObject::connect(viewportWidget, &ViewportWidget::thumbnailReady, owner,
@@ -296,6 +305,17 @@ struct MainWindow::Impl
                     emit viewportWidget->viewportChanged();
                 }
             });
+
+        // Z/T navigation
+        QObject::connect(ztNavigationWidget, &ZTNavigationWidget::zSliceChanged, owner,
+            [this](int zIndex) {
+                viewportWidget->setZSlice(zIndex);
+            });
+
+        QObject::connect(ztNavigationWidget, &ZTNavigationWidget::tFrameChanged, owner,
+            [this](int tFrame) {
+                viewportWidget->setTFrame(tFrame);
+            });
     }
 
     void addToRecentFiles(const std::string& filePath)
@@ -367,6 +387,11 @@ struct MainWindow::Impl
             int y = viewportWidget->height() - zoomIndicatorWidget->height() - margin;
             zoomIndicatorWidget->move(x, y);
         }
+
+        if (ztNavigationWidget && viewportWidget) {
+            int margin = 10;
+            ztNavigationWidget->move(margin, margin);
+        }
     }
 };
 
@@ -397,6 +422,9 @@ MainWindow::MainWindow(QWidget* parent)
 
     m_impl->zoomIndicatorWidget = new ZoomIndicatorWidget(m_impl->viewportWidget);
     m_impl->zoomIndicatorWidget->raise();
+
+    m_impl->ztNavigationWidget = new ZTNavigationWidget(m_impl->viewportWidget);
+    m_impl->ztNavigationWidget->raise();
 
     // Create status bar manager
     m_impl->statusBarManager = new StatusBarManager(this);

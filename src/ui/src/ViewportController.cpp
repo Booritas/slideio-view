@@ -96,7 +96,14 @@ std::vector<core::TileKey> ViewportController::visibleTileKeys() const
     if (!m_coordSystem) {
         return {};
     }
-    return m_coordSystem->visibleTiles(m_viewport);
+    auto keys = m_coordSystem->visibleTiles(m_viewport);
+    // Remap keys to include current Z/T indices
+    if (m_zIndex != 0 || m_tFrame != 0) {
+        for (auto& key : keys) {
+            key = core::TileKey(key.level(), key.column(), key.row(), m_zIndex, m_tFrame);
+        }
+    }
+    return keys;
 }
 
 void ViewportController::requestVisibleTiles()
@@ -107,7 +114,7 @@ void ViewportController::requestVisibleTiles()
 
     m_scheduler->cancelAll();
 
-    auto visibleKeys = m_coordSystem->visibleTiles(m_viewport);
+    auto visibleKeys = visibleTileKeys();
 
     std::vector<infra::TileRequest> visibleRequests;
     visibleRequests.reserve(visibleKeys.size());
@@ -119,10 +126,6 @@ void ViewportController::requestVisibleTiles()
     if (!visibleRequests.empty()) {
         m_scheduler->requestTiles(visibleRequests);
     }
-
-    // TODO: Re-enable prefetch after visible tiles are fully loaded.
-    // Prefetch is disabled for now because with limited adapter pool slots,
-    // prefetch requests compete with visible tile requests causing slow initial display.
 }
 
 void ViewportController::screenToSlide(double sx, double sy, double& slideX, double& slideY) const
@@ -143,6 +146,22 @@ int ViewportController::slideHeight() const
 double ViewportController::baseMagnification() const
 {
     return m_baseMagnification;
+}
+
+void ViewportController::setZT(int zIndex, int tFrame)
+{
+    m_zIndex = zIndex;
+    m_tFrame = tFrame;
+}
+
+int ViewportController::currentZIndex() const
+{
+    return m_zIndex;
+}
+
+int ViewportController::currentTFrame() const
+{
+    return m_tFrame;
 }
 
 } // namespace slideio::viewer::ui

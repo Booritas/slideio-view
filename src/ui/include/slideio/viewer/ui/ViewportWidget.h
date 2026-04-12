@@ -44,6 +44,11 @@ public:
     void setChannelSettings(const std::vector<core::ChannelInfo>& channels);
     const core::SlideInfo& slideInfo() const;
 
+    void setZSlice(int zIndex);
+    void setTFrame(int tFrame);
+    int currentZSlice() const;
+    int currentTFrame() const;
+
 signals:
     void viewportChanged();
     void cursorMoved(double slideX, double slideY);

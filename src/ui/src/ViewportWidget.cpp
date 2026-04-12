@@ -367,6 +367,8 @@ struct ViewportWidget::Impl
     core::SlideInfo slideInfo;
     bool slideOpen = false;
     std::string currentFilePath;
+    int currentZSlice = 0;
+    int currentTFrame = 0;
 
     // Mouse interaction
     bool isPanning = false;
@@ -1209,6 +1211,53 @@ void ViewportWidget::setChannelSettings(const std::vector<core::ChannelInfo>& ch
         m_impl->slideInfo.channels = channels;
         update();
     }
+}
+
+void ViewportWidget::setZSlice(int zIndex)
+{
+    if (!m_impl->slideOpen || !m_impl->controller) return;
+    if (zIndex == m_impl->currentZSlice) return;
+
+    m_impl->currentZSlice = zIndex;
+    m_impl->controller->setZT(zIndex, m_impl->currentTFrame);
+
+    // Clear textures and cache — tiles at the old Z are no longer valid
+    makeCurrent();
+    m_impl->clearAllTextures();
+    m_impl->clearFluorescenceTextures();
+    doneCurrent();
+    m_impl->tileCache->clear();
+
+    m_impl->controller->requestVisibleTiles();
+    update();
+}
+
+void ViewportWidget::setTFrame(int tFrame)
+{
+    if (!m_impl->slideOpen || !m_impl->controller) return;
+    if (tFrame == m_impl->currentTFrame) return;
+
+    m_impl->currentTFrame = tFrame;
+    m_impl->controller->setZT(m_impl->currentZSlice, tFrame);
+
+    makeCurrent();
+    m_impl->clearAllTextures();
+    m_impl->clearFluorescenceTextures();
+    doneCurrent();
+    m_impl->tileCache->clear();
+
+    m_impl->controller->requestVisibleTiles();
+    update();
+}
+
+int ViewportWidget::currentZSlice() const
+{
+    return m_impl->currentZSlice;
+}
+
+int ViewportWidget::currentTFrame() const
+{
+    return m_impl->currentTFrame;
 }
 
 const core::SlideInfo& ViewportWidget::slideInfo() const

@@ -152,6 +152,8 @@ struct SlideInfo
     DisplayRange displayRange;
     std::vector<ChannelInfo> channels;
     bool isBrightfield = false;
+    int numZSlices = 1;
+    int numTFrames = 1;
     std::vector<SceneInfo> scenes;
     std::vector<SceneInfo> auxImages;
 };

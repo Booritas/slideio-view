@@ -51,6 +51,10 @@ public:
     int slideHeight() const;
     double baseMagnification() const;
 
+    void setZT(int zIndex, int tFrame);
+    int currentZIndex() const;
+    int currentTFrame() const;
+
 private:
     std::shared_ptr<core::TilePyramid> m_pyramid;
     std::shared_ptr<core::ITileCache> m_cache;
@@ -60,6 +64,8 @@ private:
     int m_slideWidth;
     int m_slideHeight;
     double m_baseMagnification;
+    int m_zIndex = 0;
+    int m_tFrame = 0;
 };
 
 } // namespace slideio::viewer::ui
