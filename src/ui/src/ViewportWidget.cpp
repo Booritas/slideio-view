@@ -920,8 +920,8 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex)
                     spdlog::info("ViewportWidget::openSlide: displayRange: min={} max={}", globalMin, globalMax);
                 }
 
-                // Per-channel min/max detection for fluorescence slides
-                if (!m_impl->slideInfo.isBrightfield) {
+                // Per-channel min/max detection for multi-channel slides
+                if (numCh > 1) {
                     std::vector<double> channelMin(numCh, std::numeric_limits<double>::max());
                     std::vector<double> channelMax(numCh, std::numeric_limits<double>::lowest());
 
@@ -1283,11 +1283,11 @@ void ViewportWidget::paintGL()
     int fbHeight = static_cast<int>(height() * devicePixelRatioF());
     m_impl->gl->glViewport(0, 0, fbWidth, fbHeight);
 
-    // Set clear color based on imaging mode
-    if (m_impl->slideOpen && !m_impl->slideInfo.isBrightfield) {
-        m_impl->gl->glClearColor(0.0f, 0.0f, 0.0f, 1.0f); // Black for fluorescence
+    // Set clear color: black for multi-channel (additive blending), gray for single-channel
+    if (m_impl->slideOpen && m_impl->slideInfo.numChannels > 1) {
+        m_impl->gl->glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     } else {
-        m_impl->gl->glClearColor(0.251f, 0.251f, 0.251f, 1.0f); // #404040 for brightfield
+        m_impl->gl->glClearColor(0.251f, 0.251f, 0.251f, 1.0f);
     }
     m_impl->gl->glClear(GL_COLOR_BUFFER_BIT);
 
@@ -1318,8 +1318,8 @@ void ViewportWidget::paintGL()
     int tilesRendered = 0;
     int tilesSkipped = 0;
 
-    if (m_impl->slideInfo.isBrightfield) {
-        // --- Brightfield rendering path (existing logic, unchanged) ---
+    if (m_impl->slideInfo.numChannels <= 1) {
+        // --- Single-channel rendering path ---
         m_impl->tileShader->bind();
         m_impl->tileShader->setUniformValue("uViewportSize",
             static_cast<float>(viewport.screenWidth()), static_cast<float>(viewport.screenHeight()));

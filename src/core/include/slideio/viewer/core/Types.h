@@ -114,6 +114,18 @@ inline void assignDefaultFluorescenceColor(ChannelInfo& ch, int channelIndex)
     ch.colorB = kIndexDefaults[idx].b;
 }
 
+/// Assign default channel colors for brightfield RGB images.
+/// Channel 0=Red, 1=Green, 2=Blue (matching typical RGB interleaving).
+inline void assignDefaultBrightfieldColor(ChannelInfo& ch, int channelIndex)
+{
+    switch (channelIndex) {
+    case 0: ch.colorR = 1.0f; ch.colorG = 0.0f; ch.colorB = 0.0f; break; // Red
+    case 1: ch.colorR = 0.0f; ch.colorG = 1.0f; ch.colorB = 0.0f; break; // Green
+    case 2: ch.colorR = 0.0f; ch.colorG = 0.0f; ch.colorB = 1.0f; break; // Blue
+    default: ch.colorR = 1.0f; ch.colorG = 1.0f; ch.colorB = 1.0f; break; // White
+    }
+}
+
 struct SceneInfo
 {
     int index = -1;             // scene index (0..N-1); -1 for auxiliary images

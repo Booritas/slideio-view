@@ -99,13 +99,22 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex)
         }
         info.dataType = convertSlideIODataType(m_scene->getChannelDataType(ch));
         info.visible = true;
-        core::assignDefaultFluorescenceColor(info, ch);
     }
 
     // Determine if this is a brightfield slide
     m_slideInfo.isBrightfield =
         (m_slideInfo.numChannels == 1) ||
         (m_slideInfo.numChannels == 3 && m_slideInfo.channelDataType == core::DataType::Byte);
+
+    // Assign default channel colors based on image type
+    for (int ch = 0; ch < m_slideInfo.numChannels; ++ch) {
+        auto& info = m_slideInfo.channels[static_cast<size_t>(ch)];
+        if (m_slideInfo.isBrightfield) {
+            core::assignDefaultBrightfieldColor(info, ch);
+        } else {
+            core::assignDefaultFluorescenceColor(info, ch);
+        }
+    }
 
     spdlog::info("SlideIOAdapter: isBrightfield={}, {} channels", m_slideInfo.isBrightfield, m_slideInfo.numChannels);
     for (int ch = 0; ch < m_slideInfo.numChannels; ++ch) {
@@ -253,13 +262,21 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
         }
         info.dataType = convertSlideIODataType(m_scene->getChannelDataType(ch));
         info.visible = true;
-        core::assignDefaultFluorescenceColor(info, ch);
     }
 
     // Determine if this is a brightfield slide
     m_slideInfo.isBrightfield =
         (m_slideInfo.numChannels == 1) ||
         (m_slideInfo.numChannels == 3 && m_slideInfo.channelDataType == core::DataType::Byte);
+
+    for (int ch = 0; ch < m_slideInfo.numChannels; ++ch) {
+        auto& info = m_slideInfo.channels[static_cast<size_t>(ch)];
+        if (m_slideInfo.isBrightfield) {
+            core::assignDefaultBrightfieldColor(info, ch);
+        } else {
+            core::assignDefaultFluorescenceColor(info, ch);
+        }
+    }
 
     spdlog::info("SlideIOAdapter: isBrightfield={}, {} channels", m_slideInfo.isBrightfield, m_slideInfo.numChannels);
 

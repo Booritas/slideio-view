@@ -195,7 +195,7 @@ struct MainWindow::Impl
 
                 // Show/hide channel mixer based on slide type
                 const auto& info = viewportWidget->slideInfo();
-                if (!info.isBrightfield && info.numChannels > 1) {
+                if (info.numChannels > 1) {
                     channelMixerPanel->setChannels(info.channels);
                     channelMixerPanel->show();
                 } else {
