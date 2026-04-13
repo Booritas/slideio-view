@@ -136,8 +136,8 @@ struct MainWindow::Impl
         QObject::connect(openAction, &QAction::triggered, owner, [this]() {
             QString filePath = QFileDialog::getOpenFileName(
                 owner, "Open Slide", QString(),
-                "Slide Images (*.svs *.tiff *.tif *.ndpi *.scn *.mrxs *.bif *.vsi *.czi *.lif "
-                "*.afi *.svslide *.dcm);;All Files (*)");
+                "Slide Images (*.svs *.tiff *.tif *.ndpi *.scn *.mrxs *.bif *.vsi *.czi *.zvi "
+                "*.lif *.afi *.svslide *.dcm *.qptiff *.ome.tif *.ome.tiff);;All Files (*)");
             if (!filePath.isEmpty()) {
                 owner->openSlide(filePath.toStdString());
             }
