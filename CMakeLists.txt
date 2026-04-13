@@ -73,27 +73,61 @@ if(WIN32)
     )
 endif()
 
-# Qt runtime deployment (copies Qt DLLs, plugins, and platforms)
-# Requires Qt 6.5+ which ships qt_generate_deploy_app_script
-# Note: Conan Qt packages are typically Release-only, so windeployqt
-# fails for Debug configs (missing debug Qt DLLs like Qt6Cored.dll).
-# We skip Qt deployment for Debug; run Debug builds from the build dir instead.
-qt_generate_deploy_app_script(
-    TARGET slideio-viewer
-    OUTPUT_SCRIPT _qt_deploy_script
-    NO_UNSUPPORTED_PLATFORM_ERROR
-    NO_TRANSLATIONS
+# Qt runtime deployment — copy DLLs and plugins directly.
+# With Conan multi-config, we search for Qt6Core.dll (Release, no 'd' suffix)
+# to find the correct Qt package root.
+file(GLOB_RECURSE _qt_core_dll_candidates
+    "d:/conan2/p/b/qt*/p/bin/Qt6Core.dll"
 )
-# Create a wrapper that skips deployment for Debug config
-set(_qt_deploy_wrapper "${CMAKE_CURRENT_BINARY_DIR}/qt_deploy_wrapper-$<CONFIG>.cmake")
-file(GENERATE OUTPUT "${_qt_deploy_wrapper}" CONTENT
-"if(NOT \"$<CONFIG>\" STREQUAL \"Debug\")
-    include(\"${_qt_deploy_script}\")
-else()
-    message(STATUS \"Skipping Qt deployment for Debug config (Conan Qt is release-only)\")
+set(_qt_bin_dir "")
+foreach(_candidate ${_qt_core_dll_candidates})
+    get_filename_component(_qt_bin_dir "${_candidate}" DIRECTORY)
+    break()
+endforeach()
+
+if(NOT _qt_bin_dir)
+    # Fallback: try CMAKE_PREFIX_PATH
+    foreach(_prefix ${CMAKE_PREFIX_PATH})
+        if(EXISTS "${_prefix}/../bin/Qt6Core.dll")
+            get_filename_component(_qt_bin_dir "${_prefix}/../bin" ABSOLUTE)
+            break()
+        endif()
+    endforeach()
 endif()
-")
-install(SCRIPT "${_qt_deploy_wrapper}")
+
+if(_qt_bin_dir)
+    get_filename_component(_qt_root_dir "${_qt_bin_dir}" DIRECTORY)
+    message(STATUS "Qt Release bin dir: ${_qt_bin_dir}")
+
+    # Qt DLLs
+    set(_qt_dlls
+        Qt6Core Qt6Gui Qt6Widgets Qt6OpenGL Qt6OpenGLWidgets Qt6Network
+    )
+    foreach(_dll ${_qt_dlls})
+        install(FILES "${_qt_bin_dir}/${_dll}.dll"
+            DESTINATION ${CMAKE_INSTALL_BINDIR}
+            CONFIGURATIONS Release RelWithDebInfo MinSizeRel
+            OPTIONAL
+        )
+    endforeach()
+    # D3Dcompiler for OpenGL fallback
+    install(FILES "${_qt_bin_dir}/D3Dcompiler_47.dll"
+        DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
+
+    # Qt plugins
+    install(DIRECTORY "${_qt_root_dir}/plugins/platforms"
+        DESTINATION plugins OPTIONAL)
+    install(DIRECTORY "${_qt_root_dir}/plugins/styles"
+        DESTINATION plugins OPTIONAL)
+    install(DIRECTORY "${_qt_root_dir}/plugins/imageformats"
+        DESTINATION plugins OPTIONAL)
+
+    # qt.conf telling Qt where to find plugins
+    install(CODE "
+        file(WRITE \"\${CMAKE_INSTALL_PREFIX}/bin/qt.conf\"
+            \"[Paths]\\nPlugins=../plugins\\n\")
+    ")
+endif()
 
 # ── Packaging (CPack) ──────────────────────────────────────────────────────────
 
