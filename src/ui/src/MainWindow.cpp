@@ -17,6 +17,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QMimeData>
 #include <QSettings>
 #include <QStatusBar>
@@ -217,6 +218,11 @@ struct MainWindow::Impl
         QObject::connect(viewportWidget, &ViewportWidget::thumbnailReady, owner,
             [this](const QImage& thumbnail) {
                 minimapWidget->setThumbnail(thumbnail);
+            });
+
+        QObject::connect(viewportWidget, &ViewportWidget::errorOccurred, owner,
+            [this](const std::string& message) {
+                QMessageBox::critical(owner, "Error", QString::fromStdString(message));
             });
 
         QObject::connect(viewportWidget, &ViewportWidget::slideClosed, owner, [this]() {

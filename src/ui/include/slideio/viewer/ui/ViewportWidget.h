@@ -55,6 +55,7 @@ signals:
     void slideOpened(const std::string& filePath);
     void slideClosed();
     void thumbnailReady(const QImage& thumbnail);
+    void errorOccurred(const std::string& message);
     void sceneThumbnailReady(int sceneIndex, bool isAuxiliary, const std::string& name, const QImage& thumbnail);
 
 protected:

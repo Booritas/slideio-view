@@ -1020,10 +1020,12 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex)
         emit viewportChanged();
         update();
     } catch (const std::exception& ex) {
-        spdlog::error("ViewportWidget::openSlide: exception: {}", ex.what());
+        spdlog::error("ViewportWidget::openScene: exception: {}", ex.what());
+        emit errorOccurred(std::string("Failed to open slide: ") + ex.what());
         closeSlide();
     } catch (...) {
-        spdlog::error("ViewportWidget::openSlide: unknown exception");
+        spdlog::error("ViewportWidget::openScene: unknown exception");
+        emit errorOccurred("Failed to open slide: unknown error");
         closeSlide();
     }
 }
@@ -1137,6 +1139,7 @@ void ViewportWidget::openAuxImage(const std::string& filePath, const std::string
         update();
     } catch (const std::exception& ex) {
         spdlog::error("ViewportWidget::openAuxImage: exception: {}", ex.what());
+        emit errorOccurred(std::string("Failed to open auxiliary image: ") + ex.what());
         closeSlide();
     }
 }
