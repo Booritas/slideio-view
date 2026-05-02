@@ -1191,6 +1191,25 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex)
                     Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
                 spdlog::info("ViewportWidget::openSlide: generated thumbnail {}x{}", thumbW, thumbH);
                 emit thumbnailReady(thumbnail);
+
+                // Insert coarsest-level tiles into the tile cache so paintGL has an
+                // instant blurry preview as a base layer (avoids the black-screen
+                // flash on first load and on pans into uncached areas).
+                {
+                    int idx = 0;
+                    int cached = 0;
+                    for (int r = 0; r < coarseLvl.tilesY; ++r) {
+                        for (int c = 0; c < coarseLvl.tilesX; ++c) {
+                            auto& td = coarseTiles[static_cast<size_t>(idx++)];
+                            if (td.isEmpty() || td.isError()) continue;
+                            core::TileKey tileKey(coarsestLevel, c, r);
+                            m_impl->tileCache->insert(tileKey,
+                                std::make_shared<core::TileData>(std::move(td)));
+                            ++cached;
+                        }
+                    }
+                    spdlog::info("ViewportWidget::openSlide: cached {} coarsest-level tiles for instant preview", cached);
+                }
             } catch (const std::exception& ex) {
                 spdlog::warn("ViewportWidget::openSlide: failed to generate thumbnail: {}", ex.what());
             }
@@ -1708,56 +1727,27 @@ void ViewportWidget::paintGL()
 
     } else {
         // --- Fluorescence rendering path ---
-        // Render tiles into an offscreen FBO so additive blending stays confined
-        // to the tile pass. Then composite that FBO over the snapshot with normal
-        // alpha blending, so the snapshot shows through transparent (untiled) regions.
+        // Tiles use additive blending across channels. To keep additive blending
+        // confined to a tile pass (and prevent over-exposure with whatever is
+        // already on the main framebuffer), tiles are rendered into an offscreen
+        // FBO that is then composited over the main framebuffer with normal alpha
+        // blending. Coarse fallback and fine current-level tiles run in TWO
+        // SEPARATE passes (each with its own clear+composite), so coarse content
+        // shows through under untiled fine areas without additively double-
+        // exposing where fine tiles overlap.
         const GLuint defaultFbo = static_cast<GLuint>(defaultFramebufferObject());
         m_impl->ensureTileFbo(fbWidth, fbHeight);
 
-        m_impl->gl->glBindFramebuffer(GL_FRAMEBUFFER, m_impl->tileFbo);
-        m_impl->gl->glViewport(0, 0, fbWidth, fbHeight);
-        m_impl->gl->glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-        m_impl->gl->glClear(GL_COLOR_BUFFER_BIT);
-
-        m_impl->channelShader->bind();
-        m_impl->channelShader->setUniformValue("uViewportSize",
-            static_cast<float>(viewport.screenWidth()), static_cast<float>(viewport.screenHeight()));
-
-        m_impl->gl->glBindVertexArray(m_impl->quadVAO);
-        m_impl->gl->glActiveTexture(GL_TEXTURE0);
-        m_impl->channelShader->setUniformValue("uTileTexture", 0);
-
-        // Enable additive blending for fluorescence channel compositing
-        m_impl->gl->glEnable(GL_BLEND);
-        m_impl->gl->glBlendFunc(GL_ONE, GL_ONE);
-
-        // Default tex coords (no fallback for fluorescence path currently)
-        m_impl->channelShader->setUniformValue("uTexCoordOffset", 0.0f, 0.0f);
-        m_impl->channelShader->setUniformValue("uTexCoordScale", 1.0f, 1.0f);
-
-        for (const auto& key : visibleKeys) {
-            auto screenRect = coordSystem.tileScreenRect(key, viewport);
-
-            // Get or upload per-channel textures
-            auto texIt = m_impl->fluorescenceTextures.find(key);
-            if (texIt == m_impl->fluorescenceTextures.end()) {
-                auto tileData = m_impl->tileCache->lookup(key);
-                if (!tileData || tileData->isEmpty() || tileData->isError()) {
-                    ++tilesSkipped;
-                    continue;
-                }
-                m_impl->fluorescenceTextures[key] = m_impl->uploadTileChannelTextures(*tileData);
-                texIt = m_impl->fluorescenceTextures.find(key);
-            }
-
+        // Helper: render all visible channels of a fluorescence tile additively
+        // at the given screen rect (assumes channelShader bound, additive blend on).
+        auto drawFluorescenceTile = [&](const Impl::TileTextures& texs, const auto& screenRect) {
             m_impl->channelShader->setUniformValue("uScreenRect",
                 static_cast<float>(screenRect.x),
                 static_cast<float>(screenRect.y),
                 static_cast<float>(screenRect.width),
                 static_cast<float>(screenRect.height));
 
-            // Render each visible channel with its pseudo-color
-            for (size_t ch = 0; ch < texIt->second.channelTexIds.size(); ++ch) {
+            for (size_t ch = 0; ch < texs.channelTexIds.size(); ++ch) {
                 if (ch >= m_impl->slideInfo.channels.size()) break;
                 const auto& chInfo = m_impl->slideInfo.channels[ch];
                 if (!chInfo.visible) continue;
@@ -1770,42 +1760,127 @@ void ViewportWidget::paintGL()
                 m_impl->channelShader->setUniformValue("uChannelColor",
                     chInfo.colorR * intensity, chInfo.colorG * intensity, chInfo.colorB * intensity);
 
-                m_impl->gl->glBindTexture(GL_TEXTURE_2D, texIt->second.channelTexIds[ch]);
+                m_impl->gl->glBindTexture(GL_TEXTURE_2D, texs.channelTexIds[ch]);
                 m_impl->gl->glDrawArrays(GL_TRIANGLES, 0, 6);
             }
-            ++tilesRendered;
+        };
+
+        // Helper: composite the tile FBO onto the default framebuffer using normal
+        // alpha blending, with full texture coverage and Y-flip (since the FBO was
+        // written with the screen-Y-down vertex shader but textures sample Y-up).
+        auto compositeTileFboToMain = [&]() {
+            m_impl->gl->glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            m_impl->gl->glBindFramebuffer(GL_FRAMEBUFFER, defaultFbo);
+            m_impl->gl->glViewport(0, 0, fbWidth, fbHeight);
+
+            m_impl->compositeShader->bind();
+            m_impl->compositeShader->setUniformValue("uViewportSize",
+                static_cast<float>(viewport.screenWidth()), static_cast<float>(viewport.screenHeight()));
+            m_impl->compositeShader->setUniformValue("uScreenRect",
+                0.0f, 0.0f,
+                static_cast<float>(viewport.screenWidth()),
+                static_cast<float>(viewport.screenHeight()));
+            m_impl->compositeShader->setUniformValue("uTexCoordOffset", 0.0f, 1.0f);
+            m_impl->compositeShader->setUniformValue("uTexCoordScale", 1.0f, -1.0f);
+            m_impl->compositeShader->setUniformValue("uSourceTexture", 0);
+
+            m_impl->gl->glBindVertexArray(m_impl->quadVAO);
+            m_impl->gl->glActiveTexture(GL_TEXTURE0);
+            m_impl->gl->glBindTexture(GL_TEXTURE_2D, m_impl->tileFboTexture);
+            m_impl->gl->glDrawArrays(GL_TRIANGLES, 0, 6);
+            m_impl->gl->glBindTexture(GL_TEXTURE_2D, 0);
+            m_impl->gl->glBindVertexArray(0);
+            m_impl->compositeShader->release();
+        };
+
+        // Helper: prepare the tile FBO for a fresh additive tile pass.
+        auto beginTileFboPass = [&]() {
+            m_impl->gl->glBindFramebuffer(GL_FRAMEBUFFER, m_impl->tileFbo);
+            m_impl->gl->glViewport(0, 0, fbWidth, fbHeight);
+            m_impl->gl->glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+            m_impl->gl->glClear(GL_COLOR_BUFFER_BIT);
+
+            m_impl->channelShader->bind();
+            m_impl->channelShader->setUniformValue("uViewportSize",
+                static_cast<float>(viewport.screenWidth()), static_cast<float>(viewport.screenHeight()));
+            m_impl->channelShader->setUniformValue("uTileTexture", 0);
+            m_impl->channelShader->setUniformValue("uTexCoordOffset", 0.0f, 0.0f);
+            m_impl->channelShader->setUniformValue("uTexCoordScale", 1.0f, 1.0f);
+
+            m_impl->gl->glBindVertexArray(m_impl->quadVAO);
+            m_impl->gl->glActiveTexture(GL_TEXTURE0);
+            m_impl->gl->glEnable(GL_BLEND);
+            m_impl->gl->glBlendFunc(GL_ONE, GL_ONE);
+        };
+
+        auto endTileFboPass = [&]() {
+            m_impl->gl->glBindVertexArray(0);
+            m_impl->gl->glBindTexture(GL_TEXTURE_2D, 0);
+            m_impl->channelShader->release();
+        };
+
+        // === PHASE 1: Coarse fallback ===
+        // Walk pyramid levels coarsest -> finest. Each level is rendered into
+        // the FBO in its own additive pass then composited onto the main
+        // framebuffer so finer levels overwrite coarser ones in shared regions.
+        // (Doing all levels in one additive pass would sum them and over-expose.)
+        int currentLevel = coordSystem.bestLevel(viewport.scale());
+        for (int lvl = m_impl->pyramid->numLevels() - 1; lvl > currentLevel; --lvl) {
+            auto visSlideRect = viewport.visibleSlideRect();
+            auto coarseTiles = m_impl->pyramid->visibleTiles(
+                lvl,
+                std::max(0, static_cast<int>(visSlideRect.x)),
+                std::max(0, static_cast<int>(visSlideRect.y)),
+                static_cast<int>(std::ceil(visSlideRect.width)),
+                static_cast<int>(std::ceil(visSlideRect.height)));
+
+            bool drewAnyAtLevel = false;
+            beginTileFboPass();
+            for (const auto& fbKey : coarseTiles) {
+                auto fbTexIt = m_impl->fluorescenceTextures.find(fbKey);
+                if (fbTexIt == m_impl->fluorescenceTextures.end()) {
+                    auto tileData = m_impl->tileCache->lookup(fbKey);
+                    if (tileData && !tileData->isEmpty() && !tileData->isError()) {
+                        m_impl->fluorescenceTextures[fbKey] = m_impl->uploadTileChannelTextures(*tileData);
+                        fbTexIt = m_impl->fluorescenceTextures.find(fbKey);
+                    } else {
+                        continue;
+                    }
+                }
+                auto fbScreenRect = coordSystem.tileScreenRect(fbKey, viewport);
+                drawFluorescenceTile(fbTexIt->second, fbScreenRect);
+                drewAnyAtLevel = true;
+            }
+            endTileFboPass();
+            if (drewAnyAtLevel) {
+                compositeTileFboToMain();
+            }
         }
 
-        m_impl->gl->glBindVertexArray(0);
-        m_impl->gl->glBindTexture(GL_TEXTURE_2D, 0);
-        m_impl->channelShader->release();
+        // === PHASE 2: Fine current-level tiles ===
+        // Fresh FBO clear so coarse content from phase 1 doesn't additively
+        // double-expose with fine tiles. Composite over the main framebuffer
+        // (which now has snapshot + coarse) with normal alpha blending.
+        beginTileFboPass();
+        for (const auto& key : visibleKeys) {
+            auto screenRect = coordSystem.tileScreenRect(key, viewport);
 
-        // Restore standard alpha blending and rebind the default FBO before compositing
-        m_impl->gl->glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        m_impl->gl->glBindFramebuffer(GL_FRAMEBUFFER, defaultFbo);
-        m_impl->gl->glViewport(0, 0, fbWidth, fbHeight);
+            auto texIt = m_impl->fluorescenceTextures.find(key);
+            if (texIt == m_impl->fluorescenceTextures.end()) {
+                auto tileData = m_impl->tileCache->lookup(key);
+                if (!tileData || tileData->isEmpty() || tileData->isError()) {
+                    ++tilesSkipped;
+                    continue;
+                }
+                m_impl->fluorescenceTextures[key] = m_impl->uploadTileChannelTextures(*tileData);
+                texIt = m_impl->fluorescenceTextures.find(key);
+            }
 
-        // Composite tile FBO over snapshot. Y-flip via texCoord (offset=1, scale=-1)
-        // because the FBO was written using the same screen-Y-down vertex shader
-        // while OpenGL textures sample with Y-up.
-        m_impl->compositeShader->bind();
-        m_impl->compositeShader->setUniformValue("uViewportSize",
-            static_cast<float>(viewport.screenWidth()), static_cast<float>(viewport.screenHeight()));
-        m_impl->compositeShader->setUniformValue("uScreenRect",
-            0.0f, 0.0f,
-            static_cast<float>(viewport.screenWidth()),
-            static_cast<float>(viewport.screenHeight()));
-        m_impl->compositeShader->setUniformValue("uTexCoordOffset", 0.0f, 1.0f);
-        m_impl->compositeShader->setUniformValue("uTexCoordScale", 1.0f, -1.0f);
-        m_impl->compositeShader->setUniformValue("uSourceTexture", 0);
-
-        m_impl->gl->glBindVertexArray(m_impl->quadVAO);
-        m_impl->gl->glActiveTexture(GL_TEXTURE0);
-        m_impl->gl->glBindTexture(GL_TEXTURE_2D, m_impl->tileFboTexture);
-        m_impl->gl->glDrawArrays(GL_TRIANGLES, 0, 6);
-        m_impl->gl->glBindTexture(GL_TEXTURE_2D, 0);
-        m_impl->gl->glBindVertexArray(0);
-        m_impl->compositeShader->release();
+            drawFluorescenceTile(texIt->second, screenRect);
+            ++tilesRendered;
+        }
+        endTileFboPass();
+        compositeTileFboToMain();
     }
 
     if (paintCount <= 5 || paintCount % 100 == 0) {
