@@ -620,22 +620,26 @@ struct ViewportWidget::Impl
         int w = viewport.screenWidth();
         int h = viewport.screenHeight();
 
-        float texScaleX = static_cast<float>(sr);
-        float texOffsetX = static_cast<float>(
-            0.5 - sr * 0.5 +
-            (viewport.centerX() - snapshotCenterX) * snapshotScale / w);
-        float texScaleY = static_cast<float>(-sr);
-        float texOffsetY = static_cast<float>(
-            0.5 + sr * 0.5 -
-            (viewport.centerY() - snapshotCenterY) * snapshotScale / h);
+        // Map the snapshot's captured slide region to a screen rectangle in the
+        // current viewport. Drawing the snapshot only at this rect (with full
+        // [0,1] tex coords) lets the cleared background show through outside it,
+        // instead of streaking the snapshot's edge pixels via GL_CLAMP_TO_EDGE.
+        double rectW = w / sr;
+        double rectH = h / sr;
+        double rectCenterX = (snapshotCenterX - viewport.centerX()) * viewport.scale() + w * 0.5;
+        double rectCenterY = (snapshotCenterY - viewport.centerY()) * viewport.scale() + h * 0.5;
+        double rectX = rectCenterX - rectW * 0.5;
+        double rectY = rectCenterY - rectH * 0.5;
 
         snapshotShader->bind();
         snapshotShader->setUniformValue("uViewportSize",
             static_cast<float>(w), static_cast<float>(h));
         snapshotShader->setUniformValue("uScreenRect",
-            0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h));
-        snapshotShader->setUniformValue("uTexCoordOffset", texOffsetX, texOffsetY);
-        snapshotShader->setUniformValue("uTexCoordScale", texScaleX, texScaleY);
+            static_cast<float>(rectX), static_cast<float>(rectY),
+            static_cast<float>(rectW), static_cast<float>(rectH));
+        // Full texture coverage with Y-flip (FBO is sampled origin-bottom-left).
+        snapshotShader->setUniformValue("uTexCoordOffset", 0.0f, 1.0f);
+        snapshotShader->setUniformValue("uTexCoordScale", 1.0f, -1.0f);
         snapshotShader->setUniformValue("uSnapshotTexture", 0);
 
         // The copied framebuffer texture may contain non-opaque alpha.
