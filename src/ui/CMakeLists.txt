@@ -1,4 +1,5 @@
 add_library(slideio-viewer-ui STATIC
+    src/AppPaths.cpp
     src/ViewportController.cpp
     src/ViewportWidget.cpp
     src/MinimapWidget.cpp

@@ -1,4 +1,5 @@
 #include "slideio/viewer/ui/MainWindow.h"
+#include "slideio/viewer/ui/AppPaths.h"
 #include "slideio/viewer/ui/ChannelMixerPanel.h"
 #include "slideio/viewer/ui/LoadingOverlay.h"
 #include "slideio/viewer/ui/SceneThumbnailPanel.h"
@@ -12,9 +13,11 @@
 #include <spdlog/spdlog.h>
 
 #include <QAction>
+#include <QDesktopServices>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QEvent>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMenuBar>
@@ -54,6 +57,7 @@ struct MainWindow::Impl
     // Actions
     QAction* openAction = nullptr;
     QAction* closeAction = nullptr;
+    QAction* openLogAction = nullptr;
     QAction* exitAction = nullptr;
     QAction* zoomInAction = nullptr;
     QAction* zoomOutAction = nullptr;
@@ -74,6 +78,9 @@ struct MainWindow::Impl
         closeAction->setShortcut(QKeySequence("Ctrl+W"));
         closeAction->setStatusTip("Close the current slide");
         closeAction->setEnabled(false);
+
+        openLogAction = new QAction("Open &Log File", owner);
+        openLogAction->setStatusTip("Open the application log file in the system default text editor");
 
         exitAction = new QAction("E&xit", owner);
         exitAction->setShortcut(QKeySequence("Alt+F4"));
@@ -117,6 +124,8 @@ struct MainWindow::Impl
 
         fileMenu->addAction(closeAction);
         fileMenu->addSeparator();
+        fileMenu->addAction(openLogAction);
+        fileMenu->addSeparator();
         fileMenu->addAction(exitAction);
 
         QMenu* viewMenu = owner->menuBar()->addMenu("&View");
@@ -150,6 +159,22 @@ struct MainWindow::Impl
             closeAction->setEnabled(false);
             sceneThumbnailPanel->clear();
             sceneThumbnailPanel->hide();
+        });
+
+        QObject::connect(openLogAction, &QAction::triggered, owner, [this]() {
+            QString path = logFilePath();
+            if (!QFile::exists(path)) {
+                QMessageBox::information(owner, "Open Log File",
+                    QString("Log file does not exist yet:\n%1").arg(path));
+                return;
+            }
+            // QDesktopServices::openUrl with a local file URL launches the
+            // platform's default handler (notepad on Windows, TextEdit on macOS,
+            // xdg-open on Linux).
+            if (!QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
+                QMessageBox::warning(owner, "Open Log File",
+                    QString("Failed to open log file:\n%1").arg(path));
+            }
         });
 
         QObject::connect(exitAction, &QAction::triggered, owner, &QMainWindow::close);
