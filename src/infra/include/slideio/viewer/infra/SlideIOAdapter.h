@@ -31,6 +31,12 @@ public:
     std::vector<core::LevelInfo> levels() const override;
     core::TileData readTile(const core::TileKey& key) override;
 
+    // Read an arbitrary slide region resampled to (targetWidth, targetHeight).
+    // SlideIO picks the best pyramid level internally and interpolates as needed.
+    // Useful for sharp thumbnails and overview images. Throws on read errors.
+    core::TileData readBlock(int slideX, int slideY, int slideWidth, int slideHeight,
+                              int targetWidth, int targetHeight) override;
+
 private:
     std::string m_filePath;
     int m_sceneIndex = 0;

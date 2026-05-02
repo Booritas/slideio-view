@@ -403,9 +403,14 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
     int coarsestLevel = pyramid.numLevels() - 1;
     if (coarsestLevel < 0) return;
     const auto& coarseLvl = pyramid.levelInfo(coarsestLevel);
-    constexpr int kMaxThumbDim = 400;
-    int thumbW = coarseLvl.width;
-    int thumbH = coarseLvl.height;
+
+    // Target thumbnail dimensions are derived from the FULL SLIDE dims (not the
+    // coarsest pyramid level), so even when the coarsest level is small (e.g.,
+    // ~200x160 in a 9-level pyramid) we still ask SlideIO for a sharp 800x800-
+    // ish thumbnail. SlideIO picks the appropriate pyramid level internally.
+    constexpr int kMaxThumbDim = 800;
+    int thumbW = slideInfo.width;
+    int thumbH = slideInfo.height;
     if (thumbW > kMaxThumbDim || thumbH > kMaxThumbDim) {
         double ratio = std::min(static_cast<double>(kMaxThumbDim) / thumbW,
                                 static_cast<double>(kMaxThumbDim) / thumbH);
@@ -469,41 +474,94 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
         }
     }
 
-    // Pass 2: build thumbnail QImage using detected range
-    QImage::Format imgFmt = (numCh >= 3) ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
-    QImage levelImg(coarseLvl.width, coarseLvl.height, imgFmt);
-    levelImg.fill(Qt::white);
+    // Thumbnail uses the same per-channel display ranges as the viewport's
+    // multi-channel render path (where each channel is stretched independently),
+    // so the minimap and viewport show matching colors. Falls back to global
+    // range for single-channel rendering or when per-channel ranges weren't
+    // detected.
+    auto channelMinFor = [&](int ch) {
+        if (numCh > 1 && ch < static_cast<int>(slideInfo.channels.size())
+            && slideInfo.channels[ch].displayRange.autoDetected) {
+            return slideInfo.channels[ch].displayRange.displayMin;
+        }
+        return globalMin;
+    };
+    auto channelMaxFor = [&](int ch) {
+        if (numCh > 1 && ch < static_cast<int>(slideInfo.channels.size())
+            && slideInfo.channels[ch].displayRange.autoDetected) {
+            return slideInfo.channels[ch].displayRange.displayMax;
+        }
+        return globalMax;
+    };
+    double rMin = channelMinFor(0), rMax = channelMaxFor(0);
+    double gMin = channelMinFor(1), gMax = channelMaxFor(1);
+    double bMin = channelMinFor(2), bMax = channelMaxFor(2);
 
-    int tileIdx = 0;
-    for (int r = 0; r < coarseLvl.tilesY; ++r) {
-        for (int c = 0; c < coarseLvl.tilesX; ++c) {
-            const auto& tileData = coarseTiles[static_cast<size_t>(tileIdx++)];
-            if (tileData.isEmpty() || tileData.isError()) continue;
-            int tw = tileData.width();
-            int th = tileData.height();
-            int tCh = tileData.numChannels();
-            int tileX0 = c * coarseLvl.tileWidth;
-            int tileY0 = r * coarseLvl.tileHeight;
-            const uint8_t* src = tileData.buffer().data();
-            for (int y = 0; y < th && (tileY0 + y) < coarseLvl.height; ++y) {
-                uint8_t* dst = levelImg.scanLine(tileY0 + y);
-                for (int x = 0; x < tw && (tileX0 + x) < coarseLvl.width; ++x) {
-                    size_t srcElem = static_cast<size_t>((y * tw + x) * tCh);
-                    if (numCh >= 3) {
-                        int dstIdx = (tileX0 + x) * 3;
-                        dst[dstIdx + 0] = mapPixelToUint8(src, srcElem + 0, dt, globalMin, globalMax);
-                        dst[dstIdx + 1] = mapPixelToUint8(src, srcElem + 1, dt, globalMin, globalMax);
-                        dst[dstIdx + 2] = mapPixelToUint8(src, srcElem + 2, dt, globalMin, globalMax);
-                    } else {
-                        dst[tileX0 + x] = mapPixelToUint8(src, srcElem, dt, globalMin, globalMax);
+    // Pass 2: build the thumbnail QImage. Read the whole slide resampled to
+    // the target thumbnail resolution via SlideIO (it picks the best pyramid
+    // level internally). This gives a sharp thumbnail even when the coarsest
+    // pyramid level itself is very small (e.g., 200x160) — much sharper than
+    // upscaling from the coarsest tiles.
+    QImage::Format imgFmt = (numCh >= 3) ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
+    QImage thumbImg(thumbW, thumbH, imgFmt);
+    thumbImg.fill(Qt::white);
+
+    // SlideIOAdapterPool uses a different concrete type as the loan; cast back
+    // to access readBlock. (loan is a unique_ptr-like wrapper around the adapter.)
+    auto thumbLoan = pool.acquire();
+    auto blockData = thumbLoan->readBlock(0, 0, slideInfo.width, slideInfo.height, thumbW, thumbH);
+    if (!blockData.isEmpty() && !blockData.isError()) {
+        const uint8_t* src = blockData.buffer().data();
+        int srcCh = blockData.numChannels();
+        for (int y = 0; y < thumbH; ++y) {
+            uint8_t* dst = thumbImg.scanLine(y);
+            for (int x = 0; x < thumbW; ++x) {
+                size_t srcElem = static_cast<size_t>((y * thumbW + x) * srcCh);
+                if (numCh >= 3) {
+                    int dstIdx = x * 3;
+                    dst[dstIdx + 0] = mapPixelToUint8(src, srcElem + 0, dt, rMin, rMax);
+                    dst[dstIdx + 1] = mapPixelToUint8(src, srcElem + 1, dt, gMin, gMax);
+                    dst[dstIdx + 2] = mapPixelToUint8(src, srcElem + 2, dt, bMin, bMax);
+                } else {
+                    dst[x] = mapPixelToUint8(src, srcElem, dt, globalMin, globalMax);
+                }
+            }
+        }
+        thumbnailOut = thumbImg;
+    } else {
+        // Fallback: assemble from the coarsest tiles we already have
+        QImage levelImg(coarseLvl.width, coarseLvl.height, imgFmt);
+        levelImg.fill(Qt::white);
+        int tileIdx = 0;
+        for (int r = 0; r < coarseLvl.tilesY; ++r) {
+            for (int c = 0; c < coarseLvl.tilesX; ++c) {
+                const auto& tileData = coarseTiles[static_cast<size_t>(tileIdx++)];
+                if (tileData.isEmpty() || tileData.isError()) continue;
+                int tw = tileData.width();
+                int th = tileData.height();
+                int tCh = tileData.numChannels();
+                int tileX0 = c * coarseLvl.tileWidth;
+                int tileY0 = r * coarseLvl.tileHeight;
+                const uint8_t* src = tileData.buffer().data();
+                for (int y = 0; y < th && (tileY0 + y) < coarseLvl.height; ++y) {
+                    uint8_t* dst = levelImg.scanLine(tileY0 + y);
+                    for (int x = 0; x < tw && (tileX0 + x) < coarseLvl.width; ++x) {
+                        size_t srcElem = static_cast<size_t>((y * tw + x) * tCh);
+                        if (numCh >= 3) {
+                            int dstIdx = (tileX0 + x) * 3;
+                            dst[dstIdx + 0] = mapPixelToUint8(src, srcElem + 0, dt, rMin, rMax);
+                            dst[dstIdx + 1] = mapPixelToUint8(src, srcElem + 1, dt, gMin, gMax);
+                            dst[dstIdx + 2] = mapPixelToUint8(src, srcElem + 2, dt, bMin, bMax);
+                        } else {
+                            dst[tileX0 + x] = mapPixelToUint8(src, srcElem, dt, globalMin, globalMax);
+                        }
                     }
                 }
             }
         }
+        thumbnailOut = levelImg.scaled(thumbW, thumbH,
+            Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
     }
-
-    thumbnailOut = levelImg.scaled(thumbW, thumbH,
-        Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
 
     // Insert coarsest tiles into cache for instant base-layer preview
     {

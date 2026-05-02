@@ -68,6 +68,7 @@ void MinimapWidget::paintEvent(QPaintEvent* /*event*/)
 {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
 
     // Background
     painter.fillRect(rect(), QColor(30, 30, 30, 200));

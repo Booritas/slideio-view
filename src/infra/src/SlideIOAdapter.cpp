@@ -545,4 +545,36 @@ core::TileData SlideIOAdapter::readTile(const core::TileKey& key)
     }
 }
 
+core::TileData SlideIOAdapter::readBlock(int slideX, int slideY, int slideWidth, int slideHeight,
+                                          int targetWidth, int targetHeight)
+{
+    if (slideWidth <= 0 || slideHeight <= 0 || targetWidth <= 0 || targetHeight <= 0) {
+        return core::TileData::createError(targetWidth, targetHeight);
+    }
+    try {
+        std::tuple<int, int, int, int> blockRect(slideX, slideY, slideWidth, slideHeight);
+        std::tuple<int, int> blockSize(targetWidth, targetHeight);
+
+        int numChannels = m_slideInfo.numChannels;
+        std::vector<int> channels(static_cast<size_t>(numChannels));
+        for (int ch = 0; ch < numChannels; ++ch) {
+            channels[static_cast<size_t>(ch)] = ch;
+        }
+
+        size_t pixelBytes = core::dataTypeSize(m_slideInfo.channelDataType);
+        size_t bufSize = static_cast<size_t>(targetWidth) * static_cast<size_t>(targetHeight)
+                         * static_cast<size_t>(numChannels) * pixelBytes;
+        std::vector<uint8_t> buffer(bufSize);
+
+        m_scene->readResampledBlockChannels(blockRect, blockSize, channels, buffer.data(), bufSize);
+
+        return core::TileData(std::move(buffer), targetWidth, targetHeight,
+                               numChannels, m_slideInfo.channelDataType);
+    }
+    catch (const std::exception& ex) {
+        spdlog::error("SlideIOAdapter::readBlock: exception: {}", ex.what());
+        return core::TileData::createError(targetWidth, targetHeight);
+    }
+}
+
 } // namespace slideio::viewer::infra

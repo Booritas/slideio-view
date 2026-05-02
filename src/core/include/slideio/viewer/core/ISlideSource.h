@@ -16,6 +16,10 @@ public:
     virtual SlideInfo slideInfo() const = 0;
     virtual std::vector<LevelInfo> levels() const = 0;
     virtual TileData readTile(const TileKey& key) = 0;
+    // Read an arbitrary slide region resampled to (targetWidth, targetHeight).
+    // Implementations should pick the best pyramid level internally.
+    virtual TileData readBlock(int slideX, int slideY, int slideWidth, int slideHeight,
+                                int targetWidth, int targetHeight) = 0;
 };
 
 } // namespace slideio::viewer::core
