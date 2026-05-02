@@ -106,6 +106,38 @@ void main()
 }
 )glsl";
 
+const char* kSnapshotFragmentShaderSource = R"glsl(
+#version 330 core
+
+in vec2 vTexCoord;
+
+uniform sampler2D uSnapshotTexture;
+
+out vec4 fragColor;
+
+void main()
+{
+    fragColor = texture(uSnapshotTexture, vTexCoord);
+}
+)glsl";
+
+// Composite shader: passthrough with per-pixel alpha preserved so that
+// transparent regions of the source FBO let the underlying snapshot show through.
+const char* kCompositeFragmentShaderSource = R"glsl(
+#version 330 core
+
+in vec2 vTexCoord;
+
+uniform sampler2D uSourceTexture;
+
+out vec4 fragColor;
+
+void main()
+{
+    fragColor = texture(uSourceTexture, vTexCoord);
+}
+)glsl";
+
 using DataType = slideio::viewer::core::DataType;
 
 constexpr int kMaxTextureUploadsPerFrame = 8;
@@ -351,6 +383,15 @@ struct ViewportWidget::Impl
 
     // Fluorescence rendering
     std::unique_ptr<QOpenGLShaderProgram> channelShader;
+    std::unique_ptr<QOpenGLShaderProgram> snapshotShader;
+    std::unique_ptr<QOpenGLShaderProgram> compositeShader;
+
+    // Offscreen FBO for additive tile compositing — keeps the additive blend
+    // confined to the tile pass so the snapshot underneath is not added to.
+    GLuint tileFbo = 0;
+    GLuint tileFboTexture = 0;
+    int tileFboWidth = 0;
+    int tileFboHeight = 0;
 
     struct TileTextures
     {
@@ -369,6 +410,16 @@ struct ViewportWidget::Impl
     std::string currentFilePath;
     int currentZSlice = 0;
     int currentTFrame = 0;
+
+    // Zoom snapshot for smooth visual transitions
+    GLuint snapshotTexture = 0;
+    int snapshotFbWidth = 0;
+    int snapshotFbHeight = 0;
+    double snapshotCenterX = 0.0;
+    double snapshotCenterY = 0.0;
+    double snapshotScale = 0.0;
+    bool snapshotReady = false;  // texture contains valid content from a completed frame
+    bool snapshotActive = false; // actively showing snapshot during zoom transition
 
     // Mouse interaction
     bool isPanning = false;
@@ -515,6 +566,153 @@ struct ViewportWidget::Impl
             }
         }
         fluorescenceTextures.clear();
+    }
+
+    // Capture the current framebuffer at the end of a fully-rendered paintGL.
+    // At this point the FBO is guaranteed to contain valid content.
+    void captureSnapshotTexture(QOpenGLWidget* widget, const core::Viewport& viewport)
+    {
+        if (!gl || !glInitialized) return;
+
+        int fbWidth = static_cast<int>(widget->width() * widget->devicePixelRatioF());
+        int fbHeight = static_cast<int>(widget->height() * widget->devicePixelRatioF());
+        if (fbWidth <= 0 || fbHeight <= 0) return;
+
+        if (snapshotTexture == 0) {
+            gl->glGenTextures(1, &snapshotTexture);
+        }
+        gl->glBindTexture(GL_TEXTURE_2D, snapshotTexture);
+        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        // Use glCopyTexSubImage2D if size matches to avoid re-allocation
+        if (fbWidth == snapshotFbWidth && fbHeight == snapshotFbHeight) {
+            gl->glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, fbWidth, fbHeight);
+        } else {
+            gl->glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 0, 0, fbWidth, fbHeight, 0);
+            snapshotFbWidth = fbWidth;
+            snapshotFbHeight = fbHeight;
+        }
+        gl->glBindTexture(GL_TEXTURE_2D, 0);
+
+        snapshotCenterX = viewport.centerX();
+        snapshotCenterY = viewport.centerY();
+        snapshotScale = viewport.scale();
+        snapshotReady = true;
+    }
+
+    // Activate the warm snapshot for zoom transition.
+    // Called from event handlers before zoom is applied.
+    void activateSnapshot()
+    {
+        if (snapshotReady && !snapshotActive) {
+            snapshotActive = true;
+        }
+    }
+
+    void renderSnapshot(const core::Viewport& viewport)
+    {
+        if (!snapshotActive || snapshotTexture == 0 || !snapshotShader) return;
+
+        double sr = snapshotScale / viewport.scale();
+        int w = viewport.screenWidth();
+        int h = viewport.screenHeight();
+
+        float texScaleX = static_cast<float>(sr);
+        float texOffsetX = static_cast<float>(
+            0.5 - sr * 0.5 +
+            (viewport.centerX() - snapshotCenterX) * snapshotScale / w);
+        float texScaleY = static_cast<float>(-sr);
+        float texOffsetY = static_cast<float>(
+            0.5 + sr * 0.5 -
+            (viewport.centerY() - snapshotCenterY) * snapshotScale / h);
+
+        snapshotShader->bind();
+        snapshotShader->setUniformValue("uViewportSize",
+            static_cast<float>(w), static_cast<float>(h));
+        snapshotShader->setUniformValue("uScreenRect",
+            0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h));
+        snapshotShader->setUniformValue("uTexCoordOffset", texOffsetX, texOffsetY);
+        snapshotShader->setUniformValue("uTexCoordScale", texScaleX, texScaleY);
+        snapshotShader->setUniformValue("uSnapshotTexture", 0);
+
+        // The copied framebuffer texture may contain non-opaque alpha.
+        // Draw snapshot as opaque to avoid washed-out/overexposed blending artifacts.
+        gl->glDisable(GL_BLEND);
+        gl->glBindVertexArray(quadVAO);
+        gl->glActiveTexture(GL_TEXTURE0);
+        gl->glBindTexture(GL_TEXTURE_2D, snapshotTexture);
+        gl->glDrawArrays(GL_TRIANGLES, 0, 6);
+        gl->glBindTexture(GL_TEXTURE_2D, 0);
+        gl->glBindVertexArray(0);
+        gl->glEnable(GL_BLEND);
+        gl->glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        snapshotShader->release();
+    }
+
+    void clearSnapshot()
+    {
+        snapshotActive = false;
+        snapshotReady = false;
+    }
+
+    void deleteSnapshotTexture()
+    {
+        if (snapshotTexture != 0 && gl) {
+            gl->glDeleteTextures(1, &snapshotTexture);
+            snapshotTexture = 0;
+        }
+        snapshotActive = false;
+        snapshotReady = false;
+        snapshotFbWidth = 0;
+        snapshotFbHeight = 0;
+    }
+
+    void ensureTileFbo(int w, int h)
+    {
+        if (!gl || w <= 0 || h <= 0) return;
+        if (tileFbo == 0) {
+            gl->glGenFramebuffers(1, &tileFbo);
+            gl->glGenTextures(1, &tileFboTexture);
+        }
+        if (w != tileFboWidth || h != tileFboHeight) {
+            gl->glBindTexture(GL_TEXTURE_2D, tileFboTexture);
+            gl->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0,
+                             GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            gl->glBindTexture(GL_TEXTURE_2D, 0);
+
+            gl->glBindFramebuffer(GL_FRAMEBUFFER, tileFbo);
+            gl->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                       GL_TEXTURE_2D, tileFboTexture, 0);
+            GLenum status = gl->glCheckFramebufferStatus(GL_FRAMEBUFFER);
+            if (status != GL_FRAMEBUFFER_COMPLETE) {
+                spdlog::error("ViewportWidget: tile FBO incomplete, status=0x{:x}", status);
+            }
+            tileFboWidth = w;
+            tileFboHeight = h;
+        }
+    }
+
+    void destroyTileFbo()
+    {
+        if (gl) {
+            if (tileFbo != 0) {
+                gl->glDeleteFramebuffers(1, &tileFbo);
+                tileFbo = 0;
+            }
+            if (tileFboTexture != 0) {
+                gl->glDeleteTextures(1, &tileFboTexture);
+                tileFboTexture = 0;
+            }
+        }
+        tileFboWidth = 0;
+        tileFboHeight = 0;
     }
 
     // Find a fallback tile at a coarser level that covers the given tile's area.
@@ -712,6 +910,8 @@ ViewportWidget::~ViewportWidget()
     if (m_impl->glInitialized) {
         m_impl->clearAllTextures();
         m_impl->clearFluorescenceTextures();
+        m_impl->deleteSnapshotTexture();
+        m_impl->destroyTileFbo();
         if (m_impl->quadVAO) {
             m_impl->gl->glDeleteVertexArrays(1, &m_impl->quadVAO);
         }
@@ -1046,6 +1246,7 @@ void ViewportWidget::closeSlide()
         makeCurrent();
         m_impl->clearAllTextures();
         m_impl->clearFluorescenceTextures();
+        m_impl->deleteSnapshotTexture();
         doneCurrent();
     }
 
@@ -1162,6 +1363,9 @@ ViewportController* ViewportWidget::controller() const
 void ViewportWidget::fitToSlide()
 {
     if (m_impl->controller) {
+        if (m_impl->glInitialized && m_impl->slideOpen) {
+            m_impl->activateSnapshot();
+        }
         m_impl->controller->fitToSlide();
         emit viewportChanged();
         update();
@@ -1171,6 +1375,9 @@ void ViewportWidget::fitToSlide()
 void ViewportWidget::setActualPixels()
 {
     if (m_impl->controller) {
+        if (m_impl->glInitialized && m_impl->slideOpen) {
+            m_impl->activateSnapshot();
+        }
         m_impl->controller->setActualPixels();
         emit viewportChanged();
         update();
@@ -1180,6 +1387,9 @@ void ViewportWidget::setActualPixels()
 void ViewportWidget::zoomIn()
 {
     if (m_impl->controller) {
+        if (m_impl->glInitialized && m_impl->slideOpen) {
+            m_impl->activateSnapshot();
+        }
         double cx = width() / 2.0;
         double cy = height() / 2.0;
         m_impl->controller->zoomToPoint(cx, cy, kZoomInFactor);
@@ -1191,6 +1401,9 @@ void ViewportWidget::zoomIn()
 void ViewportWidget::zoomOut()
 {
     if (m_impl->controller) {
+        if (m_impl->glInitialized && m_impl->slideOpen) {
+            m_impl->activateSnapshot();
+        }
         double cx = width() / 2.0;
         double cy = height() / 2.0;
         m_impl->controller->zoomToPoint(cx, cy, kZoomOutFactor);
@@ -1308,6 +1521,24 @@ void ViewportWidget::initializeGL()
                       m_impl->channelShader->log().toStdString());
     }
 
+    // Compile snapshot shader (raw framebuffer texture passthrough)
+    m_impl->snapshotShader = std::make_unique<QOpenGLShaderProgram>();
+    m_impl->snapshotShader->addShaderFromSourceCode(QOpenGLShader::Vertex, kTileVertexShaderSource);
+    m_impl->snapshotShader->addShaderFromSourceCode(QOpenGLShader::Fragment, kSnapshotFragmentShaderSource);
+    if (!m_impl->snapshotShader->link()) {
+        spdlog::error("ViewportWidget: snapshot shader link failed: {}",
+                      m_impl->snapshotShader->log().toStdString());
+    }
+
+    // Compile composite shader (used to draw tile FBO over snapshot)
+    m_impl->compositeShader = std::make_unique<QOpenGLShaderProgram>();
+    m_impl->compositeShader->addShaderFromSourceCode(QOpenGLShader::Vertex, kTileVertexShaderSource);
+    m_impl->compositeShader->addShaderFromSourceCode(QOpenGLShader::Fragment, kCompositeFragmentShaderSource);
+    if (!m_impl->compositeShader->link()) {
+        spdlog::error("ViewportWidget: composite shader link failed: {}",
+                      m_impl->compositeShader->log().toStdString());
+    }
+
     m_impl->createQuadGeometry();
     spdlog::info("ViewportWidget: GL initialized, VAO={} VBO={}", m_impl->quadVAO, m_impl->quadVBO);
 
@@ -1364,6 +1595,11 @@ void ViewportWidget::paintGL()
 
     if (visibleKeys.empty()) {
         return;
+    }
+
+    // Render zoom snapshot as immediate visual feedback before tile rendering
+    if (m_impl->snapshotActive) {
+        m_impl->renderSnapshot(viewport);
     }
 
     core::CoordinateSystem coordSystem(*m_impl->pyramid);
@@ -1468,6 +1704,17 @@ void ViewportWidget::paintGL()
 
     } else {
         // --- Fluorescence rendering path ---
+        // Render tiles into an offscreen FBO so additive blending stays confined
+        // to the tile pass. Then composite that FBO over the snapshot with normal
+        // alpha blending, so the snapshot shows through transparent (untiled) regions.
+        const GLuint defaultFbo = static_cast<GLuint>(defaultFramebufferObject());
+        m_impl->ensureTileFbo(fbWidth, fbHeight);
+
+        m_impl->gl->glBindFramebuffer(GL_FRAMEBUFFER, m_impl->tileFbo);
+        m_impl->gl->glViewport(0, 0, fbWidth, fbHeight);
+        m_impl->gl->glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        m_impl->gl->glClear(GL_COLOR_BUFFER_BIT);
+
         m_impl->channelShader->bind();
         m_impl->channelShader->setUniformValue("uViewportSize",
             static_cast<float>(viewport.screenWidth()), static_cast<float>(viewport.screenHeight()));
@@ -1525,11 +1772,36 @@ void ViewportWidget::paintGL()
             ++tilesRendered;
         }
 
-        // Restore standard alpha blending
-        m_impl->gl->glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         m_impl->gl->glBindVertexArray(0);
         m_impl->gl->glBindTexture(GL_TEXTURE_2D, 0);
         m_impl->channelShader->release();
+
+        // Restore standard alpha blending and rebind the default FBO before compositing
+        m_impl->gl->glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        m_impl->gl->glBindFramebuffer(GL_FRAMEBUFFER, defaultFbo);
+        m_impl->gl->glViewport(0, 0, fbWidth, fbHeight);
+
+        // Composite tile FBO over snapshot. Y-flip via texCoord (offset=1, scale=-1)
+        // because the FBO was written using the same screen-Y-down vertex shader
+        // while OpenGL textures sample with Y-up.
+        m_impl->compositeShader->bind();
+        m_impl->compositeShader->setUniformValue("uViewportSize",
+            static_cast<float>(viewport.screenWidth()), static_cast<float>(viewport.screenHeight()));
+        m_impl->compositeShader->setUniformValue("uScreenRect",
+            0.0f, 0.0f,
+            static_cast<float>(viewport.screenWidth()),
+            static_cast<float>(viewport.screenHeight()));
+        m_impl->compositeShader->setUniformValue("uTexCoordOffset", 0.0f, 1.0f);
+        m_impl->compositeShader->setUniformValue("uTexCoordScale", 1.0f, -1.0f);
+        m_impl->compositeShader->setUniformValue("uSourceTexture", 0);
+
+        m_impl->gl->glBindVertexArray(m_impl->quadVAO);
+        m_impl->gl->glActiveTexture(GL_TEXTURE0);
+        m_impl->gl->glBindTexture(GL_TEXTURE_2D, m_impl->tileFboTexture);
+        m_impl->gl->glDrawArrays(GL_TRIANGLES, 0, 6);
+        m_impl->gl->glBindTexture(GL_TEXTURE_2D, 0);
+        m_impl->gl->glBindVertexArray(0);
+        m_impl->compositeShader->release();
     }
 
     if (paintCount <= 5 || paintCount % 100 == 0) {
@@ -1540,6 +1812,11 @@ void ViewportWidget::paintGL()
     if (tilesSkipped > 0 || morePending) {
         // Use a short timer to allow tile workers to make progress
         QTimer::singleShot(16, this, [this]() { update(); });
+    } else {
+        // All tiles rendered — deactivate the zoom snapshot and capture a fresh
+        // snapshot of this complete frame for the next zoom operation
+        m_impl->snapshotActive = false;
+        m_impl->captureSnapshotTexture(this, viewport);
     }
 }
 
@@ -1604,6 +1881,11 @@ void ViewportWidget::wheelEvent(QWheelEvent* event)
     if (std::abs(angleDelta) < 1.0) {
         event->accept();
         return;
+    }
+
+    // Record viewport state before zoom for smooth visual transition
+    if (m_impl->glInitialized && m_impl->slideOpen) {
+        m_impl->activateSnapshot();
     }
 
     double steps = angleDelta / 120.0;

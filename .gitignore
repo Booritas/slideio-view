@@ -36,3 +36,4 @@ CMakeUserPresets.json
 # OS
 Thumbs.db
 .DS_Store
+temp/
