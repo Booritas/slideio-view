@@ -7,6 +7,7 @@ add_library(slideio-viewer-ui STATIC
     src/ChannelMixerPanel.cpp
     src/SceneThumbnailPanel.cpp
     src/ZTNavigationWidget.cpp
+    src/LoadingOverlay.cpp
     src/MainWindow.cpp
 )
 

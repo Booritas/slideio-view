@@ -5,6 +5,7 @@
 #include <QImage>
 #include <QOpenGLWidget>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -13,6 +14,7 @@ namespace slideio::viewer::ui
 {
 
 class ViewportController;
+struct SceneOpenResult;
 
 class ViewportWidget : public QOpenGLWidget
 {
@@ -57,6 +59,8 @@ signals:
     void thumbnailReady(const QImage& thumbnail);
     void errorOccurred(const std::string& message);
     void sceneThumbnailReady(int sceneIndex, bool isAuxiliary, const std::string& name, const QImage& thumbnail);
+    void loadingStarted(const QString& displayName);
+    void loadingFinished();
 
 protected:
     void initializeGL() override;
@@ -71,6 +75,8 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
+    void installSceneOpenResult(uint64_t opId, SceneOpenResult result);
+
     struct Impl;
     std::unique_ptr<Impl> m_impl;
 };

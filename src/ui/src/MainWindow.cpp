@@ -1,5 +1,6 @@
 #include "slideio/viewer/ui/MainWindow.h"
 #include "slideio/viewer/ui/ChannelMixerPanel.h"
+#include "slideio/viewer/ui/LoadingOverlay.h"
 #include "slideio/viewer/ui/SceneThumbnailPanel.h"
 #include "slideio/viewer/ui/MinimapWidget.h"
 #include "slideio/viewer/ui/StatusBarManager.h"
@@ -44,6 +45,7 @@ struct MainWindow::Impl
     ZTNavigationWidget* ztNavigationWidget = nullptr;
     ChannelMixerPanel* channelMixerPanel = nullptr;
     SceneThumbnailPanel* sceneThumbnailPanel = nullptr;
+    LoadingOverlay* loadingOverlay = nullptr;
 
     // Recent files
     QMenu* recentFilesMenu = nullptr;
@@ -213,6 +215,13 @@ struct MainWindow::Impl
                 ztNavigationWidget->setSliceFrameCounts(info.numZSlices, info.numTFrames);
                 ztNavigationWidget->raise();
 
+                // Populate scene thumbnail panel if multi-scene
+                if (info.scenes.size() > 1) {
+                    sceneThumbnailPanel->setScenes(info.scenes, {});
+                    sceneThumbnailPanel->setActiveScene(0, false);
+                    sceneThumbnailPanel->show();
+                    viewportWidget->generateSceneThumbnails();
+                }
             });
 
         QObject::connect(viewportWidget, &ViewportWidget::thumbnailReady, owner,
@@ -236,6 +245,19 @@ struct MainWindow::Impl
             // Note: scene panel is NOT cleared here because slideClosed also fires
             // during scene switching (openScene calls closeSlide internally).
             // The scene panel is cleared explicitly in openSlide() and the close action.
+        });
+
+        // Loading overlay lifecycle
+        QObject::connect(viewportWidget, &ViewportWidget::loadingStarted, owner,
+            [this](const QString& displayName) {
+                loadingOverlay->resize(viewportWidget->size());
+                loadingOverlay->move(0, 0);
+                loadingOverlay->raise();
+                loadingOverlay->start(displayName);
+            });
+
+        QObject::connect(viewportWidget, &ViewportWidget::loadingFinished, owner, [this]() {
+            loadingOverlay->stop();
         });
 
         // Scene thumbnail panel: wire scene switching
@@ -398,6 +420,11 @@ struct MainWindow::Impl
             int margin = 10;
             ztNavigationWidget->move(margin, margin);
         }
+
+        if (loadingOverlay && viewportWidget) {
+            loadingOverlay->resize(viewportWidget->size());
+            loadingOverlay->move(0, 0);
+        }
     }
 };
 
@@ -431,6 +458,9 @@ MainWindow::MainWindow(QWidget* parent)
 
     m_impl->ztNavigationWidget = new ZTNavigationWidget(m_impl->viewportWidget);
     m_impl->ztNavigationWidget->raise();
+
+    m_impl->loadingOverlay = new LoadingOverlay(m_impl->viewportWidget);
+    m_impl->loadingOverlay->raise();
 
     // Create status bar manager
     m_impl->statusBarManager = new StatusBarManager(this);
@@ -486,21 +516,13 @@ void MainWindow::openSlide(const std::string& path)
 {
     m_impl->sceneThumbnailPanel->clear();
     m_impl->sceneThumbnailPanel->hide();
-    m_impl->viewportWidget->openSlide(path);
     setWindowTitle(QString("SlideIO Viewer - %1").arg(QString::fromStdString(path)));
     m_impl->addToRecentFiles(path);
 
-    // Populate scene thumbnail panel (after openSlide returns, scene data is available)
-    if (m_impl->viewportWidget->isSlideOpen()) {
-        const auto& info = m_impl->viewportWidget->slideInfo();
-        if (info.scenes.size() > 1) {
-            m_impl->sceneThumbnailPanel->setScenes(info.scenes, {});
-            m_impl->sceneThumbnailPanel->setActiveScene(0, false);
-            m_impl->sceneThumbnailPanel->show();
-            // Generate thumbnails AFTER panel items exist
-            m_impl->viewportWidget->generateSceneThumbnails();
-        }
-    }
+    // openSlide is async: it kicks off background work and returns immediately.
+    // The scene panel is populated, the loading overlay is hidden, and other
+    // post-open UI updates run from the slideOpened/loadingFinished signal handlers.
+    m_impl->viewportWidget->openSlide(path);
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)

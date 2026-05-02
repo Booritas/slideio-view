@@ -27,11 +27,37 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <thread>
 #include <unordered_map>
 #include <vector>
+
+namespace slideio::viewer::ui
+{
+// Result of a background slide-open operation. Holds everything the UI thread
+// needs to install a freshly-opened slide. Movable but not copyable for safety.
+struct SceneOpenResult
+{
+    bool success = false;
+    std::string filePath;
+    std::string errorMsg;
+    bool isAuxImage = false;          // true when opened via openAuxImage path
+
+    // Scene/aux enumeration (only filled by openSlide path)
+    std::vector<core::SceneInfo> scenes;
+    std::vector<core::SceneInfo> auxImages;
+
+    // Core data structures built off the UI thread
+    std::shared_ptr<infra::SlideIOAdapterPool> adapterPool;
+    core::SlideInfo slideInfo;
+    std::shared_ptr<core::TilePyramid> pyramid;
+    std::shared_ptr<infra::LruTileCache> tileCache;
+    QImage thumbnail;
+};
+} // namespace slideio::viewer::ui
 
 namespace
 {
@@ -363,6 +389,223 @@ uint8_t mapPixelToUint8(const uint8_t* buffer, size_t elementIndex,
     return static_cast<uint8_t>(std::clamp(normalized * 255.0, 0.0, 255.0));
 }
 
+// Read the coarsest pyramid level synchronously: detect global and per-channel
+// display ranges, build a thumbnail QImage, and insert the tiles into the
+// cache so the very first paint has a base layer to show. Throws on errors;
+// caller wraps in try/catch.
+void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool& pool,
+                                      slideio::viewer::core::SlideInfo& slideInfo,
+                                      const slideio::viewer::core::TilePyramid& pyramid,
+                                      slideio::viewer::core::ITileCache& tileCache,
+                                      QImage& thumbnailOut)
+{
+    namespace core = slideio::viewer::core;
+    int coarsestLevel = pyramid.numLevels() - 1;
+    if (coarsestLevel < 0) return;
+    const auto& coarseLvl = pyramid.levelInfo(coarsestLevel);
+    constexpr int kMaxThumbDim = 400;
+    int thumbW = coarseLvl.width;
+    int thumbH = coarseLvl.height;
+    if (thumbW > kMaxThumbDim || thumbH > kMaxThumbDim) {
+        double ratio = std::min(static_cast<double>(kMaxThumbDim) / thumbW,
+                                static_cast<double>(kMaxThumbDim) / thumbH);
+        thumbW = std::max(1, static_cast<int>(thumbW * ratio));
+        thumbH = std::max(1, static_cast<int>(thumbH * ratio));
+    }
+
+    auto loan = pool.acquire();
+    int numCh = slideInfo.numChannels;
+    DataType dt = slideInfo.channelDataType;
+
+    // Pass 1: read all coarsest-level tiles and compute global min/max
+    std::vector<core::TileData> coarseTiles;
+    double globalMin = std::numeric_limits<double>::max();
+    double globalMax = std::numeric_limits<double>::lowest();
+
+    for (int r = 0; r < coarseLvl.tilesY; ++r) {
+        for (int c = 0; c < coarseLvl.tilesX; ++c) {
+            core::TileKey tileKey(coarsestLevel, c, r);
+            auto tileData = loan->readTile(tileKey);
+            if (tileData.isEmpty() || tileData.isError()) {
+                coarseTiles.push_back(std::move(tileData));
+                continue;
+            }
+            size_t totalElements = static_cast<size_t>(tileData.width())
+                                 * static_cast<size_t>(tileData.height())
+                                 * static_cast<size_t>(tileData.numChannels());
+            auto [tMin, tMax] = computeMinMax(tileData.buffer().data(), totalElements, dt);
+            globalMin = std::min(globalMin, tMin);
+            globalMax = std::max(globalMax, tMax);
+            coarseTiles.push_back(std::move(tileData));
+        }
+    }
+
+    if (globalMin < globalMax) {
+        slideInfo.displayRange.displayMin = globalMin;
+        slideInfo.displayRange.displayMax = globalMax;
+        slideInfo.displayRange.autoDetected = true;
+    }
+
+    // Per-channel min/max for multi-channel slides
+    if (numCh > 1) {
+        std::vector<double> channelMin(numCh, std::numeric_limits<double>::max());
+        std::vector<double> channelMax(numCh, std::numeric_limits<double>::lowest());
+        for (const auto& tileData : coarseTiles) {
+            if (tileData.isEmpty() || tileData.isError()) continue;
+            size_t pixelCount = static_cast<size_t>(tileData.width()) * tileData.height();
+            for (int ch = 0; ch < numCh; ++ch) {
+                computeMinMaxStrided(tileData.buffer().data(), pixelCount,
+                                     numCh, ch, dt, channelMin[ch], channelMax[ch]);
+            }
+        }
+        for (int ch = 0; ch < numCh; ++ch) {
+            if (ch < static_cast<int>(slideInfo.channels.size())) {
+                if (channelMin[ch] < channelMax[ch]) {
+                    slideInfo.channels[ch].displayRange.displayMin = channelMin[ch];
+                    slideInfo.channels[ch].displayRange.displayMax = channelMax[ch];
+                    slideInfo.channels[ch].displayRange.autoDetected = true;
+                }
+            }
+        }
+    }
+
+    // Pass 2: build thumbnail QImage using detected range
+    QImage::Format imgFmt = (numCh >= 3) ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
+    QImage levelImg(coarseLvl.width, coarseLvl.height, imgFmt);
+    levelImg.fill(Qt::white);
+
+    int tileIdx = 0;
+    for (int r = 0; r < coarseLvl.tilesY; ++r) {
+        for (int c = 0; c < coarseLvl.tilesX; ++c) {
+            const auto& tileData = coarseTiles[static_cast<size_t>(tileIdx++)];
+            if (tileData.isEmpty() || tileData.isError()) continue;
+            int tw = tileData.width();
+            int th = tileData.height();
+            int tCh = tileData.numChannels();
+            int tileX0 = c * coarseLvl.tileWidth;
+            int tileY0 = r * coarseLvl.tileHeight;
+            const uint8_t* src = tileData.buffer().data();
+            for (int y = 0; y < th && (tileY0 + y) < coarseLvl.height; ++y) {
+                uint8_t* dst = levelImg.scanLine(tileY0 + y);
+                for (int x = 0; x < tw && (tileX0 + x) < coarseLvl.width; ++x) {
+                    size_t srcElem = static_cast<size_t>((y * tw + x) * tCh);
+                    if (numCh >= 3) {
+                        int dstIdx = (tileX0 + x) * 3;
+                        dst[dstIdx + 0] = mapPixelToUint8(src, srcElem + 0, dt, globalMin, globalMax);
+                        dst[dstIdx + 1] = mapPixelToUint8(src, srcElem + 1, dt, globalMin, globalMax);
+                        dst[dstIdx + 2] = mapPixelToUint8(src, srcElem + 2, dt, globalMin, globalMax);
+                    } else {
+                        dst[tileX0 + x] = mapPixelToUint8(src, srcElem, dt, globalMin, globalMax);
+                    }
+                }
+            }
+        }
+    }
+
+    thumbnailOut = levelImg.scaled(thumbW, thumbH,
+        Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+
+    // Insert coarsest tiles into cache for instant base-layer preview
+    {
+        int idx = 0;
+        for (int r = 0; r < coarseLvl.tilesY; ++r) {
+            for (int c = 0; c < coarseLvl.tilesX; ++c) {
+                auto& td = coarseTiles[static_cast<size_t>(idx++)];
+                if (td.isEmpty() || td.isError()) continue;
+                core::TileKey tileKey(coarsestLevel, c, r);
+                tileCache.insert(tileKey, std::make_shared<core::TileData>(std::move(td)));
+            }
+        }
+    }
+}
+
+using slideio::viewer::ui::SceneOpenResult;
+
+// Open a scene synchronously (intended to run on a background thread). Captures
+// any exception into result.errorMsg.
+SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex)
+{
+    namespace core = slideio::viewer::core;
+    namespace infra = slideio::viewer::infra;
+    SceneOpenResult r;
+    r.filePath = filePath;
+    try {
+        r.adapterPool = std::make_shared<infra::SlideIOAdapterPool>(filePath, sceneIndex, 4);
+        {
+            auto loan = r.adapterPool->acquire();
+            r.slideInfo = loan->slideInfo();
+            auto levels = loan->levels();
+            r.pyramid = std::make_shared<core::TilePyramid>(
+                r.slideInfo.width, r.slideInfo.height, levels);
+        }
+        r.tileCache = std::make_shared<infra::LruTileCache>();
+        try {
+            readCoarseLevelAndBuildThumbnail(*r.adapterPool, r.slideInfo, *r.pyramid,
+                                             *r.tileCache, r.thumbnail);
+        } catch (const std::exception& ex) {
+            spdlog::warn("openSceneSync: thumbnail/coarse-cache pass failed: {}", ex.what());
+        }
+
+        // Apply fallback display range if auto-detection didn't yield one
+        if (!r.slideInfo.displayRange.autoDetected) {
+            switch (r.slideInfo.channelDataType) {
+            case DataType::Byte:    r.slideInfo.displayRange = {0.0, 255.0, false}; break;
+            case DataType::UInt16:  r.slideInfo.displayRange = {0.0, 65535.0, false}; break;
+            case DataType::Int16:   r.slideInfo.displayRange = {0.0, 32767.0, false}; break;
+            case DataType::Float32: r.slideInfo.displayRange = {0.0, 1.0, false}; break;
+            default:                r.slideInfo.displayRange = {0.0, 255.0, false}; break;
+            }
+        }
+        r.success = true;
+    } catch (const std::exception& ex) {
+        r.errorMsg = ex.what();
+    } catch (...) {
+        r.errorMsg = "unknown error";
+    }
+    return r;
+}
+
+// Open an auxiliary image synchronously (background thread).
+SceneOpenResult openAuxImageSync(const std::string& filePath, const std::string& auxImageName)
+{
+    namespace core = slideio::viewer::core;
+    namespace infra = slideio::viewer::infra;
+    SceneOpenResult r;
+    r.filePath = filePath;
+    r.isAuxImage = true;
+    try {
+        r.adapterPool = std::make_shared<infra::SlideIOAdapterPool>(filePath, auxImageName, 4);
+        {
+            auto loan = r.adapterPool->acquire();
+            r.slideInfo = loan->slideInfo();
+            auto levels = loan->levels();
+            r.pyramid = std::make_shared<core::TilePyramid>(
+                r.slideInfo.width, r.slideInfo.height, levels);
+        }
+        r.tileCache = std::make_shared<infra::LruTileCache>();
+        try {
+            readCoarseLevelAndBuildThumbnail(*r.adapterPool, r.slideInfo, *r.pyramid,
+                                             *r.tileCache, r.thumbnail);
+        } catch (const std::exception& ex) {
+            spdlog::warn("openAuxImageSync: thumbnail/coarse-cache pass failed: {}", ex.what());
+        }
+
+        if (!r.slideInfo.displayRange.autoDetected) {
+            switch (r.slideInfo.channelDataType) {
+            case DataType::Byte:    r.slideInfo.displayRange = {0.0, 255.0, false}; break;
+            case DataType::UInt16:  r.slideInfo.displayRange = {0.0, 65535.0, false}; break;
+            default:                r.slideInfo.displayRange = {0.0, 255.0, false}; break;
+            }
+        }
+        r.success = true;
+    } catch (const std::exception& ex) {
+        r.errorMsg = ex.what();
+    } catch (...) {
+        r.errorMsg = "unknown error";
+    }
+    return r;
+}
+
 } // anonymous namespace
 
 namespace slideio::viewer::ui
@@ -410,6 +653,11 @@ struct ViewportWidget::Impl
     std::string currentFilePath;
     int currentZSlice = 0;
     int currentTFrame = 0;
+
+    // Async open: every slide-open call increments openOpId. Background workers
+    // capture the id at start and finalize-on-UI checks it; mismatch means the
+    // user issued another open (or close) and the result should be discarded.
+    std::atomic<uint64_t> openOpId{0};
 
     // Zoom snapshot for smooth visual transitions
     GLuint snapshotTexture = 0;
@@ -928,27 +1176,30 @@ ViewportWidget::~ViewportWidget()
 
 void ViewportWidget::openSlide(const std::string& filePath)
 {
-    // Enumerate scenes BEFORE opening so the data is available when slideOpened fires
-    std::vector<core::SceneInfo> scenes;
-    std::vector<core::SceneInfo> auxImages;
-    try {
-        auto result = infra::SlideIOAdapter::enumerateScenes(filePath);
-        scenes = std::move(result.first);
-        auxImages = std::move(result.second);
-    } catch (const std::exception& ex) {
-        spdlog::warn("openSlide: failed to enumerate scenes: {}", ex.what());
-    }
+    closeSlide();
+    m_impl->currentFilePath = filePath;
+    const uint64_t opId = ++m_impl->openOpId;
 
-    // Open the first scene
-    openScene(filePath, 0);
+    QString displayName = QString::fromStdString(filePath);
+    int slash = std::max(displayName.lastIndexOf('/'), displayName.lastIndexOf('\\'));
+    if (slash >= 0) displayName = displayName.mid(slash + 1);
+    emit loadingStarted(displayName);
 
-    if (!m_impl->slideOpen) {
-        return;
-    }
-
-    // Store scene info (openScene reset slideInfo, so we set these after)
-    m_impl->slideInfo.scenes = scenes;
-    m_impl->slideInfo.auxImages = auxImages;
+    std::thread([this, opId, filePath]() {
+        SceneOpenResult result = openSceneSync(filePath, 0);
+        // Always enumerate scenes so the scene panel can populate, even if scene 0 worked.
+        try {
+            auto enumResult = infra::SlideIOAdapter::enumerateScenes(filePath);
+            result.scenes = std::move(enumResult.first);
+            result.auxImages = std::move(enumResult.second);
+        } catch (const std::exception& ex) {
+            spdlog::warn("openSlide: failed to enumerate scenes: {}", ex.what());
+        }
+        QMetaObject::invokeMethod(this,
+            [this, opId, r = std::move(result)]() mutable {
+                installSceneOpenResult(opId, std::move(r));
+            }, Qt::QueuedConnection);
+    }).detach();
 }
 
 void ViewportWidget::generateSceneThumbnails()
@@ -1033,228 +1284,30 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex)
 {
     closeSlide();
     m_impl->currentFilePath = filePath;
+    const uint64_t opId = ++m_impl->openOpId;
 
-    try {
-        m_impl->adapterPool = std::make_shared<infra::SlideIOAdapterPool>(filePath, sceneIndex, 4);
+    QString displayName = QString::fromStdString(filePath);
+    int slash = std::max(displayName.lastIndexOf('/'), displayName.lastIndexOf('\\'));
+    if (slash >= 0) displayName = displayName.mid(slash + 1);
+    if (sceneIndex > 0) displayName += QStringLiteral(" (scene %1)").arg(sceneIndex);
+    emit loadingStarted(displayName);
 
-        auto adapterLoan = m_impl->adapterPool->acquire();
-        m_impl->slideInfo = adapterLoan->slideInfo();
-        auto levels = adapterLoan->levels();
-
-        m_impl->tileCache = std::make_shared<infra::LruTileCache>();
-
-        m_impl->pyramid = std::make_shared<core::TilePyramid>(
-            m_impl->slideInfo.width, m_impl->slideInfo.height, levels);
-
-        m_impl->scheduler = std::make_shared<infra::TileLoadScheduler>(
-            m_impl->adapterPool, m_impl->tileCache);
-
-        m_impl->scheduler->setOnTileLoaded([this](const core::TileKey& key) {
-            {
-                std::lock_guard<std::mutex> lock(m_impl->pendingUploadsMutex);
-                m_impl->pendingUploads.push_back(key);
-            }
-            // Marshal update() to the UI thread
-            QMetaObject::invokeMethod(this, "update", Qt::QueuedConnection);
-        });
-
-        // Create controller WITHOUT a scheduler initially to prevent
-        // premature tile requests during setup
-        m_impl->controller = std::make_unique<ViewportController>(
-            m_impl->pyramid, m_impl->tileCache, nullptr);
-
-        m_impl->controller->setSlide(m_impl->slideInfo, *m_impl->pyramid);
-
-        if (width() > 0 && height() > 0) {
-            m_impl->controller->resize(width(), height());
-            m_impl->controller->fitToSlide();
-        }
-
-        // Now connect the scheduler and request tiles once
-        m_impl->controller->setScheduler(m_impl->scheduler);
-        m_impl->controller->requestVisibleTiles();
-
-        m_impl->slideOpen = true;
-
-        // Generate thumbnail and auto-detect display range from coarsest pyramid level
-        {
-            int coarsestLevel = m_impl->pyramid->numLevels() - 1;
-            const auto& coarseLvl = m_impl->pyramid->levelInfo(coarsestLevel);
-            constexpr int kMaxThumbDim = 400;
-            int thumbW = coarseLvl.width;
-            int thumbH = coarseLvl.height;
-            if (thumbW > kMaxThumbDim || thumbH > kMaxThumbDim) {
-                double ratio = std::min(static_cast<double>(kMaxThumbDim) / thumbW,
-                                        static_cast<double>(kMaxThumbDim) / thumbH);
-                thumbW = std::max(1, static_cast<int>(thumbW * ratio));
-                thumbH = std::max(1, static_cast<int>(thumbH * ratio));
-            }
-            try {
-                auto thumbLoan = m_impl->adapterPool->acquire();
-                int numCh = m_impl->slideInfo.numChannels;
-                DataType dt = m_impl->slideInfo.channelDataType;
-
-                // Pass 1: Read all coarsest-level tiles and compute global min/max
-                std::vector<core::TileData> coarseTiles;
-                double globalMin = std::numeric_limits<double>::max();
-                double globalMax = std::numeric_limits<double>::lowest();
-
-                for (int r = 0; r < coarseLvl.tilesY; ++r) {
-                    for (int c = 0; c < coarseLvl.tilesX; ++c) {
-                        core::TileKey tileKey(coarsestLevel, c, r);
-                        auto tileData = thumbLoan->readTile(tileKey);
-                        if (tileData.isEmpty() || tileData.isError()) {
-                            coarseTiles.push_back(std::move(tileData));
-                            continue;
-                        }
-                        size_t totalElements = static_cast<size_t>(tileData.width())
-                                             * static_cast<size_t>(tileData.height())
-                                             * static_cast<size_t>(tileData.numChannels());
-                        auto [tMin, tMax] = computeMinMax(
-                            tileData.buffer().data(), totalElements, dt);
-                        globalMin = std::min(globalMin, tMin);
-                        globalMax = std::max(globalMax, tMax);
-                        coarseTiles.push_back(std::move(tileData));
-                    }
-                }
-
-                // Store auto-detected display range
-                if (globalMin < globalMax) {
-                    m_impl->slideInfo.displayRange.displayMin = globalMin;
-                    m_impl->slideInfo.displayRange.displayMax = globalMax;
-                    m_impl->slideInfo.displayRange.autoDetected = true;
-                    spdlog::info("ViewportWidget::openSlide: displayRange: min={} max={}", globalMin, globalMax);
-                }
-
-                // Per-channel min/max detection for multi-channel slides
-                if (numCh > 1) {
-                    std::vector<double> channelMin(numCh, std::numeric_limits<double>::max());
-                    std::vector<double> channelMax(numCh, std::numeric_limits<double>::lowest());
-
-                    for (const auto& tileData : coarseTiles) {
-                        if (tileData.isEmpty() || tileData.isError()) continue;
-                        size_t pixelCount = static_cast<size_t>(tileData.width()) * tileData.height();
-                        for (int ch = 0; ch < numCh; ++ch) {
-                            computeMinMaxStrided(tileData.buffer().data(), pixelCount,
-                                                 numCh, ch, dt, channelMin[ch], channelMax[ch]);
-                        }
-                    }
-
-                    for (int ch = 0; ch < numCh; ++ch) {
-                        if (ch < static_cast<int>(m_impl->slideInfo.channels.size())) {
-                            if (channelMin[ch] < channelMax[ch]) {
-                                m_impl->slideInfo.channels[ch].displayRange.displayMin = channelMin[ch];
-                                m_impl->slideInfo.channels[ch].displayRange.displayMax = channelMax[ch];
-                                m_impl->slideInfo.channels[ch].displayRange.autoDetected = true;
-                                spdlog::info("ViewportWidget::openSlide: channel {} displayRange: min={} max={}",
-                                             ch, channelMin[ch], channelMax[ch]);
-                            }
-                        }
-                    }
-                }
-
-                // Pass 2: Generate thumbnail QImage using detected range
-                QImage::Format imgFmt = (numCh >= 3) ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
-                QImage levelImg(coarseLvl.width, coarseLvl.height, imgFmt);
-                levelImg.fill(Qt::white);
-
-                int tileIdx = 0;
-                for (int r = 0; r < coarseLvl.tilesY; ++r) {
-                    for (int c = 0; c < coarseLvl.tilesX; ++c) {
-                        const auto& tileData = coarseTiles[static_cast<size_t>(tileIdx++)];
-                        if (tileData.isEmpty() || tileData.isError()) continue;
-                        int tw = tileData.width();
-                        int th = tileData.height();
-                        int tCh = tileData.numChannels();
-                        int tileX0 = c * coarseLvl.tileWidth;
-                        int tileY0 = r * coarseLvl.tileHeight;
-                        const uint8_t* src = tileData.buffer().data();
-
-                        for (int y = 0; y < th && (tileY0 + y) < coarseLvl.height; ++y) {
-                            uint8_t* dst = levelImg.scanLine(tileY0 + y);
-                            for (int x = 0; x < tw && (tileX0 + x) < coarseLvl.width; ++x) {
-                                size_t srcElem = static_cast<size_t>((y * tw + x) * tCh);
-                                if (numCh >= 3) {
-                                    int dstIdx = (tileX0 + x) * 3;
-                                    dst[dstIdx + 0] = mapPixelToUint8(src, srcElem + 0, dt, globalMin, globalMax);
-                                    dst[dstIdx + 1] = mapPixelToUint8(src, srcElem + 1, dt, globalMin, globalMax);
-                                    dst[dstIdx + 2] = mapPixelToUint8(src, srcElem + 2, dt, globalMin, globalMax);
-                                } else {
-                                    dst[tileX0 + x] = mapPixelToUint8(src, srcElem, dt, globalMin, globalMax);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                QImage thumbnail = levelImg.scaled(thumbW, thumbH,
-                    Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-                spdlog::info("ViewportWidget::openSlide: generated thumbnail {}x{}", thumbW, thumbH);
-                emit thumbnailReady(thumbnail);
-
-                // Insert coarsest-level tiles into the tile cache so paintGL has an
-                // instant blurry preview as a base layer (avoids the black-screen
-                // flash on first load and on pans into uncached areas).
-                {
-                    int idx = 0;
-                    int cached = 0;
-                    for (int r = 0; r < coarseLvl.tilesY; ++r) {
-                        for (int c = 0; c < coarseLvl.tilesX; ++c) {
-                            auto& td = coarseTiles[static_cast<size_t>(idx++)];
-                            if (td.isEmpty() || td.isError()) continue;
-                            core::TileKey tileKey(coarsestLevel, c, r);
-                            m_impl->tileCache->insert(tileKey,
-                                std::make_shared<core::TileData>(std::move(td)));
-                            ++cached;
-                        }
-                    }
-                    spdlog::info("ViewportWidget::openSlide: cached {} coarsest-level tiles for instant preview", cached);
-                }
-            } catch (const std::exception& ex) {
-                spdlog::warn("ViewportWidget::openSlide: failed to generate thumbnail: {}", ex.what());
-            }
-
-            // Fallback display range if auto-detection failed
-            if (!m_impl->slideInfo.displayRange.autoDetected) {
-                switch (m_impl->slideInfo.channelDataType) {
-                case DataType::Byte:    m_impl->slideInfo.displayRange = {0.0, 255.0, false}; break;
-                case DataType::UInt16:  m_impl->slideInfo.displayRange = {0.0, 65535.0, false}; break;
-                case DataType::Int16:   m_impl->slideInfo.displayRange = {0.0, 32767.0, false}; break;
-                case DataType::Float32: m_impl->slideInfo.displayRange = {0.0, 1.0, false}; break;
-                default:                      m_impl->slideInfo.displayRange = {0.0, 255.0, false}; break;
-                }
-            }
-        }
-
-        spdlog::info("ViewportWidget::openSlide: slide {}x{}, {} levels, {} channels, magnification={}",
-                     m_impl->slideInfo.width, m_impl->slideInfo.height,
-                     m_impl->slideInfo.numZoomLevels, m_impl->slideInfo.numChannels,
-                     m_impl->slideInfo.magnification);
-        spdlog::info("ViewportWidget::openSlide: viewport {}x{}, scale={}, center=({},{})",
-                     m_impl->controller->viewport().screenWidth(),
-                     m_impl->controller->viewport().screenHeight(),
-                     m_impl->controller->viewport().scale(),
-                     m_impl->controller->viewport().centerX(),
-                     m_impl->controller->viewport().centerY());
-        auto keys = m_impl->controller->visibleTileKeys();
-        spdlog::info("ViewportWidget::openSlide: {} visible tiles requested", keys.size());
-
-        emit slideOpened(filePath);
-        emit viewportChanged();
-        update();
-    } catch (const std::exception& ex) {
-        spdlog::error("ViewportWidget::openScene: exception: {}", ex.what());
-        emit errorOccurred(std::string("Failed to open slide: ") + ex.what());
-        closeSlide();
-    } catch (...) {
-        spdlog::error("ViewportWidget::openScene: unknown exception");
-        emit errorOccurred("Failed to open slide: unknown error");
-        closeSlide();
-    }
+    std::thread([this, opId, filePath, sceneIndex]() {
+        SceneOpenResult result = openSceneSync(filePath, sceneIndex);
+        QMetaObject::invokeMethod(this,
+            [this, opId, r = std::move(result)]() mutable {
+                installSceneOpenResult(opId, std::move(r));
+            }, Qt::QueuedConnection);
+    }).detach();
 }
 
 void ViewportWidget::closeSlide()
 {
+    // Bump opId so any in-flight async open result will be discarded when it
+    // arrives back on the UI thread, and tell the overlay to come down.
+    ++m_impl->openOpId;
+    emit loadingFinished();
+
     if (m_impl->scheduler) {
         m_impl->scheduler->stop();
     }
@@ -1282,90 +1335,82 @@ void ViewportWidget::openAuxImage(const std::string& filePath, const std::string
 {
     closeSlide();
     m_impl->currentFilePath = filePath;
+    const uint64_t opId = ++m_impl->openOpId;
 
-    try {
-        m_impl->adapterPool = std::make_shared<infra::SlideIOAdapterPool>(filePath, auxImageName, 4);
+    QString displayName = QString::fromStdString(filePath);
+    int slash = std::max(displayName.lastIndexOf('/'), displayName.lastIndexOf('\\'));
+    if (slash >= 0) displayName = displayName.mid(slash + 1);
+    displayName += QStringLiteral(" (%1)").arg(QString::fromStdString(auxImageName));
+    emit loadingStarted(displayName);
 
-        auto adapterLoan = m_impl->adapterPool->acquire();
-        m_impl->slideInfo = adapterLoan->slideInfo();
-        auto levels = adapterLoan->levels();
+    std::thread([this, opId, filePath, auxImageName]() {
+        SceneOpenResult result = openAuxImageSync(filePath, auxImageName);
+        QMetaObject::invokeMethod(this,
+            [this, opId, r = std::move(result)]() mutable {
+                installSceneOpenResult(opId, std::move(r));
+            }, Qt::QueuedConnection);
+    }).detach();
+}
 
-        m_impl->tileCache = std::make_shared<infra::LruTileCache>();
-        m_impl->pyramid = std::make_shared<core::TilePyramid>(
-            m_impl->slideInfo.width, m_impl->slideInfo.height, levels);
-
-        // Auto-detect display range BEFORE starting the scheduler (to avoid deadlock)
-        {
-            int coarsestLevel = m_impl->pyramid->numLevels() - 1;
-            const auto& coarseLvl = m_impl->pyramid->levelInfo(coarsestLevel);
-            DataType dt = m_impl->slideInfo.channelDataType;
-            double globalMin = std::numeric_limits<double>::max();
-            double globalMax = std::numeric_limits<double>::lowest();
-
-            for (int r = 0; r < coarseLvl.tilesY; ++r) {
-                for (int c = 0; c < coarseLvl.tilesX; ++c) {
-                    core::TileKey tileKey(coarsestLevel, c, r);
-                    auto tileData = adapterLoan->readTile(tileKey);
-                    if (tileData.isEmpty() || tileData.isError()) continue;
-                    size_t totalElements = static_cast<size_t>(tileData.width())
-                                         * static_cast<size_t>(tileData.height())
-                                         * static_cast<size_t>(tileData.numChannels());
-                    auto [tMin, tMax] = computeMinMax(tileData.buffer().data(), totalElements, dt);
-                    globalMin = std::min(globalMin, tMin);
-                    globalMax = std::max(globalMax, tMax);
-                }
-            }
-
-            if (globalMin < globalMax) {
-                m_impl->slideInfo.displayRange.displayMin = globalMin;
-                m_impl->slideInfo.displayRange.displayMax = globalMax;
-                m_impl->slideInfo.displayRange.autoDetected = true;
-            } else {
-                switch (dt) {
-                case DataType::Byte:    m_impl->slideInfo.displayRange = {0.0, 255.0, false}; break;
-                case DataType::UInt16:  m_impl->slideInfo.displayRange = {0.0, 65535.0, false}; break;
-                default:                m_impl->slideInfo.displayRange = {0.0, 255.0, false}; break;
-                }
-            }
-        }
-        // Release the adapter loan before starting the scheduler
-        adapterLoan = {};
-
-        m_impl->scheduler = std::make_shared<infra::TileLoadScheduler>(
-            m_impl->adapterPool, m_impl->tileCache);
-        m_impl->scheduler->setOnTileLoaded([this](const core::TileKey& key) {
-            {
-                std::lock_guard<std::mutex> lock(m_impl->pendingUploadsMutex);
-                m_impl->pendingUploads.push_back(key);
-            }
-            QMetaObject::invokeMethod(this, "update", Qt::QueuedConnection);
-        });
-
-        m_impl->controller = std::make_unique<ViewportController>(
-            m_impl->pyramid, m_impl->tileCache, nullptr);
-        m_impl->controller->setSlide(m_impl->slideInfo, *m_impl->pyramid);
-        if (width() > 0 && height() > 0) {
-            m_impl->controller->resize(width(), height());
-            m_impl->controller->fitToSlide();
-        }
-        m_impl->controller->setScheduler(m_impl->scheduler);
-        m_impl->controller->requestVisibleTiles();
-
-        m_impl->slideOpen = true;
-
-        spdlog::info("ViewportWidget::openAuxImage: aux '{}' {}x{}, channels={}, type={}, displayRange=[{},{}]",
-                     auxImageName, m_impl->slideInfo.width, m_impl->slideInfo.height,
-                     m_impl->slideInfo.numChannels, static_cast<int>(m_impl->slideInfo.channelDataType),
-                     m_impl->slideInfo.displayRange.displayMin, m_impl->slideInfo.displayRange.displayMax);
-
-        emit slideOpened(filePath);
-        emit viewportChanged();
-        update();
-    } catch (const std::exception& ex) {
-        spdlog::error("ViewportWidget::openAuxImage: exception: {}", ex.what());
-        emit errorOccurred(std::string("Failed to open auxiliary image: ") + ex.what());
-        closeSlide();
+void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult result)
+{
+    if (opId != m_impl->openOpId.load()) {
+        spdlog::info("ViewportWidget::installSceneOpenResult: discarding stale result (opId={}, current={})",
+                     opId, m_impl->openOpId.load());
+        return;
     }
+
+    if (!result.success) {
+        spdlog::error("ViewportWidget::installSceneOpenResult: open failed: {}", result.errorMsg);
+        emit errorOccurred(std::string("Failed to open slide: ") + result.errorMsg);
+        emit loadingFinished();
+        return;
+    }
+
+    m_impl->adapterPool = std::move(result.adapterPool);
+    m_impl->tileCache = std::move(result.tileCache);
+    m_impl->pyramid = std::move(result.pyramid);
+    m_impl->slideInfo = std::move(result.slideInfo);
+    if (!result.scenes.empty()) {
+        m_impl->slideInfo.scenes = std::move(result.scenes);
+    }
+    if (!result.auxImages.empty()) {
+        m_impl->slideInfo.auxImages = std::move(result.auxImages);
+    }
+
+    m_impl->scheduler = std::make_shared<infra::TileLoadScheduler>(
+        m_impl->adapterPool, m_impl->tileCache);
+    m_impl->scheduler->setOnTileLoaded([this](const core::TileKey& key) {
+        {
+            std::lock_guard<std::mutex> lock(m_impl->pendingUploadsMutex);
+            m_impl->pendingUploads.push_back(key);
+        }
+        QMetaObject::invokeMethod(this, "update", Qt::QueuedConnection);
+    });
+
+    m_impl->controller = std::make_unique<ViewportController>(
+        m_impl->pyramid, m_impl->tileCache, nullptr);
+    m_impl->controller->setSlide(m_impl->slideInfo, *m_impl->pyramid);
+    if (width() > 0 && height() > 0) {
+        m_impl->controller->resize(width(), height());
+        m_impl->controller->fitToSlide();
+    }
+    m_impl->controller->setScheduler(m_impl->scheduler);
+    m_impl->controller->requestVisibleTiles();
+
+    m_impl->slideOpen = true;
+
+    spdlog::info("ViewportWidget::installSceneOpenResult: slide {}x{}, {} levels, {} channels",
+                 m_impl->slideInfo.width, m_impl->slideInfo.height,
+                 m_impl->slideInfo.numZoomLevels, m_impl->slideInfo.numChannels);
+
+    if (!result.thumbnail.isNull()) {
+        emit thumbnailReady(result.thumbnail);
+    }
+    emit slideOpened(result.filePath);
+    emit loadingFinished();
+    emit viewportChanged();
+    update();
 }
 
 const std::string& ViewportWidget::currentFilePath() const
