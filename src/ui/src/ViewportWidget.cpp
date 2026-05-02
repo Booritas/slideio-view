@@ -1276,60 +1276,50 @@ void ViewportWidget::generateSceneThumbnails()
         try {
             infra::SlideIOAdapter tempAdapter(filePath, sceneInfo.index);
             auto tempInfo = tempAdapter.slideInfo();
-            auto tempLevels = tempAdapter.levels();
 
-            if (tempLevels.empty() || tempInfo.width <= 0 || tempInfo.height <= 0) continue;
-
-            constexpr int kThumbSize = 256;
-            int coarsestIdx = static_cast<int>(tempLevels.size()) - 1;
-            const auto& coarsest = tempLevels[static_cast<size_t>(coarsestIdx)];
+            if (tempInfo.width <= 0 || tempInfo.height <= 0) continue;
             int numCh = tempInfo.numChannels;
             if (numCh <= 0) continue;
 
-            // Assemble all tiles of the coarsest level
-            QImage::Format imgFmt = (numCh >= 3) ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
-            int dstBpp = (numCh >= 3) ? 3 : 1;
-            QImage levelImg(coarsest.width, coarsest.height, imgFmt);
-            levelImg.fill(Qt::gray);
-
-            for (int r = 0; r < coarsest.tilesY; ++r) {
-                for (int c = 0; c < coarsest.tilesX; ++c) {
-                    core::TileKey tk(coarsestIdx, c, r);
-                    auto tileData = tempAdapter.readTile(tk);
-                    if (tileData.isEmpty() || tileData.isError()) continue;
-                    int tw = tileData.width();
-                    int th = tileData.height();
-                    int tileX0 = c * coarsest.tileWidth;
-                    int tileY0 = r * coarsest.tileHeight;
-                    const uint8_t* src = tileData.buffer().data();
-                    int tCh = tileData.numChannels();
-
-                    for (int y = 0; y < th && (tileY0 + y) < coarsest.height; ++y) {
-                        uint8_t* dst = levelImg.scanLine(tileY0 + y);
-                        for (int x = 0; x < tw && (tileX0 + x) < coarsest.width; ++x) {
-                            int srcIdx = (y * tw + x) * tCh;
-                            if (numCh >= 3 && tCh >= 3) {
-                                int dstIdx = (tileX0 + x) * dstBpp;
-                                dst[dstIdx + 0] = src[srcIdx + 0];
-                                dst[dstIdx + 1] = src[srcIdx + 1];
-                                dst[dstIdx + 2] = src[srcIdx + 2];
-                            } else {
-                                dst[tileX0 + x] = src[srcIdx];
-                            }
-                        }
-                    }
-                }
-            }
-
-            int thumbW = coarsest.width;
-            int thumbH = coarsest.height;
+            // Target thumbnail dimensions are derived from the FULL SCENE dims so
+            // SlideIO can pick a finer pyramid level and resample down. Without
+            // this, scenes whose coarsest pyramid level is small (e.g., ~200x160)
+            // would only produce a tiny coarse thumbnail.
+            constexpr int kThumbSize = 512;
+            int thumbW = tempInfo.width;
+            int thumbH = tempInfo.height;
             if (thumbW > kThumbSize || thumbH > kThumbSize) {
                 double ratio = std::min(static_cast<double>(kThumbSize) / thumbW,
                                         static_cast<double>(kThumbSize) / thumbH);
                 thumbW = std::max(1, static_cast<int>(thumbW * ratio));
                 thumbH = std::max(1, static_cast<int>(thumbH * ratio));
             }
-            QImage thumb = levelImg.scaled(thumbW, thumbH, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+
+            auto blockData = tempAdapter.readBlock(0, 0, tempInfo.width, tempInfo.height,
+                                                    thumbW, thumbH);
+            if (blockData.isEmpty() || blockData.isError()) continue;
+
+            QImage::Format imgFmt = (numCh >= 3) ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
+            QImage thumb(thumbW, thumbH, imgFmt);
+            thumb.fill(Qt::white);
+
+            const uint8_t* src = blockData.buffer().data();
+            int srcCh = blockData.numChannels();
+            for (int y = 0; y < thumbH; ++y) {
+                uint8_t* dst = thumb.scanLine(y);
+                for (int x = 0; x < thumbW; ++x) {
+                    int srcIdx = (y * thumbW + x) * srcCh;
+                    if (numCh >= 3 && srcCh >= 3) {
+                        int dstIdx = x * 3;
+                        dst[dstIdx + 0] = src[srcIdx + 0];
+                        dst[dstIdx + 1] = src[srcIdx + 1];
+                        dst[dstIdx + 2] = src[srcIdx + 2];
+                    } else {
+                        dst[x] = src[srcIdx];
+                    }
+                }
+            }
+
             emit sceneThumbnailReady(sceneInfo.index, false, sceneInfo.name, thumb.copy());
         } catch (const std::exception& ex) {
             spdlog::warn("generateSceneThumbnails: failed for scene {}: {}", sceneInfo.index, ex.what());
