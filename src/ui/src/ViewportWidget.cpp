@@ -1550,6 +1550,13 @@ void ViewportWidget::setZSlice(int zIndex)
     if (!m_impl->slideOpen || !m_impl->controller) return;
     if (zIndex == m_impl->currentZSlice) return;
 
+    // Activate the warm snapshot of the previous frame so the transition shows
+    // the prior Z slice as a backdrop while new-Z tiles stream in, instead of
+    // briefly flashing the cleared background.
+    if (m_impl->glInitialized) {
+        m_impl->activateSnapshot();
+    }
+
     m_impl->currentZSlice = zIndex;
     m_impl->controller->setZT(zIndex, m_impl->currentTFrame);
 
@@ -1568,6 +1575,10 @@ void ViewportWidget::setTFrame(int tFrame)
 {
     if (!m_impl->slideOpen || !m_impl->controller) return;
     if (tFrame == m_impl->currentTFrame) return;
+
+    if (m_impl->glInitialized) {
+        m_impl->activateSnapshot();
+    }
 
     m_impl->currentTFrame = tFrame;
     m_impl->controller->setZT(m_impl->currentZSlice, tFrame);
