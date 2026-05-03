@@ -1,4 +1,3 @@
-conan install . --output-folder=build --build=missing -s build_type=Release -s compiler.cppstd=17
-cmake -S . -B build/build -G "Visual Studio 17 2022" \\n  -DCMAKE_TOOLCHAIN_FILE=build/build/generators/conan_toolchain.cmake \\n  -DCMAKE_POLICY_DEFAULT_CMP0091=NEW \\n  -DSLIDEIO_ROOT="d:\Projects\slideio\slideio\build\install"
-cmake --build build/build --config Release
-cmake --install build/build --config Release --prefix "d:/Projects/slideio/slideio-view/build/install"
+export CONAN_PROFIlE=conan/profiles/Windows/release
+export BUILD_TYPE=Release
+./build-template.sh

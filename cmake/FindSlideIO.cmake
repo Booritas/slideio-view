@@ -13,9 +13,15 @@ endif()
 set(_slideio_release_prefix "${SLIDEIO_ROOT}/release")
 set(_slideio_debug_prefix   "${SLIDEIO_ROOT}/debug")
 
-find_path(SlideIO_INCLUDE_DIR
+find_path(SlideIO_INCLUDE_DIR_RELEASE
     NAMES slideio/slideio/slideio.hpp
     PATHS "${_slideio_release_prefix}/include"
+    NO_DEFAULT_PATH
+)
+
+find_path(SlideIO_INCLUDE_DIR_DEBUG
+    NAMES slideio/slideio/slideio.hpp
+    PATHS "${_slideio_debug_prefix}/include"
     NO_DEFAULT_PATH
 )
 
@@ -45,15 +51,26 @@ find_library(SlideIO_CORE_LIBRARY_DEBUG
 
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(SlideIO
-    REQUIRED_VARS SlideIO_LIBRARY_RELEASE SlideIO_CORE_LIBRARY_RELEASE SlideIO_INCLUDE_DIR
+    REQUIRED_VARS SlideIO_LIBRARY_RELEASE SlideIO_CORE_LIBRARY_RELEASE SlideIO_INCLUDE_DIR_RELEASE
 )
+
+# If a debug install isn't present, transparently fall back to the release
+# headers so debug builds against this find module still configure.
+if(NOT SlideIO_INCLUDE_DIR_DEBUG)
+    set(SlideIO_INCLUDE_DIR_DEBUG "${SlideIO_INCLUDE_DIR_RELEASE}")
+endif()
+
+# Per-config include directory: Debug picks up debug install headers, every
+# other config (Release, RelWithDebInfo, MinSizeRel, none) uses release headers.
+set(_slideio_include_genex
+    "$<IF:$<CONFIG:Debug>,${SlideIO_INCLUDE_DIR_DEBUG},${SlideIO_INCLUDE_DIR_RELEASE}>")
 
 if(SlideIO_FOUND AND NOT TARGET SlideIO::slideio)
     add_library(SlideIO::slideio SHARED IMPORTED)
     set_target_properties(SlideIO::slideio PROPERTIES
         IMPORTED_IMPLIB_RELEASE "${SlideIO_LIBRARY_RELEASE}"
         IMPORTED_LOCATION_RELEASE "${_slideio_release_prefix}/bin/slideio.dll"
-        INTERFACE_INCLUDE_DIRECTORIES "${SlideIO_INCLUDE_DIR}"
+        INTERFACE_INCLUDE_DIRECTORIES "${_slideio_include_genex}"
         MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release
         MAP_IMPORTED_CONFIG_MINSIZEREL Release
     )
@@ -72,7 +89,7 @@ if(SlideIO_FOUND AND NOT TARGET SlideIO::slideio)
     set_target_properties(SlideIO::core PROPERTIES
         IMPORTED_IMPLIB_RELEASE "${SlideIO_CORE_LIBRARY_RELEASE}"
         IMPORTED_LOCATION_RELEASE "${_slideio_release_prefix}/bin/slideio-core.dll"
-        INTERFACE_INCLUDE_DIRECTORIES "${SlideIO_INCLUDE_DIR}"
+        INTERFACE_INCLUDE_DIRECTORIES "${_slideio_include_genex}"
         MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release
         MAP_IMPORTED_CONFIG_MINSIZEREL Release
     )
@@ -89,7 +106,7 @@ if(SlideIO_FOUND AND NOT TARGET SlideIO::slideio)
 endif()
 
 mark_as_advanced(
-    SlideIO_INCLUDE_DIR
+    SlideIO_INCLUDE_DIR_RELEASE SlideIO_INCLUDE_DIR_DEBUG
     SlideIO_LIBRARY_RELEASE SlideIO_LIBRARY_DEBUG
     SlideIO_CORE_LIBRARY_RELEASE SlideIO_CORE_LIBRARY_DEBUG
 )

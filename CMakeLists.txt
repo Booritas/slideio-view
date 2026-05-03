@@ -54,79 +54,117 @@ endif()
 
 include(GNUInstallDirs)
 
+# Install into the project tree by default. Combined with the per-config
+# subdirectories below, that yields:
+#   build/install/release/bin/  (cmake --install ... --config Release)
+#   build/install/debug/bin/    (cmake --install ... --config Debug)
+# Pass `cmake --install ... --prefix <path>` to override at install time.
+set(CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/build/install"
+    CACHE PATH "Install prefix" FORCE)
+
+# Per-config install layout. Generator expressions are evaluated at install
+# time, so this works for both single-config (Make/Ninja) and multi-config
+# (Visual Studio/Xcode) generators.
+set(_install_bin     "$<LOWER_CASE:$<CONFIG>>/bin")
+set(_install_plugins "$<LOWER_CASE:$<CONFIG>>/plugins")
+
 # Executable
 install(TARGETS slideio-viewer
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    RUNTIME DESTINATION ${_install_bin}
 )
 
 # SlideIO DLLs
 if(WIN32)
     install(DIRECTORY "${SLIDEIO_ROOT}/release/bin/"
-        DESTINATION ${CMAKE_INSTALL_BINDIR}
+        DESTINATION ${_install_bin}
         CONFIGURATIONS Release RelWithDebInfo MinSizeRel
         FILES_MATCHING PATTERN "*.dll"
     )
     install(DIRECTORY "${SLIDEIO_ROOT}/debug/bin/"
-        DESTINATION ${CMAKE_INSTALL_BINDIR}
+        DESTINATION ${_install_bin}
         CONFIGURATIONS Debug
         FILES_MATCHING PATTERN "*.dll"
     )
 endif()
 
-# Qt runtime deployment — copy DLLs and plugins directly.
-# With Conan multi-config, we search for Qt6Core.dll (Release, no 'd' suffix)
-# to find the correct Qt package root.
-file(GLOB_RECURSE _qt_core_dll_candidates
-    "d:/conan2/p/b/qt*/p/bin/Qt6Core.dll"
-)
-set(_qt_bin_dir "")
-foreach(_candidate ${_qt_core_dll_candidates})
-    get_filename_component(_qt_bin_dir "${_candidate}" DIRECTORY)
-    break()
-endforeach()
-
-if(NOT _qt_bin_dir)
-    # Fallback: try CMAKE_PREFIX_PATH
+# Qt runtime deployment — copy DLLs and plugins per config.
+# Conan provides separate Qt packages for Release and Debug builds:
+#   Release: contains Qt6Core.dll (no 'd' suffix)
+#   Debug:   contains Qt6Cored.dll
+# We locate each by its distinctive Core DLL.
+function(_find_qt_bin_dir _dll_name _out_var)
+    file(GLOB_RECURSE _candidates "d:/conan2/p/b/qt*/p/bin/${_dll_name}")
+    foreach(_candidate ${_candidates})
+        get_filename_component(_dir "${_candidate}" DIRECTORY)
+        set(${_out_var} "${_dir}" PARENT_SCOPE)
+        return()
+    endforeach()
     foreach(_prefix ${CMAKE_PREFIX_PATH})
-        if(EXISTS "${_prefix}/../bin/Qt6Core.dll")
-            get_filename_component(_qt_bin_dir "${_prefix}/../bin" ABSOLUTE)
-            break()
+        if(EXISTS "${_prefix}/../bin/${_dll_name}")
+            get_filename_component(_dir "${_prefix}/../bin" ABSOLUTE)
+            set(${_out_var} "${_dir}" PARENT_SCOPE)
+            return()
         endif()
     endforeach()
-endif()
+    set(${_out_var} "" PARENT_SCOPE)
+endfunction()
 
-if(_qt_bin_dir)
-    get_filename_component(_qt_root_dir "${_qt_bin_dir}" DIRECTORY)
-    message(STATUS "Qt Release bin dir: ${_qt_bin_dir}")
+_find_qt_bin_dir("Qt6Core.dll"  _qt_release_bin_dir)
+_find_qt_bin_dir("Qt6Cored.dll" _qt_debug_bin_dir)
 
-    # Qt DLLs
-    set(_qt_dlls
-        Qt6Core Qt6Gui Qt6Widgets Qt6OpenGL Qt6OpenGLWidgets Qt6Network
-    )
-    foreach(_dll ${_qt_dlls})
-        install(FILES "${_qt_bin_dir}/${_dll}.dll"
-            DESTINATION ${CMAKE_INSTALL_BINDIR}
+set(_qt_modules Qt6Core Qt6Gui Qt6Widgets Qt6OpenGL Qt6OpenGLWidgets Qt6Network)
+
+if(_qt_release_bin_dir)
+    get_filename_component(_qt_release_root "${_qt_release_bin_dir}" DIRECTORY)
+    message(STATUS "Qt Release bin dir: ${_qt_release_bin_dir}")
+    foreach(_mod ${_qt_modules})
+        install(FILES "${_qt_release_bin_dir}/${_mod}.dll"
+            DESTINATION ${_install_bin}
             CONFIGURATIONS Release RelWithDebInfo MinSizeRel
             OPTIONAL
         )
     endforeach()
-    # D3Dcompiler for OpenGL fallback
-    install(FILES "${_qt_bin_dir}/D3Dcompiler_47.dll"
-        DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
+    install(FILES "${_qt_release_bin_dir}/D3Dcompiler_47.dll"
+        DESTINATION ${_install_bin}
+        CONFIGURATIONS Release RelWithDebInfo MinSizeRel
+        OPTIONAL)
+    install(DIRECTORY "${_qt_release_root}/plugins/platforms"
+            "${_qt_release_root}/plugins/styles"
+            "${_qt_release_root}/plugins/imageformats"
+        DESTINATION ${_install_plugins}
+        CONFIGURATIONS Release RelWithDebInfo MinSizeRel
+        OPTIONAL)
+endif()
 
-    # Qt plugins
-    install(DIRECTORY "${_qt_root_dir}/plugins/platforms"
-        DESTINATION plugins OPTIONAL)
-    install(DIRECTORY "${_qt_root_dir}/plugins/styles"
-        DESTINATION plugins OPTIONAL)
-    install(DIRECTORY "${_qt_root_dir}/plugins/imageformats"
-        DESTINATION plugins OPTIONAL)
+if(_qt_debug_bin_dir)
+    get_filename_component(_qt_debug_root "${_qt_debug_bin_dir}" DIRECTORY)
+    message(STATUS "Qt Debug bin dir: ${_qt_debug_bin_dir}")
+    foreach(_mod ${_qt_modules})
+        install(FILES "${_qt_debug_bin_dir}/${_mod}d.dll"
+            DESTINATION ${_install_bin}
+            CONFIGURATIONS Debug
+            OPTIONAL
+        )
+    endforeach()
+    install(FILES "${_qt_debug_bin_dir}/D3Dcompiler_47.dll"
+        DESTINATION ${_install_bin}
+        CONFIGURATIONS Debug
+        OPTIONAL)
+    install(DIRECTORY "${_qt_debug_root}/plugins/platforms"
+            "${_qt_debug_root}/plugins/styles"
+            "${_qt_debug_root}/plugins/imageformats"
+        DESTINATION ${_install_plugins}
+        CONFIGURATIONS Debug
+        OPTIONAL)
+endif()
 
-    # qt.conf telling Qt where to find plugins
-    install(CODE "
-        file(WRITE \"\${CMAKE_INSTALL_PREFIX}/bin/qt.conf\"
-            \"[Paths]\\nPlugins=../plugins\\n\")
-    ")
+if(_qt_release_bin_dir OR _qt_debug_bin_dir)
+    # qt.conf tells Qt where to find plugins (../plugins is relative to bin/)
+    install(CODE [[
+        string(TOLOWER "${CMAKE_INSTALL_CONFIG_NAME}" _config_lower)
+        file(WRITE "${CMAKE_INSTALL_PREFIX}/${_config_lower}/bin/qt.conf"
+            "[Paths]\nPlugins=../plugins\n")
+    ]])
 endif()
 
 # ── Packaging (CPack) ──────────────────────────────────────────────────────────
