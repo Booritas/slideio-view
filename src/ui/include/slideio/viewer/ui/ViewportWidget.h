@@ -27,9 +27,13 @@ public:
     ViewportWidget(const ViewportWidget&) = delete;
     ViewportWidget& operator=(const ViewportWidget&) = delete;
 
-    void openSlide(const std::string& filePath);
-    void openScene(const std::string& filePath, int sceneIndex);
-    void openAuxImage(const std::string& filePath, const std::string& auxImageName);
+    // driverId selects a specific SlideIO driver (e.g., "SVS", "CZI"); pass ""
+    // to let SlideIO auto-detect from file content.
+    void openSlide(const std::string& filePath, const std::string& driverId = "");
+    void openScene(const std::string& filePath, int sceneIndex,
+                   const std::string& driverId = "");
+    void openAuxImage(const std::string& filePath, const std::string& auxImageName,
+                      const std::string& driverId = "");
     void generateSceneThumbnails();
     void closeSlide();
     bool isSlideOpen() const;

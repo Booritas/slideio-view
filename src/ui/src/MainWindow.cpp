@@ -1,6 +1,7 @@
 #include "slideio/viewer/ui/MainWindow.h"
 #include "slideio/viewer/ui/AppPaths.h"
 #include "slideio/viewer/ui/ChannelMixerPanel.h"
+#include "slideio/viewer/ui/DriverFilters.h"
 #include "slideio/viewer/ui/LoadingOverlay.h"
 #include "slideio/viewer/ui/SceneThumbnailPanel.h"
 #include "slideio/viewer/ui/MinimapWidget.h"
@@ -145,12 +146,15 @@ struct MainWindow::Impl
     {
         // File actions
         QObject::connect(openAction, &QAction::triggered, owner, [this]() {
+            QList<DriverFilter> filters = availableDriverFilters();
+            QString filterString = buildOpenFilterString(filters);
+            QString selectedFilter;
             QString filePath = QFileDialog::getOpenFileName(
                 owner, "Open Slide", QString(),
-                "Slide Images (*.svs *.tiff *.tif *.ndpi *.scn *.mrxs *.bif *.vsi *.czi *.zvi "
-                "*.lif *.afi *.svslide *.dcm *.qptiff *.ome.tif *.ome.tiff);;All Files (*)");
+                filterString, &selectedFilter);
             if (!filePath.isEmpty()) {
-                owner->openSlide(filePath.toStdString());
+                QString driverId = driverIdForFilter(selectedFilter, filters);
+                owner->openSlide(filePath.toStdString(), driverId.toStdString());
             }
         });
 
@@ -537,7 +541,7 @@ MainWindow::~MainWindow()
     settings.setValue("mainWindow/state", saveState());
 }
 
-void MainWindow::openSlide(const std::string& path)
+void MainWindow::openSlide(const std::string& path, const std::string& driverId)
 {
     m_impl->sceneThumbnailPanel->clear();
     m_impl->sceneThumbnailPanel->hide();
@@ -547,7 +551,7 @@ void MainWindow::openSlide(const std::string& path)
     // openSlide is async: it kicks off background work and returns immediately.
     // The scene panel is populated, the loading overlay is hidden, and other
     // post-open UI updates run from the slideOpened/loadingFinished signal handlers.
-    m_impl->viewportWidget->openSlide(path);
+    m_impl->viewportWidget->openSlide(path, driverId);
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)

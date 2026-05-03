@@ -44,13 +44,15 @@ constexpr int kDefaultTileSize = 256;
 namespace slideio::viewer::infra
 {
 
-SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex)
+SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
+                               const std::string& driverId)
     : m_filePath(filePath)
     , m_sceneIndex(sceneIndex)
 {
-    spdlog::info("SlideIOAdapter: opening slide '{}', scene {}", filePath, sceneIndex);
+    spdlog::info("SlideIOAdapter: opening slide '{}', scene {}, driver '{}'",
+                 filePath, sceneIndex, driverId);
 
-    m_slide = ::slideio::openSlide(filePath);
+    m_slide = ::slideio::openSlide(filePath, driverId);
     if (!m_slide) {
         throw std::runtime_error("SlideIOAdapter: failed to open slide '" + filePath + "'");
     }
@@ -220,13 +222,15 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex)
                  m_slideInfo.numZSlices, m_slideInfo.numTFrames);
 }
 
-SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& auxImageName)
+SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& auxImageName,
+                               const std::string& driverId)
     : m_filePath(filePath)
     , m_sceneIndex(-1)
 {
-    spdlog::info("SlideIOAdapter: opening slide '{}', aux image '{}'", filePath, auxImageName);
+    spdlog::info("SlideIOAdapter: opening slide '{}', aux image '{}', driver '{}'",
+                 filePath, auxImageName, driverId);
 
-    m_slide = ::slideio::openSlide(filePath);
+    m_slide = ::slideio::openSlide(filePath, driverId);
     if (!m_slide) {
         throw std::runtime_error("SlideIOAdapter: failed to open slide '" + filePath + "'");
     }
@@ -374,13 +378,13 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
 }
 
 std::pair<std::vector<core::SceneInfo>, std::vector<core::SceneInfo>> SlideIOAdapter::enumerateScenes(
-    const std::string& filePath)
+    const std::string& filePath, const std::string& driverId)
 {
     std::vector<core::SceneInfo> scenes;
     std::vector<core::SceneInfo> auxImages;
 
     try {
-        auto slide = ::slideio::openSlide(filePath);
+        auto slide = ::slideio::openSlide(filePath, driverId);
         if (!slide) {
             spdlog::error("SlideIOAdapter::enumerateScenes: failed to open slide '{}'", filePath);
             return {scenes, auxImages};
@@ -542,6 +546,16 @@ core::TileData SlideIOAdapter::readTile(const core::TileKey& key)
     catch (const std::exception& ex) {
         spdlog::error("SlideIOAdapter::readTile: exception reading tile {}: {}", key.toString(), ex.what());
         return core::TileData::createError(lvl.tileWidth, lvl.tileHeight);
+    }
+}
+
+std::vector<std::string> SlideIOAdapter::availableDriverIds()
+{
+    try {
+        return ::slideio::getDriverIDs();
+    } catch (const std::exception& ex) {
+        spdlog::warn("SlideIOAdapter::availableDriverIds: {}", ex.what());
+        return {};
     }
 }
 

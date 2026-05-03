@@ -581,14 +581,15 @@ using slideio::viewer::ui::SceneOpenResult;
 
 // Open a scene synchronously (intended to run on a background thread). Captures
 // any exception into result.errorMsg.
-SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex)
+SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
+                              const std::string& driverId)
 {
     namespace core = slideio::viewer::core;
     namespace infra = slideio::viewer::infra;
     SceneOpenResult r;
     r.filePath = filePath;
     try {
-        r.adapterPool = std::make_shared<infra::SlideIOAdapterPool>(filePath, sceneIndex, 4);
+        r.adapterPool = std::make_shared<infra::SlideIOAdapterPool>(filePath, sceneIndex, 4, driverId);
         {
             auto loan = r.adapterPool->acquire();
             r.slideInfo = loan->slideInfo();
@@ -624,7 +625,8 @@ SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex)
 }
 
 // Open an auxiliary image synchronously (background thread).
-SceneOpenResult openAuxImageSync(const std::string& filePath, const std::string& auxImageName)
+SceneOpenResult openAuxImageSync(const std::string& filePath, const std::string& auxImageName,
+                                 const std::string& driverId)
 {
     namespace core = slideio::viewer::core;
     namespace infra = slideio::viewer::infra;
@@ -632,7 +634,7 @@ SceneOpenResult openAuxImageSync(const std::string& filePath, const std::string&
     r.filePath = filePath;
     r.isAuxImage = true;
     try {
-        r.adapterPool = std::make_shared<infra::SlideIOAdapterPool>(filePath, auxImageName, 4);
+        r.adapterPool = std::make_shared<infra::SlideIOAdapterPool>(filePath, auxImageName, 4, driverId);
         {
             auto loan = r.adapterPool->acquire();
             r.slideInfo = loan->slideInfo();
@@ -709,6 +711,7 @@ struct ViewportWidget::Impl
     core::SlideInfo slideInfo;
     bool slideOpen = false;
     std::string currentFilePath;
+    std::string currentDriverId;  // empty for auto-detect
     int currentZSlice = 0;
     int currentTFrame = 0;
 
@@ -1232,10 +1235,11 @@ ViewportWidget::~ViewportWidget()
     doneCurrent();
 }
 
-void ViewportWidget::openSlide(const std::string& filePath)
+void ViewportWidget::openSlide(const std::string& filePath, const std::string& driverId)
 {
     closeSlide();
     m_impl->currentFilePath = filePath;
+    m_impl->currentDriverId = driverId;
     const uint64_t opId = ++m_impl->openOpId;
 
     QString displayName = QString::fromStdString(filePath);
@@ -1243,11 +1247,11 @@ void ViewportWidget::openSlide(const std::string& filePath)
     if (slash >= 0) displayName = displayName.mid(slash + 1);
     emit loadingStarted(displayName);
 
-    std::thread([this, opId, filePath]() {
-        SceneOpenResult result = openSceneSync(filePath, 0);
+    std::thread([this, opId, filePath, driverId]() {
+        SceneOpenResult result = openSceneSync(filePath, 0, driverId);
         // Always enumerate scenes so the scene panel can populate, even if scene 0 worked.
         try {
-            auto enumResult = infra::SlideIOAdapter::enumerateScenes(filePath);
+            auto enumResult = infra::SlideIOAdapter::enumerateScenes(filePath, driverId);
             result.scenes = std::move(enumResult.first);
             result.auxImages = std::move(enumResult.second);
         } catch (const std::exception& ex) {
@@ -1269,12 +1273,13 @@ void ViewportWidget::generateSceneThumbnails()
     }
 
     const auto& filePath = m_impl->currentFilePath;
+    const auto& driverId = m_impl->currentDriverId;
     spdlog::info("generateSceneThumbnails: {} scenes, {} aux images",
                  m_impl->slideInfo.scenes.size(), m_impl->slideInfo.auxImages.size());
 
     for (const auto& sceneInfo : m_impl->slideInfo.scenes) {
         try {
-            infra::SlideIOAdapter tempAdapter(filePath, sceneInfo.index);
+            infra::SlideIOAdapter tempAdapter(filePath, sceneInfo.index, driverId);
             auto tempInfo = tempAdapter.slideInfo();
 
             if (tempInfo.width <= 0 || tempInfo.height <= 0) continue;
@@ -1328,10 +1333,12 @@ void ViewportWidget::generateSceneThumbnails()
 
 }
 
-void ViewportWidget::openScene(const std::string& filePath, int sceneIndex)
+void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
+                               const std::string& driverId)
 {
     closeSlide();
     m_impl->currentFilePath = filePath;
+    m_impl->currentDriverId = driverId;
     const uint64_t opId = ++m_impl->openOpId;
 
     QString displayName = QString::fromStdString(filePath);
@@ -1340,8 +1347,8 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex)
     if (sceneIndex > 0) displayName += QStringLiteral(" (scene %1)").arg(sceneIndex);
     emit loadingStarted(displayName);
 
-    std::thread([this, opId, filePath, sceneIndex]() {
-        SceneOpenResult result = openSceneSync(filePath, sceneIndex);
+    std::thread([this, opId, filePath, sceneIndex, driverId]() {
+        SceneOpenResult result = openSceneSync(filePath, sceneIndex, driverId);
         QMetaObject::invokeMethod(this,
             [this, opId, r = std::move(result)]() mutable {
                 installSceneOpenResult(opId, std::move(r));
@@ -1379,10 +1386,12 @@ void ViewportWidget::closeSlide()
     update();
 }
 
-void ViewportWidget::openAuxImage(const std::string& filePath, const std::string& auxImageName)
+void ViewportWidget::openAuxImage(const std::string& filePath, const std::string& auxImageName,
+                                  const std::string& driverId)
 {
     closeSlide();
     m_impl->currentFilePath = filePath;
+    m_impl->currentDriverId = driverId;
     const uint64_t opId = ++m_impl->openOpId;
 
     QString displayName = QString::fromStdString(filePath);
@@ -1391,8 +1400,8 @@ void ViewportWidget::openAuxImage(const std::string& filePath, const std::string
     displayName += QStringLiteral(" (%1)").arg(QString::fromStdString(auxImageName));
     emit loadingStarted(displayName);
 
-    std::thread([this, opId, filePath, auxImageName]() {
-        SceneOpenResult result = openAuxImageSync(filePath, auxImageName);
+    std::thread([this, opId, filePath, auxImageName, driverId]() {
+        SceneOpenResult result = openAuxImageSync(filePath, auxImageName, driverId);
         QMetaObject::invokeMethod(this,
             [this, opId, r = std::move(result)]() mutable {
                 installSceneOpenResult(opId, std::move(r));

@@ -73,44 +73,48 @@ SlideIOAdapterPool::SlideIOAdapterPool(const std::string& filePath, int poolSize
 {
 }
 
-SlideIOAdapterPool::SlideIOAdapterPool(const std::string& filePath, int sceneIndex, int poolSize)
+SlideIOAdapterPool::SlideIOAdapterPool(const std::string& filePath, int sceneIndex, int poolSize,
+                                       const std::string& driverId)
     : m_filePath(filePath)
     , m_poolSize(poolSize)
     , m_sceneIndex(sceneIndex)
+    , m_driverId(driverId)
     , m_isAuxiliary(false)
 {
     if (poolSize <= 0) {
         throw std::invalid_argument("SlideIOAdapterPool: poolSize must be > 0");
     }
 
-    spdlog::info("SlideIOAdapterPool: creating pool of {} adapters for '{}', scene {}",
-                 poolSize, filePath, sceneIndex);
+    spdlog::info("SlideIOAdapterPool: creating pool of {} adapters for '{}', scene {}, driver '{}'",
+                 poolSize, filePath, sceneIndex, driverId);
 
     m_available.reserve(static_cast<size_t>(poolSize));
     for (int i = 0; i < poolSize; ++i) {
-        m_available.push_back(std::make_unique<SlideIOAdapter>(filePath, sceneIndex));
+        m_available.push_back(std::make_unique<SlideIOAdapter>(filePath, sceneIndex, driverId));
     }
 
     spdlog::info("SlideIOAdapterPool: pool created successfully");
 }
 
-SlideIOAdapterPool::SlideIOAdapterPool(const std::string& filePath, const std::string& auxImageName, int poolSize)
+SlideIOAdapterPool::SlideIOAdapterPool(const std::string& filePath, const std::string& auxImageName, int poolSize,
+                                       const std::string& driverId)
     : m_filePath(filePath)
     , m_poolSize(poolSize)
     , m_sceneIndex(-1)
     , m_auxImageName(auxImageName)
+    , m_driverId(driverId)
     , m_isAuxiliary(true)
 {
     if (poolSize <= 0) {
         throw std::invalid_argument("SlideIOAdapterPool: poolSize must be > 0");
     }
 
-    spdlog::info("SlideIOAdapterPool: creating pool of {} adapters for '{}', aux image '{}'",
-                 poolSize, filePath, auxImageName);
+    spdlog::info("SlideIOAdapterPool: creating pool of {} adapters for '{}', aux image '{}', driver '{}'",
+                 poolSize, filePath, auxImageName, driverId);
 
     m_available.reserve(static_cast<size_t>(poolSize));
     for (int i = 0; i < poolSize; ++i) {
-        m_available.push_back(std::make_unique<SlideIOAdapter>(filePath, auxImageName));
+        m_available.push_back(std::make_unique<SlideIOAdapter>(filePath, auxImageName, driverId));
     }
 
     spdlog::info("SlideIOAdapterPool: pool created successfully");

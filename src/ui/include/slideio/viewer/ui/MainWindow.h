@@ -19,7 +19,7 @@ public:
     MainWindow(const MainWindow&) = delete;
     MainWindow& operator=(const MainWindow&) = delete;
 
-    void openSlide(const std::string& path);
+    void openSlide(const std::string& path, const std::string& driverId = "");
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;

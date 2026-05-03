@@ -20,12 +20,20 @@ namespace slideio::viewer::infra
 class SlideIOAdapter : public core::ISlideSource
 {
 public:
-    explicit SlideIOAdapter(const std::string& filePath, int sceneIndex = 0);
-    SlideIOAdapter(const std::string& filePath, const std::string& auxImageName);
+    // driverId selects a specific SlideIO driver (e.g., "SVS", "CZI"); pass "" to
+    // let SlideIO auto-detect from the file content.
+    explicit SlideIOAdapter(const std::string& filePath, int sceneIndex = 0,
+                             const std::string& driverId = "");
+    SlideIOAdapter(const std::string& filePath, const std::string& auxImageName,
+                   const std::string& driverId = "");
     ~SlideIOAdapter() override;
 
     static std::pair<std::vector<core::SceneInfo>, std::vector<core::SceneInfo>> enumerateScenes(
-        const std::string& filePath);
+        const std::string& filePath, const std::string& driverId = "");
+
+    // Returns the list of SlideIO driver IDs available at runtime (e.g.,
+    // {"AFI", "CZI", "DCM", "GDAL", "NDPI", "SCN", "SVS", ...}).
+    static std::vector<std::string> availableDriverIds();
 
     core::SlideInfo slideInfo() const override;
     std::vector<core::LevelInfo> levels() const override;
