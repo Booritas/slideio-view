@@ -1,5 +1,6 @@
 add_library(slideio-viewer-ui STATIC
     src/AppPaths.cpp
+    src/AssociatedImageWindow.cpp
     src/DriverFilters.cpp
     src/ViewportController.cpp
     src/ViewportWidget.cpp

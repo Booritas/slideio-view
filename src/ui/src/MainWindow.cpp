@@ -1,5 +1,6 @@
 #include "slideio/viewer/ui/MainWindow.h"
 #include "slideio/viewer/ui/AppPaths.h"
+#include "slideio/viewer/ui/AssociatedImageWindow.h"
 #include "slideio/viewer/ui/ChannelMixerPanel.h"
 #include "slideio/viewer/ui/DriverFilters.h"
 #include "slideio/viewer/ui/LoadingOverlay.h"
@@ -345,8 +346,23 @@ struct MainWindow::Impl
             [this](const std::string& auxImageName) {
                 auto filePath = viewportWidget->currentFilePath();
                 if (filePath.empty()) return;
-                viewportWidget->openAuxImage(filePath, auxImageName);
-                associatedImagesPanel->setActiveScene(-1, true);
+
+                // Load the aux image at native resolution and pop it into a
+                // dedicated resizable window. The main slide stays loaded in
+                // the viewport — the user is just previewing the label/macro/
+                // preview alongside, not switching to it.
+                QImage img = viewportWidget->loadAuxImage(auxImageName);
+                if (img.isNull()) {
+                    QMessageBox::warning(owner, "Open Associated Image",
+                        QString("Failed to load associated image '%1'.")
+                            .arg(QString::fromStdString(auxImageName)));
+                    return;
+                }
+                auto* w = new AssociatedImageWindow(
+                    QString::fromStdString(auxImageName), img, owner);
+                w->show();
+                w->raise();
+                w->activateWindow();
             });
 
         // Channel mixer panel: push settings changes to viewport

@@ -1401,6 +1401,50 @@ void ViewportWidget::generateAuxImageThumbnails()
     }
 }
 
+QImage ViewportWidget::loadAuxImage(const std::string& auxImageName)
+{
+    if (!m_impl->slideOpen || m_impl->currentFilePath.empty()) {
+        return {};
+    }
+    try {
+        infra::SlideIOAdapter adapter(m_impl->currentFilePath, auxImageName,
+                                       m_impl->currentDriverId);
+        auto info = adapter.slideInfo();
+        if (info.width <= 0 || info.height <= 0) return {};
+        int numCh = info.numChannels;
+        if (numCh <= 0) return {};
+
+        auto block = adapter.readBlock(0, 0, info.width, info.height,
+                                        info.width, info.height);
+        if (block.isEmpty() || block.isError()) return {};
+
+        QImage::Format imgFmt = (numCh >= 3) ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
+        QImage out(info.width, info.height, imgFmt);
+        out.fill(Qt::white);
+
+        const uint8_t* src = block.buffer().data();
+        int srcCh = block.numChannels();
+        for (int y = 0; y < info.height; ++y) {
+            uint8_t* dst = out.scanLine(y);
+            for (int x = 0; x < info.width; ++x) {
+                int srcIdx = (y * info.width + x) * srcCh;
+                if (numCh >= 3 && srcCh >= 3) {
+                    int dstIdx = x * 3;
+                    dst[dstIdx + 0] = src[srcIdx + 0];
+                    dst[dstIdx + 1] = src[srcIdx + 1];
+                    dst[dstIdx + 2] = src[srcIdx + 2];
+                } else {
+                    dst[x] = src[srcIdx];
+                }
+            }
+        }
+        return out.copy();
+    } catch (const std::exception& ex) {
+        spdlog::warn("ViewportWidget::loadAuxImage('{}'): {}", auxImageName, ex.what());
+        return {};
+    }
+}
+
 void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
                                const std::string& driverId)
 {

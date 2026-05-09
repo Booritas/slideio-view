@@ -36,6 +36,12 @@ public:
                       const std::string& driverId = "");
     void generateSceneThumbnails();
     void generateAuxImageThumbnails();
+
+    // Load an associated image (label/macro/preview/…) at its native resolution
+    // and return it as a QImage. Returns a null QImage on failure (no slide
+    // open, name not found, read error). Synchronous — aux images are typically
+    // small (a few thousand pixels per side) so this completes quickly.
+    QImage loadAuxImage(const std::string& auxImageName);
     void closeSlide();
     bool isSlideOpen() const;
     const std::string& currentFilePath() const;
