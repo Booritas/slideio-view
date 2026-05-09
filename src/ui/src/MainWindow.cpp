@@ -17,6 +17,7 @@
 #include <QAction>
 #include <QDesktopServices>
 #include <QDragEnterEvent>
+#include <QDragMoveEvent>
 #include <QDropEvent>
 #include <QEvent>
 #include <QFile>
@@ -25,6 +26,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QSet>
 #include <QSettings>
 #include <QStatusBar>
 #include <QUrl>
@@ -578,28 +580,77 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     return QMainWindow::eventFilter(watched, event);
 }
 
-void MainWindow::dragEnterEvent(QDragEnterEvent* event)
+namespace
 {
-    if (event->mimeData()->hasUrls()) {
-        auto urls = event->mimeData()->urls();
-        if (!urls.isEmpty() && urls.first().isLocalFile()) {
-            event->acceptProposedAction();
-            return;
+
+// Returns the first URL in the mime data that points to a supported slide
+// file, or an empty QUrl if none qualify. "Supported" means the file has a
+// local path AND its extension matches one of the per-driver patterns from
+// availableDriverFilters() (i.e., the same list shown in the Open dialog).
+QUrl firstSupportedSlideUrl(const QMimeData* mime)
+{
+    if (!mime || !mime->hasUrls()) return {};
+
+    // Build a lower-case set of accepted extensions once. Skip the catch-all
+    // "*" entry from "All Files" — drag/drop should only accept real image
+    // formats so the cursor switches to "forbidden" for everything else.
+    static const QSet<QString> kExtensions = []() {
+        QSet<QString> exts;
+        for (const auto& f : availableDriverFilters()) {
+            for (const QString& e : f.extensions) {
+                if (e != QStringLiteral("*")) {
+                    exts.insert(e.toLower());
+                }
+            }
+        }
+        return exts;
+    }();
+
+    for (const QUrl& url : mime->urls()) {
+        if (!url.isLocalFile()) continue;
+        const QString name = QFileInfo(url.toLocalFile()).fileName().toLower();
+        // Match against both single-suffix (".tif") and multi-suffix
+        // (".ome.tif") patterns by checking every known extension.
+        for (const QString& ext : kExtensions) {
+            if (name.endsWith(QChar('.') + ext)) {
+                return url;
+            }
         }
     }
-    QMainWindow::dragEnterEvent(event);
+    return {};
+}
+
+} // namespace
+
+void MainWindow::dragEnterEvent(QDragEnterEvent* event)
+{
+    if (firstSupportedSlideUrl(event->mimeData()).isValid()) {
+        event->acceptProposedAction();
+        return;
+    }
+    // Calling ignore() makes the OS show the "no-drop" cursor while the
+    // unsupported file is being dragged over the window.
+    event->ignore();
+}
+
+void MainWindow::dragMoveEvent(QDragMoveEvent* event)
+{
+    // dragMoveEvent fires repeatedly while the cursor moves over the window;
+    // re-confirm acceptance so the cursor stays correct on every platform.
+    if (firstSupportedSlideUrl(event->mimeData()).isValid()) {
+        event->acceptProposedAction();
+        return;
+    }
+    event->ignore();
 }
 
 void MainWindow::dropEvent(QDropEvent* event)
 {
-    if (event->mimeData()->hasUrls()) {
-        auto urls = event->mimeData()->urls();
-        if (!urls.isEmpty() && urls.first().isLocalFile()) {
-            QString filePath = urls.first().toLocalFile();
-            openSlide(filePath.toStdString());
-            event->acceptProposedAction();
-            return;
-        }
+    QUrl url = firstSupportedSlideUrl(event->mimeData());
+    if (url.isValid()) {
+        openSlide(url.toLocalFile().toStdString());
+        event->acceptProposedAction();
+        return;
     }
     QMainWindow::dropEvent(event);
 }
