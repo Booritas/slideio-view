@@ -4,6 +4,7 @@
 #include "slideio/viewer/ui/DriverFilters.h"
 #include "slideio/viewer/ui/LoadingOverlay.h"
 #include "slideio/viewer/ui/SceneThumbnailPanel.h"
+#include "slideio/viewer/ui/SlidePropertiesPanel.h"
 #include "slideio/viewer/ui/MinimapWidget.h"
 #include "slideio/viewer/ui/StatusBarManager.h"
 #include "slideio/viewer/ui/ViewportController.h"
@@ -49,6 +50,7 @@ struct MainWindow::Impl
     ZTNavigationWidget* ztNavigationWidget = nullptr;
     ChannelMixerPanel* channelMixerPanel = nullptr;
     SceneThumbnailPanel* sceneThumbnailPanel = nullptr;
+    SlidePropertiesPanel* propertiesPanel = nullptr;
     LoadingOverlay* loadingOverlay = nullptr;
 
     // Recent files
@@ -68,6 +70,7 @@ struct MainWindow::Impl
     QAction* minimapToggleAction = nullptr;
     QAction* channelMixerToggleAction = nullptr;
     QAction* sceneThumbnailToggleAction = nullptr;
+    QAction* propertiesToggleAction = nullptr;
 
     void createActions()
     {
@@ -140,6 +143,7 @@ struct MainWindow::Impl
         viewMenu->addAction(minimapToggleAction);
         viewMenu->addAction(channelMixerToggleAction);
         viewMenu->addAction(sceneThumbnailToggleAction);
+        viewMenu->addAction(propertiesToggleAction);
     }
 
     void connectSignals()
@@ -251,6 +255,8 @@ struct MainWindow::Impl
                     sceneThumbnailPanel->show();
                     viewportWidget->generateSceneThumbnails();
                 }
+
+                propertiesPanel->setSlideInfo(info);
             });
 
         QObject::connect(viewportWidget, &ViewportWidget::thumbnailReady, owner,
@@ -271,6 +277,7 @@ struct MainWindow::Impl
             statusBarManager->updateScaleBar(0.0);
             channelMixerPanel->clearChannels();
             channelMixerPanel->hide();
+            propertiesPanel->clear();
             // Note: scene panel is NOT cleared here because slideClosed also fires
             // during scene switching (openScene calls closeSlide internally).
             // The scene panel is cleared explicitly in openSlide() and the close action.
@@ -505,6 +512,11 @@ MainWindow::MainWindow(QWidget* parent)
     addDockWidget(Qt::RightDockWidgetArea, m_impl->sceneThumbnailPanel);
     m_impl->sceneThumbnailPanel->hide();
 
+    // Create properties dock widget (hidden by default)
+    m_impl->propertiesPanel = new SlidePropertiesPanel(this);
+    addDockWidget(Qt::RightDockWidgetArea, m_impl->propertiesPanel);
+    m_impl->propertiesPanel->hide();
+
     // Create actions and menus
     m_impl->createActions();
     m_impl->channelMixerToggleAction = m_impl->channelMixerPanel->toggleViewAction();
@@ -515,6 +527,10 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->sceneThumbnailToggleAction->setText("&Scenes");
     m_impl->sceneThumbnailToggleAction->setShortcut(QKeySequence("Ctrl+Shift+T"));
     m_impl->sceneThumbnailToggleAction->setStatusTip("Toggle the scene thumbnail panel");
+    m_impl->propertiesToggleAction = m_impl->propertiesPanel->toggleViewAction();
+    m_impl->propertiesToggleAction->setText("&Properties");
+    m_impl->propertiesToggleAction->setShortcut(QKeySequence("Ctrl+Shift+P"));
+    m_impl->propertiesToggleAction->setStatusTip("Toggle the slide properties panel");
     m_impl->createMenus();
     m_impl->connectSignals();
 

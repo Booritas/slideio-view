@@ -39,6 +39,50 @@ slideio::viewer::core::DataType convertSlideIODataType(::slideio::DataType srcTy
 
 constexpr int kDefaultTileSize = 256;
 
+// Local mapping of slideio::Compression to a human-readable name. The
+// equivalent slideio::compressionToString lives in the slideio-base shared
+// library, which the install does not ship an import lib for, so we mirror
+// the mapping here. Keep in sync with slideio_enums.hpp.
+std::string compressionName(::slideio::Compression c)
+{
+    using C = ::slideio::Compression;
+    switch (c) {
+        case C::Unknown:        return "Unknown";
+        case C::Uncompressed:   return "Uncompressed";
+        case C::Jpeg:           return "JPEG";
+        case C::JpegXR:         return "JPEG XR";
+        case C::Png:            return "PNG";
+        case C::Jpeg2000:       return "JPEG 2000";
+        case C::LZW:            return "LZW";
+        case C::HuffmanRL:      return "Huffman RLE";
+        case C::CCITT_T4:       return "CCITT T.4";
+        case C::CCITT_T6:       return "CCITT T.6";
+        case C::JpegOld:        return "JPEG (old)";
+        case C::Zlib:           return "zlib";
+        case C::JBIG85:         return "JBIG-85";
+        case C::JBIG43:         return "JBIG-43";
+        case C::NextRLE:        return "NeXT RLE";
+        case C::PackBits:       return "PackBits";
+        case C::ThunderScanRLE: return "ThunderScan RLE";
+        case C::RasterPadding:  return "Raster padding";
+        case C::RLE_LW:         return "RLE LW";
+        case C::RLE_HC:         return "RLE HC";
+        case C::RLE_BL:         return "RLE BL";
+        case C::PKZIP:          return "PKZIP";
+        case C::KodakDCS:       return "Kodak DCS";
+        case C::JBIG:           return "JBIG";
+        case C::NikonNEF:       return "Nikon NEF";
+        case C::JBIG2:          return "JBIG2";
+        case C::GIF:            return "GIF";
+        case C::BIGGIF:         return "BigGIF";
+        case C::RLE:            return "RLE";
+        case C::BMP:            return "BMP";
+        case C::JpegLossless:   return "JPEG (lossless)";
+        case C::VP8:            return "VP8";
+    }
+    return "Unknown";
+}
+
 } // anonymous namespace
 
 namespace slideio::viewer::infra
@@ -89,6 +133,13 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
     m_slideInfo.resolutionY = std::get<1>(resolution);
 
     m_slideInfo.driverName = m_slide->getDriverId();
+    m_slideInfo.driverId = m_slide->getDriverId();
+    try {
+        m_slideInfo.compression = compressionName(m_scene->getCompression());
+    } catch (const std::exception& ex) {
+        spdlog::warn("SlideIOAdapter: getCompression failed: {}", ex.what());
+        m_slideInfo.compression.clear();
+    }
     m_slideInfo.numZSlices = m_scene->getNumZSlices();
     m_slideInfo.numTFrames = m_scene->getNumTFrames();
 
@@ -216,6 +267,8 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
         m_slideInfo.numZoomLevels = 1;
     }
 
+    m_slideInfo.levels = m_levels;
+
     spdlog::info("SlideIOAdapter: opened slide {}x{}, {} channels, {} levels, Z={}, T={}",
                  m_slideInfo.width, m_slideInfo.height, m_slideInfo.numChannels,
                  static_cast<int>(m_levels.size()),
@@ -257,6 +310,13 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
     m_slideInfo.resolutionY = std::get<1>(resolution);
 
     m_slideInfo.driverName = m_slide->getDriverId();
+    m_slideInfo.driverId = m_slide->getDriverId();
+    try {
+        m_slideInfo.compression = compressionName(m_scene->getCompression());
+    } catch (const std::exception& ex) {
+        spdlog::warn("SlideIOAdapter: getCompression failed: {}", ex.what());
+        m_slideInfo.compression.clear();
+    }
     m_slideInfo.numZSlices = m_scene->getNumZSlices();
     m_slideInfo.numTFrames = m_scene->getNumTFrames();
 
@@ -371,6 +431,8 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
         m_levels.push_back(lvl);
         m_slideInfo.numZoomLevels = 1;
     }
+
+    m_slideInfo.levels = m_levels;
 
     spdlog::info("SlideIOAdapter: opened aux image '{}' {}x{}, {} channels, {} levels",
                  auxImageName, m_slideInfo.width, m_slideInfo.height, m_slideInfo.numChannels,

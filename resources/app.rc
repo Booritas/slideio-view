@@ -1,0 +1,3 @@
+// Windows resource file: embeds the application icon into slideio-viewer.exe
+// so Explorer (and the taskbar before Qt loads) shows the right glyph.
+IDI_ICON1 ICON "icons/app.ico"

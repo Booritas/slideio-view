@@ -2,6 +2,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QIcon>
 #include <QSurfaceFormat>
 
 #include <spdlog/spdlog.h>
@@ -43,6 +44,7 @@ int main(int argc, char* argv[])
     QSurfaceFormat::setDefaultFormat(fmt);
 
     QApplication app(argc, argv);
+    app.setWindowIcon(QIcon(QStringLiteral(":/icons/app.png")));
 
     slideio::viewer::ui::MainWindow mainWindow;
     mainWindow.resize(1280, 800);

@@ -34,9 +34,37 @@ add_subdirectory(src/app)
 add_subdirectory(src/infra)
 add_subdirectory(src/ui)
 
-# Main executable
-add_executable(slideio-viewer WIN32 src/main.cpp)
+# Main executable. Per-platform icon plumbing:
+#   * Qt resource (.qrc) ships the PNG inside the exe so QApplication::setWindowIcon
+#     can use it at runtime on every platform (window/title-bar/taskbar icon).
+#   * Windows: app.rc references app.ico, embedded as a Win32 ICON resource so
+#     Explorer/file-manager shows it on the .exe itself.
+#   * macOS: app.icns is bundled as the app's icon via CFBundleIconFile.
+set(_app_icon_qrc       "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons.qrc")
+set(_app_icon_rc        "${CMAKE_CURRENT_SOURCE_DIR}/resources/app.rc")
+set(_app_icon_icns_path "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/app.icns")
+
+set(_executable_sources src/main.cpp ${_app_icon_qrc})
+if(WIN32 AND EXISTS "${_app_icon_rc}")
+    list(APPEND _executable_sources "${_app_icon_rc}")
+endif()
+if(APPLE AND EXISTS "${_app_icon_icns_path}")
+    list(APPEND _executable_sources "${_app_icon_icns_path}")
+endif()
+
+add_executable(slideio-viewer WIN32 MACOSX_BUNDLE ${_executable_sources})
 target_link_libraries(slideio-viewer PRIVATE slideio-viewer-ui spdlog::spdlog)
+
+if(APPLE AND EXISTS "${_app_icon_icns_path}")
+    set_source_files_properties("${_app_icon_icns_path}" PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources)
+    set_target_properties(slideio-viewer PROPERTIES
+        MACOSX_BUNDLE_ICON_FILE app.icns
+        MACOSX_BUNDLE_BUNDLE_NAME "SlideIO Viewer"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.slideio.viewer"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}")
+endif()
 
 # Copy SlideIO DLLs to output directory on Windows (config-aware)
 if(WIN32)

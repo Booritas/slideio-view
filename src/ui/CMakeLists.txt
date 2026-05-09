@@ -10,6 +10,7 @@ add_library(slideio-viewer-ui STATIC
     src/SceneThumbnailPanel.cpp
     src/ZTNavigationWidget.cpp
     src/LoadingOverlay.cpp
+    src/SlidePropertiesPanel.cpp
     src/MainWindow.cpp
 )
 

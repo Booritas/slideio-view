@@ -137,27 +137,6 @@ struct SceneInfo
     std::string auxiliaryName;  // SlideIO aux image name (for retrieval)
 };
 
-struct SlideInfo
-{
-    std::string filePath;
-    int width = 0;
-    int height = 0;
-    int numChannels = 0;
-    DataType channelDataType = DataType::None;
-    int numZoomLevels = 0;
-    double magnification = 0.0;
-    double resolutionX = 0.0;
-    double resolutionY = 0.0;
-    std::string driverName;
-    DisplayRange displayRange;
-    std::vector<ChannelInfo> channels;
-    bool isBrightfield = false;
-    int numZSlices = 1;
-    int numTFrames = 1;
-    std::vector<SceneInfo> scenes;
-    std::vector<SceneInfo> auxImages;
-};
-
 struct LevelInfo
 {
     int level = 0;
@@ -169,6 +148,30 @@ struct LevelInfo
     int tileHeight = 0;
     int tilesX = 0;
     int tilesY = 0;
+};
+
+struct SlideInfo
+{
+    std::string filePath;
+    int width = 0;
+    int height = 0;
+    int numChannels = 0;
+    DataType channelDataType = DataType::None;
+    int numZoomLevels = 0;
+    double magnification = 0.0;
+    double resolutionX = 0.0;   // pixel size in meters along X
+    double resolutionY = 0.0;   // pixel size in meters along Y
+    std::string driverName;
+    std::string driverId;       // SlideIO driver id used to open this slide
+    std::string compression;    // human-readable compression name (e.g., "Jpeg")
+    DisplayRange displayRange;
+    std::vector<ChannelInfo> channels;
+    bool isBrightfield = false;
+    int numZSlices = 1;
+    int numTFrames = 1;
+    std::vector<SceneInfo> scenes;
+    std::vector<SceneInfo> auxImages;
+    std::vector<LevelInfo> levels;
 };
 
 template<typename T>
