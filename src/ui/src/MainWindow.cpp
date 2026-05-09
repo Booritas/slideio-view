@@ -266,7 +266,10 @@ struct MainWindow::Impl
                 // items and pixmaps, so leave them alone. Rebuilding would
                 // clear the thumbnails for the duration of the regeneration.
                 if (!sameFile) {
-                    if (info.scenes.size() > 1) {
+                    // Always populate the Scenes panel when the slide has any
+                    // scenes (single-scene slides should still show their one
+                    // thumbnail). Only fully empty enumerations clear the panel.
+                    if (!info.scenes.empty()) {
                         sceneThumbnailPanel->setScenes(info.scenes, {});
                         sceneThumbnailPanel->setActiveScene(0, false);
                         viewportWidget->generateSceneThumbnails();
