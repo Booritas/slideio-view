@@ -35,6 +35,7 @@ public:
     void openAuxImage(const std::string& filePath, const std::string& auxImageName,
                       const std::string& driverId = "");
     void generateSceneThumbnails();
+    void generateAuxImageThumbnails();
     void closeSlide();
     bool isSlideOpen() const;
     const std::string& currentFilePath() const;

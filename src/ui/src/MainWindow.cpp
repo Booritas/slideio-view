@@ -52,6 +52,7 @@ struct MainWindow::Impl
     ZTNavigationWidget* ztNavigationWidget = nullptr;
     ChannelMixerPanel* channelMixerPanel = nullptr;
     SceneThumbnailPanel* sceneThumbnailPanel = nullptr;
+    SceneThumbnailPanel* associatedImagesPanel = nullptr;
     SlidePropertiesPanel* propertiesPanel = nullptr;
     LoadingOverlay* loadingOverlay = nullptr;
 
@@ -72,6 +73,7 @@ struct MainWindow::Impl
     QAction* minimapToggleAction = nullptr;
     QAction* channelMixerToggleAction = nullptr;
     QAction* sceneThumbnailToggleAction = nullptr;
+    QAction* associatedImagesToggleAction = nullptr;
     QAction* propertiesToggleAction = nullptr;
 
     void createActions()
@@ -145,6 +147,7 @@ struct MainWindow::Impl
         viewMenu->addAction(minimapToggleAction);
         viewMenu->addAction(channelMixerToggleAction);
         viewMenu->addAction(sceneThumbnailToggleAction);
+        viewMenu->addAction(associatedImagesToggleAction);
         viewMenu->addAction(propertiesToggleAction);
     }
 
@@ -169,6 +172,8 @@ struct MainWindow::Impl
             closeAction->setEnabled(false);
             sceneThumbnailPanel->clear();
             sceneThumbnailPanel->hide();
+            associatedImagesPanel->clear();
+            associatedImagesPanel->hide();
         });
 
         QObject::connect(openLogAction, &QAction::triggered, owner, [this]() {
@@ -258,6 +263,13 @@ struct MainWindow::Impl
                     viewportWidget->generateSceneThumbnails();
                 }
 
+                // Populate associated images panel if the slide ships any
+                if (!info.auxImages.empty()) {
+                    associatedImagesPanel->setScenes({}, info.auxImages);
+                    associatedImagesPanel->show();
+                    viewportWidget->generateAuxImageThumbnails();
+                }
+
                 propertiesPanel->setSlideInfo(info);
             });
 
@@ -301,7 +313,11 @@ struct MainWindow::Impl
         // Scene thumbnail panel: wire scene switching
         QObject::connect(viewportWidget, &ViewportWidget::sceneThumbnailReady, owner,
             [this](int sceneIndex, bool isAuxiliary, const std::string& name, const QImage& thumbnail) {
-                sceneThumbnailPanel->setThumbnail(sceneIndex, isAuxiliary, name, thumbnail);
+                if (isAuxiliary) {
+                    associatedImagesPanel->setThumbnail(sceneIndex, isAuxiliary, name, thumbnail);
+                } else {
+                    sceneThumbnailPanel->setThumbnail(sceneIndex, isAuxiliary, name, thumbnail);
+                }
             });
 
         QObject::connect(sceneThumbnailPanel, &SceneThumbnailPanel::sceneSelected, owner,
@@ -316,13 +332,13 @@ struct MainWindow::Impl
                 sceneThumbnailPanel->show();
             });
 
-        QObject::connect(sceneThumbnailPanel, &SceneThumbnailPanel::auxImageSelected, owner,
+        QObject::connect(associatedImagesPanel, &SceneThumbnailPanel::auxImageSelected, owner,
             [this](const std::string& auxImageName) {
                 auto filePath = viewportWidget->currentFilePath();
                 if (filePath.empty()) return;
                 viewportWidget->openAuxImage(filePath, auxImageName);
-                sceneThumbnailPanel->setActiveScene(-1, true);
-                sceneThumbnailPanel->show();
+                associatedImagesPanel->setActiveScene(-1, true);
+                associatedImagesPanel->show();
                 // channelMixerPanel is already cleared/hidden by the slideClosed handler
                 // (openAuxImage calls closeSlide internally)
             });
@@ -511,8 +527,19 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Create scene thumbnail dock widget (hidden by default)
     m_impl->sceneThumbnailPanel = new SceneThumbnailPanel(this);
+    m_impl->sceneThumbnailPanel->setObjectName(QStringLiteral("SceneThumbnailPanel"));
     addDockWidget(Qt::RightDockWidgetArea, m_impl->sceneThumbnailPanel);
     m_impl->sceneThumbnailPanel->hide();
+
+    // Associated images panel: a second SceneThumbnailPanel instance dedicated
+    // to the slide's auxiliary images (label, macro, …). Distinguished from
+    // the scenes panel by its title and objectName so saveState/restoreState
+    // can place each independently.
+    m_impl->associatedImagesPanel = new SceneThumbnailPanel(this);
+    m_impl->associatedImagesPanel->setObjectName(QStringLiteral("AssociatedImagesPanel"));
+    m_impl->associatedImagesPanel->setWindowTitle(QStringLiteral("Associated Images"));
+    addDockWidget(Qt::RightDockWidgetArea, m_impl->associatedImagesPanel);
+    m_impl->associatedImagesPanel->hide();
 
     // Create properties dock widget (hidden by default)
     m_impl->propertiesPanel = new SlidePropertiesPanel(this);
@@ -529,6 +556,10 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->sceneThumbnailToggleAction->setText("&Scenes");
     m_impl->sceneThumbnailToggleAction->setShortcut(QKeySequence("Ctrl+Shift+T"));
     m_impl->sceneThumbnailToggleAction->setStatusTip("Toggle the scene thumbnail panel");
+    m_impl->associatedImagesToggleAction = m_impl->associatedImagesPanel->toggleViewAction();
+    m_impl->associatedImagesToggleAction->setText("&Associated Images");
+    m_impl->associatedImagesToggleAction->setShortcut(QKeySequence("Ctrl+Shift+A"));
+    m_impl->associatedImagesToggleAction->setStatusTip("Toggle the associated images panel");
     m_impl->propertiesToggleAction = m_impl->propertiesPanel->toggleViewAction();
     m_impl->propertiesToggleAction->setText("&Properties");
     m_impl->propertiesToggleAction->setShortcut(QKeySequence("Ctrl+Shift+P"));
@@ -563,6 +594,8 @@ void MainWindow::openSlide(const std::string& path, const std::string& driverId)
 {
     m_impl->sceneThumbnailPanel->clear();
     m_impl->sceneThumbnailPanel->hide();
+    m_impl->associatedImagesPanel->clear();
+    m_impl->associatedImagesPanel->hide();
     setWindowTitle(QString("SlideIO Viewer - %1").arg(QString::fromStdString(path)));
     m_impl->addToRecentFiles(path);
 

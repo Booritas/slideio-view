@@ -1333,6 +1333,74 @@ void ViewportWidget::generateSceneThumbnails()
 
 }
 
+void ViewportWidget::generateAuxImageThumbnails()
+{
+    if (!m_impl->slideOpen || m_impl->currentFilePath.empty()) {
+        spdlog::info("generateAuxImageThumbnails: skipped (slideOpen={}, filePath='{}')",
+                     m_impl->slideOpen, m_impl->currentFilePath);
+        return;
+    }
+
+    const auto& filePath = m_impl->currentFilePath;
+    const auto& driverId = m_impl->currentDriverId;
+    spdlog::info("generateAuxImageThumbnails: {} aux images",
+                 m_impl->slideInfo.auxImages.size());
+
+    for (const auto& auxInfo : m_impl->slideInfo.auxImages) {
+        try {
+            const std::string& auxName = auxInfo.auxiliaryName.empty()
+                ? auxInfo.name : auxInfo.auxiliaryName;
+            infra::SlideIOAdapter tempAdapter(filePath, auxName, driverId);
+            auto tempInfo = tempAdapter.slideInfo();
+
+            if (tempInfo.width <= 0 || tempInfo.height <= 0) continue;
+            int numCh = tempInfo.numChannels;
+            if (numCh <= 0) continue;
+
+            constexpr int kThumbSize = 512;
+            int thumbW = tempInfo.width;
+            int thumbH = tempInfo.height;
+            if (thumbW > kThumbSize || thumbH > kThumbSize) {
+                double ratio = std::min(static_cast<double>(kThumbSize) / thumbW,
+                                        static_cast<double>(kThumbSize) / thumbH);
+                thumbW = std::max(1, static_cast<int>(thumbW * ratio));
+                thumbH = std::max(1, static_cast<int>(thumbH * ratio));
+            }
+
+            auto blockData = tempAdapter.readBlock(0, 0, tempInfo.width, tempInfo.height,
+                                                    thumbW, thumbH);
+            if (blockData.isEmpty() || blockData.isError()) continue;
+
+            QImage::Format imgFmt = (numCh >= 3) ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
+            QImage thumb(thumbW, thumbH, imgFmt);
+            thumb.fill(Qt::white);
+
+            const uint8_t* src = blockData.buffer().data();
+            int srcCh = blockData.numChannels();
+            for (int y = 0; y < thumbH; ++y) {
+                uint8_t* dst = thumb.scanLine(y);
+                for (int x = 0; x < thumbW; ++x) {
+                    int srcIdx = (y * thumbW + x) * srcCh;
+                    if (numCh >= 3 && srcCh >= 3) {
+                        int dstIdx = x * 3;
+                        dst[dstIdx + 0] = src[srcIdx + 0];
+                        dst[dstIdx + 1] = src[srcIdx + 1];
+                        dst[dstIdx + 2] = src[srcIdx + 2];
+                    } else {
+                        dst[x] = src[srcIdx];
+                    }
+                }
+            }
+
+            // Aux images don't have a scene index; use -1 and identify by name.
+            emit sceneThumbnailReady(-1, true, auxName, thumb.copy());
+        } catch (const std::exception& ex) {
+            spdlog::warn("generateAuxImageThumbnails: failed for '{}': {}",
+                         auxInfo.name, ex.what());
+        }
+    }
+}
+
 void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
                                const std::string& driverId)
 {

@@ -137,6 +137,19 @@ struct SceneThumbnailPanel::Impl
             sceneItems.push_back(item);
         }
 
+        // Add auxiliary image thumbnails (label, macro, …). These are matched
+        // by auxiliaryName in setThumbnail().
+        for (const auto& aux : auxImages) {
+            QString name = aux.name.empty()
+                ? QString::fromStdString(aux.auxiliaryName)
+                : QString::fromStdString(aux.name);
+            if (name.isEmpty()) name = QStringLiteral("Aux");
+
+            auto item = createThumbnailItem(aux, name, true);
+            contentLayout->addWidget(item.container, 0, Qt::AlignHCenter);
+            auxItems.push_back(item);
+        }
+
         contentLayout->addStretch();
     }
 
