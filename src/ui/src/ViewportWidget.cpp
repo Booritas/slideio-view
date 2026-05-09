@@ -1492,15 +1492,35 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
         return;
     }
 
+    // Preserve the prior scenes/auxImages list when the new open targets the
+    // same file (a scene switch or aux-image open within the same slide).
+    // openSlide populates result.scenes/auxImages via enumerateScenes; the
+    // openScene/openAuxImage paths leave them empty, so without this carry-
+    // over the scene and associated-images panels would be cleared on every
+    // intra-slide click.
+    const bool sameFile = (result.filePath == m_impl->slideInfo.filePath);
+    std::vector<core::SceneInfo> carriedScenes;
+    std::vector<core::SceneInfo> carriedAuxImages;
+    if (sameFile && result.scenes.empty()) {
+        carriedScenes = m_impl->slideInfo.scenes;
+    }
+    if (sameFile && result.auxImages.empty()) {
+        carriedAuxImages = m_impl->slideInfo.auxImages;
+    }
+
     m_impl->adapterPool = std::move(result.adapterPool);
     m_impl->tileCache = std::move(result.tileCache);
     m_impl->pyramid = std::move(result.pyramid);
     m_impl->slideInfo = std::move(result.slideInfo);
     if (!result.scenes.empty()) {
         m_impl->slideInfo.scenes = std::move(result.scenes);
+    } else if (!carriedScenes.empty()) {
+        m_impl->slideInfo.scenes = std::move(carriedScenes);
     }
     if (!result.auxImages.empty()) {
         m_impl->slideInfo.auxImages = std::move(result.auxImages);
+    } else if (!carriedAuxImages.empty()) {
+        m_impl->slideInfo.auxImages = std::move(carriedAuxImages);
     }
 
     m_impl->scheduler = std::make_shared<infra::TileLoadScheduler>(

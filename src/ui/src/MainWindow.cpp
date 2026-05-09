@@ -56,6 +56,11 @@ struct MainWindow::Impl
     SlidePropertiesPanel* propertiesPanel = nullptr;
     LoadingOverlay* loadingOverlay = nullptr;
 
+    // File path of the most recently opened slide. Used to detect intra-slide
+    // scene/aux switches so the scene/associated-image thumbnail panels are
+    // not rebuilt (and their thumbnails not re-fetched) on every click.
+    std::string lastOpenedFilePath;
+
     // Recent files
     QMenu* recentFilesMenu = nullptr;
     QList<QAction*> recentFileActions;
@@ -171,9 +176,8 @@ struct MainWindow::Impl
             viewportWidget->closeSlide();
             closeAction->setEnabled(false);
             sceneThumbnailPanel->clear();
-            sceneThumbnailPanel->hide();
             associatedImagesPanel->clear();
-            associatedImagesPanel->hide();
+            // Dock panel visibility intentionally preserved — user-controlled.
         });
 
         QObject::connect(openLogAction, &QAction::triggered, owner, [this]() {
@@ -230,7 +234,9 @@ struct MainWindow::Impl
             });
 
         QObject::connect(viewportWidget, &ViewportWidget::slideOpened, owner,
-            [this](const std::string& /*filePath*/) {
+            [this](const std::string& filePath) {
+                const bool sameFile = (filePath == lastOpenedFilePath);
+                lastOpenedFilePath = filePath;
                 closeAction->setEnabled(true);
                 auto* ctrl = viewportWidget->controller();
                 if (ctrl) {
@@ -240,34 +246,39 @@ struct MainWindow::Impl
                     zoomIndicatorWidget->setZoomLevel(vp.scale(), ctrl->baseMagnification());
                 }
 
-                // Show/hide channel mixer based on slide type
+                // Populate panel content. Visibility/position is intentionally
+                // NOT changed here — those are user-controlled via the View
+                // menu and persisted across runs by save/restoreState().
                 const auto& info = viewportWidget->slideInfo();
                 if (info.numChannels > 1) {
                     channelMixerPanel->setChannels(info.channels);
-                    channelMixerPanel->show();
                 } else {
                     channelMixerPanel->clearChannels();
-                    channelMixerPanel->hide();
                 }
 
-                // Show/hide Z/T navigation
                 spdlog::info("MainWindow: setting Z/T: numZ={}, numT={}", info.numZSlices, info.numTFrames);
                 ztNavigationWidget->setSliceFrameCounts(info.numZSlices, info.numTFrames);
                 ztNavigationWidget->raise();
 
-                // Populate scene thumbnail panel if multi-scene
-                if (info.scenes.size() > 1) {
-                    sceneThumbnailPanel->setScenes(info.scenes, {});
-                    sceneThumbnailPanel->setActiveScene(0, false);
-                    sceneThumbnailPanel->show();
-                    viewportWidget->generateSceneThumbnails();
-                }
+                // On intra-slide opens (clicking a scene/aux thumbnail in the
+                // currently-loaded file) the panels already hold the correct
+                // items and pixmaps, so leave them alone. Rebuilding would
+                // clear the thumbnails for the duration of the regeneration.
+                if (!sameFile) {
+                    if (info.scenes.size() > 1) {
+                        sceneThumbnailPanel->setScenes(info.scenes, {});
+                        sceneThumbnailPanel->setActiveScene(0, false);
+                        viewportWidget->generateSceneThumbnails();
+                    } else {
+                        sceneThumbnailPanel->clear();
+                    }
 
-                // Populate associated images panel if the slide ships any
-                if (!info.auxImages.empty()) {
-                    associatedImagesPanel->setScenes({}, info.auxImages);
-                    associatedImagesPanel->show();
-                    viewportWidget->generateAuxImageThumbnails();
+                    if (!info.auxImages.empty()) {
+                        associatedImagesPanel->setScenes({}, info.auxImages);
+                        viewportWidget->generateAuxImageThumbnails();
+                    } else {
+                        associatedImagesPanel->clear();
+                    }
                 }
 
                 propertiesPanel->setSlideInfo(info);
@@ -290,11 +301,12 @@ struct MainWindow::Impl
             statusBarManager->updateMagnification(1.0, 0.0);
             statusBarManager->updateScaleBar(0.0);
             channelMixerPanel->clearChannels();
-            channelMixerPanel->hide();
             propertiesPanel->clear();
             // Note: scene panel is NOT cleared here because slideClosed also fires
             // during scene switching (openScene calls closeSlide internally).
             // The scene panel is cleared explicitly in openSlide() and the close action.
+            // Dock panel visibility is intentionally not changed here — the user
+            // controls it via the View menu and the layout persists across runs.
         });
 
         // Loading overlay lifecycle
@@ -325,11 +337,8 @@ struct MainWindow::Impl
                 auto filePath = viewportWidget->currentFilePath();
                 if (filePath.empty()) return;
 
-                // openScene calls closeSlide which hides/clears channel mixer via slideClosed signal.
-                // slideOpened handler will re-populate channel mixer if the new scene needs it.
                 viewportWidget->openScene(filePath, sceneIndex);
                 sceneThumbnailPanel->setActiveScene(sceneIndex, false);
-                sceneThumbnailPanel->show();
             });
 
         QObject::connect(associatedImagesPanel, &SceneThumbnailPanel::auxImageSelected, owner,
@@ -338,9 +347,6 @@ struct MainWindow::Impl
                 if (filePath.empty()) return;
                 viewportWidget->openAuxImage(filePath, auxImageName);
                 associatedImagesPanel->setActiveScene(-1, true);
-                associatedImagesPanel->show();
-                // channelMixerPanel is already cleared/hidden by the slideClosed handler
-                // (openAuxImage calls closeSlide internally)
             });
 
         // Channel mixer panel: push settings changes to viewport
@@ -520,8 +526,10 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->statusBarManager = new StatusBarManager(this);
     m_impl->statusBarManager->setup(statusBar());
 
-    // Create channel mixer dock widget (hidden by default)
+    // Create channel mixer dock widget. Set objectName so QMainWindow's
+    // saveState/restoreState can place it correctly across sessions.
     m_impl->channelMixerPanel = new ChannelMixerPanel(this);
+    m_impl->channelMixerPanel->setObjectName(QStringLiteral("ChannelMixerPanel"));
     addDockWidget(Qt::RightDockWidgetArea, m_impl->channelMixerPanel);
     m_impl->channelMixerPanel->hide();
 
@@ -592,10 +600,9 @@ MainWindow::~MainWindow()
 
 void MainWindow::openSlide(const std::string& path, const std::string& driverId)
 {
-    m_impl->sceneThumbnailPanel->clear();
-    m_impl->sceneThumbnailPanel->hide();
-    m_impl->associatedImagesPanel->clear();
-    m_impl->associatedImagesPanel->hide();
+    // Don't clear the scene/aux panels here — the slideOpened handler will
+    // rebuild them when (and only when) the file actually changes. Clearing
+    // eagerly would flash empty panels for the duration of the load.
     setWindowTitle(QString("SlideIO Viewer - %1").arg(QString::fromStdString(path)));
     m_impl->addToRecentFiles(path);
 
