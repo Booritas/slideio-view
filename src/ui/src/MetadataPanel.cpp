@@ -1,6 +1,11 @@
 #include "slideio/viewer/ui/MetadataPanel.h"
 
+#include <QAction>
+#include <QApplication>
+#include <QClipboard>
 #include <QHeaderView>
+#include <QMenu>
+#include <QPoint>
 #include <QString>
 #include <QStringList>
 #include <QTreeWidget>
@@ -63,6 +68,15 @@ void addRootNode(QTreeWidget* tree, const QString& title,
     item->setExpanded(true);
 }
 
+void appendItemAsText(const QTreeWidgetItem* item, int depth, QStringList& out)
+{
+    QString indent(depth * 2, QLatin1Char(' '));
+    out << QStringLiteral("%1%2: %3").arg(indent, item->text(0), item->text(1));
+    for (int i = 0; i < item->childCount(); ++i) {
+        appendItemAsText(item->child(i), depth + 1, out);
+    }
+}
+
 } // namespace
 
 namespace slideio::viewer::ui
@@ -92,6 +106,23 @@ MetadataPanel::MetadataPanel(QWidget* parent)
     m_impl->tree->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     m_impl->tree->header()->setStretchLastSection(true);
     setWidget(m_impl->tree);
+
+    m_impl->tree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_impl->tree, &QWidget::customContextMenuRequested, this,
+        [this](const QPoint& pos) {
+            QMenu menu(m_impl->tree);
+            QAction* copyAction = menu.addAction(QStringLiteral("Copy metadata as text"));
+            copyAction->setEnabled(m_impl->tree->topLevelItemCount() > 0);
+            QAction* picked = menu.exec(m_impl->tree->viewport()->mapToGlobal(pos));
+            if (picked != copyAction) return;
+
+            QStringList lines;
+            const int topCount = m_impl->tree->topLevelItemCount();
+            for (int i = 0; i < topCount; ++i) {
+                appendItemAsText(m_impl->tree->topLevelItem(i), 0, lines);
+            }
+            QApplication::clipboard()->setText(lines.join(QChar('\n')));
+        });
 }
 
 MetadataPanel::~MetadataPanel() = default;
