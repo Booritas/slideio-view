@@ -6,6 +6,7 @@
 #include "slideio/viewer/ui/LoadingOverlay.h"
 #include "slideio/viewer/ui/SceneThumbnailPanel.h"
 #include "slideio/viewer/ui/SlidePropertiesPanel.h"
+#include "slideio/viewer/ui/MetadataPanel.h"
 #include "slideio/viewer/ui/MinimapWidget.h"
 #include "slideio/viewer/ui/StatusBarManager.h"
 #include "slideio/viewer/ui/ViewportController.h"
@@ -55,6 +56,7 @@ struct MainWindow::Impl
     SceneThumbnailPanel* sceneThumbnailPanel = nullptr;
     SceneThumbnailPanel* associatedImagesPanel = nullptr;
     SlidePropertiesPanel* propertiesPanel = nullptr;
+    MetadataPanel* metadataPanel = nullptr;
     LoadingOverlay* loadingOverlay = nullptr;
 
     // File path of the most recently opened slide. Used to detect intra-slide
@@ -81,6 +83,7 @@ struct MainWindow::Impl
     QAction* sceneThumbnailToggleAction = nullptr;
     QAction* associatedImagesToggleAction = nullptr;
     QAction* propertiesToggleAction = nullptr;
+    QAction* metadataToggleAction = nullptr;
 
     void createActions()
     {
@@ -155,6 +158,7 @@ struct MainWindow::Impl
         viewMenu->addAction(sceneThumbnailToggleAction);
         viewMenu->addAction(associatedImagesToggleAction);
         viewMenu->addAction(propertiesToggleAction);
+        viewMenu->addAction(metadataToggleAction);
     }
 
     void connectSignals()
@@ -286,6 +290,7 @@ struct MainWindow::Impl
                 }
 
                 propertiesPanel->setSlideInfo(info);
+                metadataPanel->setSlideInfo(info);
             });
 
         QObject::connect(viewportWidget, &ViewportWidget::thumbnailReady, owner,
@@ -306,6 +311,7 @@ struct MainWindow::Impl
             statusBarManager->updateScaleBar(0.0);
             channelMixerPanel->clearChannels();
             propertiesPanel->clear();
+            metadataPanel->clear();
             // Note: scene panel is NOT cleared here because slideClosed also fires
             // during scene switching (openScene calls closeSlide internally).
             // The scene panel is cleared explicitly in openSlide() and the close action.
@@ -573,6 +579,11 @@ MainWindow::MainWindow(QWidget* parent)
     addDockWidget(Qt::RightDockWidgetArea, m_impl->propertiesPanel);
     m_impl->propertiesPanel->hide();
 
+    // Create metadata dock widget (hidden by default)
+    m_impl->metadataPanel = new MetadataPanel(this);
+    addDockWidget(Qt::RightDockWidgetArea, m_impl->metadataPanel);
+    m_impl->metadataPanel->hide();
+
     // Create actions and menus
     m_impl->createActions();
     m_impl->channelMixerToggleAction = m_impl->channelMixerPanel->toggleViewAction();
@@ -591,6 +602,10 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->propertiesToggleAction->setText("&Properties");
     m_impl->propertiesToggleAction->setShortcut(QKeySequence("Ctrl+Shift+P"));
     m_impl->propertiesToggleAction->setStatusTip("Toggle the slide properties panel");
+    m_impl->metadataToggleAction = m_impl->metadataPanel->toggleViewAction();
+    m_impl->metadataToggleAction->setText("Meta&data");
+    m_impl->metadataToggleAction->setShortcut(QKeySequence("Ctrl+Shift+D"));
+    m_impl->metadataToggleAction->setStatusTip("Toggle the slide/scene metadata panel");
     m_impl->createMenus();
     m_impl->connectSignals();
 
