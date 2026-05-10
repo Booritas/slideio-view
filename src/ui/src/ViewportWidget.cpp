@@ -389,6 +389,62 @@ uint8_t mapPixelToUint8(const uint8_t* buffer, size_t elementIndex,
     return static_cast<uint8_t>(std::clamp(normalized * 255.0, 0.0, 255.0));
 }
 
+// Render a resampled block to an 8-bit QImage (RGB888 or Grayscale8),
+// auto-stretching each channel through the block's native data type. Without
+// this rescale, non-Byte data types (e.g., UInt16) produce distorted thumbnails
+// because the buffer carries multiple bytes per sample, but a straight byte
+// copy assumes one byte per channel.
+QImage tileDataToQImage(const slideio::viewer::core::TileData& block, int slideNumChannels)
+{
+    if (block.isEmpty() || block.isError()) return {};
+    const int width = block.width();
+    const int height = block.height();
+    const int srcCh = block.numChannels();
+    if (width <= 0 || height <= 0 || srcCh <= 0) return {};
+
+    const DataType dt = block.dataType();
+    const uint8_t* src = block.buffer().data();
+    const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
+    const bool useRGB = slideNumChannels >= 3 && srcCh >= 3;
+
+    QImage::Format imgFmt = useRGB ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
+    QImage out(width, height, imgFmt);
+    out.fill(Qt::white);
+
+    if (useRGB) {
+        double rMin = std::numeric_limits<double>::max();
+        double rMax = std::numeric_limits<double>::lowest();
+        double gMin = rMin, gMax = rMax;
+        double bMin = rMin, bMax = rMax;
+        computeMinMaxStrided(src, pixelCount, srcCh, 0, dt, rMin, rMax);
+        computeMinMaxStrided(src, pixelCount, srcCh, 1, dt, gMin, gMax);
+        computeMinMaxStrided(src, pixelCount, srcCh, 2, dt, bMin, bMax);
+        for (int y = 0; y < height; ++y) {
+            uint8_t* dst = out.scanLine(y);
+            for (int x = 0; x < width; ++x) {
+                size_t srcElem = static_cast<size_t>((y * width + x) * srcCh);
+                int dstIdx = x * 3;
+                dst[dstIdx + 0] = mapPixelToUint8(src, srcElem + 0, dt, rMin, rMax);
+                dst[dstIdx + 1] = mapPixelToUint8(src, srcElem + 1, dt, gMin, gMax);
+                dst[dstIdx + 2] = mapPixelToUint8(src, srcElem + 2, dt, bMin, bMax);
+            }
+        }
+    } else {
+        double mn = std::numeric_limits<double>::max();
+        double mx = std::numeric_limits<double>::lowest();
+        computeMinMaxStrided(src, pixelCount, srcCh, 0, dt, mn, mx);
+        for (int y = 0; y < height; ++y) {
+            uint8_t* dst = out.scanLine(y);
+            for (int x = 0; x < width; ++x) {
+                size_t srcElem = static_cast<size_t>((y * width + x) * srcCh);
+                dst[x] = mapPixelToUint8(src, srcElem, dt, mn, mx);
+            }
+        }
+    }
+
+    return out;
+}
+
 // Read the coarsest pyramid level synchronously: detect global and per-channel
 // display ranges, build a thumbnail QImage, and insert the tiles into the
 // cache so the very first paint has a base layer to show. Throws on errors;
@@ -1304,26 +1360,8 @@ void ViewportWidget::generateSceneThumbnails()
                                                     thumbW, thumbH);
             if (blockData.isEmpty() || blockData.isError()) continue;
 
-            QImage::Format imgFmt = (numCh >= 3) ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
-            QImage thumb(thumbW, thumbH, imgFmt);
-            thumb.fill(Qt::white);
-
-            const uint8_t* src = blockData.buffer().data();
-            int srcCh = blockData.numChannels();
-            for (int y = 0; y < thumbH; ++y) {
-                uint8_t* dst = thumb.scanLine(y);
-                for (int x = 0; x < thumbW; ++x) {
-                    int srcIdx = (y * thumbW + x) * srcCh;
-                    if (numCh >= 3 && srcCh >= 3) {
-                        int dstIdx = x * 3;
-                        dst[dstIdx + 0] = src[srcIdx + 0];
-                        dst[dstIdx + 1] = src[srcIdx + 1];
-                        dst[dstIdx + 2] = src[srcIdx + 2];
-                    } else {
-                        dst[x] = src[srcIdx];
-                    }
-                }
-            }
+            QImage thumb = tileDataToQImage(blockData, numCh);
+            if (thumb.isNull()) continue;
 
             emit sceneThumbnailReady(sceneInfo.index, false, sceneInfo.name, thumb.copy());
         } catch (const std::exception& ex) {
@@ -1371,26 +1409,8 @@ void ViewportWidget::generateAuxImageThumbnails()
                                                     thumbW, thumbH);
             if (blockData.isEmpty() || blockData.isError()) continue;
 
-            QImage::Format imgFmt = (numCh >= 3) ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
-            QImage thumb(thumbW, thumbH, imgFmt);
-            thumb.fill(Qt::white);
-
-            const uint8_t* src = blockData.buffer().data();
-            int srcCh = blockData.numChannels();
-            for (int y = 0; y < thumbH; ++y) {
-                uint8_t* dst = thumb.scanLine(y);
-                for (int x = 0; x < thumbW; ++x) {
-                    int srcIdx = (y * thumbW + x) * srcCh;
-                    if (numCh >= 3 && srcCh >= 3) {
-                        int dstIdx = x * 3;
-                        dst[dstIdx + 0] = src[srcIdx + 0];
-                        dst[dstIdx + 1] = src[srcIdx + 1];
-                        dst[dstIdx + 2] = src[srcIdx + 2];
-                    } else {
-                        dst[x] = src[srcIdx];
-                    }
-                }
-            }
+            QImage thumb = tileDataToQImage(blockData, numCh);
+            if (thumb.isNull()) continue;
 
             // Aux images don't have a scene index; use -1 and identify by name.
             emit sceneThumbnailReady(-1, true, auxName, thumb.copy());
@@ -1418,26 +1438,8 @@ QImage ViewportWidget::loadAuxImage(const std::string& auxImageName)
                                         info.width, info.height);
         if (block.isEmpty() || block.isError()) return {};
 
-        QImage::Format imgFmt = (numCh >= 3) ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
-        QImage out(info.width, info.height, imgFmt);
-        out.fill(Qt::white);
-
-        const uint8_t* src = block.buffer().data();
-        int srcCh = block.numChannels();
-        for (int y = 0; y < info.height; ++y) {
-            uint8_t* dst = out.scanLine(y);
-            for (int x = 0; x < info.width; ++x) {
-                int srcIdx = (y * info.width + x) * srcCh;
-                if (numCh >= 3 && srcCh >= 3) {
-                    int dstIdx = x * 3;
-                    dst[dstIdx + 0] = src[srcIdx + 0];
-                    dst[dstIdx + 1] = src[srcIdx + 1];
-                    dst[dstIdx + 2] = src[srcIdx + 2];
-                } else {
-                    dst[x] = src[srcIdx];
-                }
-            }
-        }
+        QImage out = tileDataToQImage(block, numCh);
+        if (out.isNull()) return {};
         return out.copy();
     } catch (const std::exception& ex) {
         spdlog::warn("ViewportWidget::loadAuxImage('{}'): {}", auxImageName, ex.what());
