@@ -6,6 +6,65 @@
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 
+namespace
+{
+
+// Convert a leaf node's stored value to display text. Object/Array nodes
+// instead get a synthesized summary ("{N keys}" / "[N items]"). Null gets
+// a literal "(null)" so empty leaves are visually distinguishable.
+QString valueText(const slideio::viewer::core::MetadataNode& node)
+{
+    using Type = slideio::viewer::core::MetadataNode::Type;
+    switch (node.type) {
+    case Type::Null:
+        return QStringLiteral("(null)");
+    case Type::Bool:
+    case Type::Int:
+    case Type::Double:
+    case Type::String:
+        return QString::fromStdString(node.value);
+    case Type::Array:
+        return QStringLiteral("[%1 items]").arg(node.children.size());
+    case Type::Object:
+        return QStringLiteral("{%1 keys}").arg(node.children.size());
+    }
+    return {};
+}
+
+void addNode(QTreeWidgetItem* parent,
+             const slideio::viewer::core::MetadataNode& node)
+{
+    auto* item = new QTreeWidgetItem(parent);
+    item->setText(0, QString::fromStdString(node.name));
+    item->setText(1, valueText(node));
+    for (const auto& child : node.children) {
+        addNode(item, child);
+    }
+}
+
+// Add a top-level "Slide" or "Scene" parent for the given subtree. If the
+// subtree is Null at its root, show a single "(no metadata)" parent with
+// no children. Otherwise the parent shows the synthesized summary
+// ("{N keys}" / "[N items]") and is expanded by default.
+void addRootNode(QTreeWidget* tree, const QString& title,
+                 const slideio::viewer::core::MetadataNode& root)
+{
+    using Type = slideio::viewer::core::MetadataNode::Type;
+    auto* item = new QTreeWidgetItem(tree);
+    item->setText(0, title);
+    if (root.type == Type::Null && root.children.empty()) {
+        item->setText(1, QStringLiteral("(no metadata)"));
+        return;
+    }
+    item->setText(1, valueText(root));
+    for (const auto& child : root.children) {
+        addNode(item, child);
+    }
+    item->setExpanded(true);
+}
+
+} // namespace
+
 namespace slideio::viewer::ui
 {
 
@@ -42,10 +101,11 @@ void MetadataPanel::clear()
     m_impl->tree->clear();
 }
 
-void MetadataPanel::setSlideInfo(const core::SlideInfo& /*info*/)
+void MetadataPanel::setSlideInfo(const core::SlideInfo& info)
 {
-    // Population implemented in the next task.
     m_impl->tree->clear();
+    addRootNode(m_impl->tree, QStringLiteral("Slide"), info.slideMetadata);
+    addRootNode(m_impl->tree, QStringLiteral("Scene"), info.sceneMetadata);
 }
 
 } // namespace slideio::viewer::ui
