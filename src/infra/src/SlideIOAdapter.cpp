@@ -4,12 +4,14 @@
 #include <slideio/slideio/slide.hpp>
 #include <slideio/slideio/scene.hpp>
 #include <slideio/core/levelinfo.hpp>
+#include <slideio/core/metadata.hpp>
 #include <slideio/base/slideio_enums.hpp>
 
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <stdexcept>
 #include <tuple>
 
@@ -81,6 +83,74 @@ std::string compressionName(::slideio::Compression c)
         case C::VP8:            return "VP8";
     }
     return "Unknown";
+}
+
+slideio::viewer::core::MetadataNode convertMetadata(
+    const ::slideio::Metadata& meta, const std::string& name = {})
+{
+    using NodeType = slideio::viewer::core::MetadataNode::Type;
+    slideio::viewer::core::MetadataNode node;
+    node.name = name;
+
+    try {
+        switch (meta.type()) {
+        case ::slideio::Metadata::Type::Null:
+            node.type = NodeType::Null;
+            break;
+        case ::slideio::Metadata::Type::Bool:
+            node.type = NodeType::Bool;
+            node.value = meta.asBool() ? "true" : "false";
+            break;
+        case ::slideio::Metadata::Type::Int:
+            node.type = NodeType::Int;
+            node.value = std::to_string(meta.asInt());
+            break;
+        case ::slideio::Metadata::Type::Double: {
+            // %.15g — general format, up to 15 significant digits, no
+            // trailing zeros for integer-valued doubles. Matches the
+            // precision policy in the design doc.
+            node.type = NodeType::Double;
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "%.15g", meta.asDouble());
+            node.value = buf;
+            break;
+        }
+        case ::slideio::Metadata::Type::String:
+            node.type = NodeType::String;
+            node.value = meta.asString();
+            break;
+        case ::slideio::Metadata::Type::Array: {
+            node.type = NodeType::Array;
+            const size_t n = meta.size();
+            node.children.reserve(n);
+            for (size_t i = 0; i < n; ++i) {
+                node.children.push_back(
+                    convertMetadata(meta[i], "[" + std::to_string(i) + "]"));
+            }
+            break;
+        }
+        case ::slideio::Metadata::Type::Object: {
+            node.type = NodeType::Object;
+            const auto keys = meta.keys();
+            node.children.reserve(keys.size());
+            for (const auto& key : keys) {
+                node.children.push_back(convertMetadata(meta[key], key));
+            }
+            break;
+        }
+        }
+    } catch (const std::exception& ex) {
+        // Per-subtree containment: a bad branch becomes a Null leaf so the
+        // rest of the tree still renders. The warning is logged once per
+        // bad subtree.
+        spdlog::warn("SlideIOAdapter::convertMetadata: failed for '{}': {}",
+                     name, ex.what());
+        node.type = NodeType::Null;
+        node.value.clear();
+        node.children.clear();
+    }
+
+    return node;
 }
 
 } // anonymous namespace
@@ -269,6 +339,13 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
 
     m_slideInfo.levels = m_levels;
 
+    try {
+        m_slideInfo.slideMetadata = convertMetadata(m_slide->getMetadata());
+        m_slideInfo.sceneMetadata = convertMetadata(m_scene->getMetadata());
+    } catch (const std::exception& ex) {
+        spdlog::warn("SlideIOAdapter: getMetadata failed: {}", ex.what());
+    }
+
     spdlog::info("SlideIOAdapter: opened slide {}x{}, {} channels, {} levels, Z={}, T={}",
                  m_slideInfo.width, m_slideInfo.height, m_slideInfo.numChannels,
                  static_cast<int>(m_levels.size()),
@@ -433,6 +510,13 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
     }
 
     m_slideInfo.levels = m_levels;
+
+    try {
+        m_slideInfo.slideMetadata = convertMetadata(m_slide->getMetadata());
+        m_slideInfo.sceneMetadata = convertMetadata(m_scene->getMetadata());
+    } catch (const std::exception& ex) {
+        spdlog::warn("SlideIOAdapter: getMetadata failed: {}", ex.what());
+    }
 
     spdlog::info("SlideIOAdapter: opened aux image '{}' {}x{}, {} channels, {} levels",
                  auxImageName, m_slideInfo.width, m_slideInfo.height, m_slideInfo.numChannels,
