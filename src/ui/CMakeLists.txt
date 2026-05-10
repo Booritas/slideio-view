@@ -12,6 +12,7 @@ add_library(slideio-viewer-ui STATIC
     src/ZTNavigationWidget.cpp
     src/LoadingOverlay.cpp
     src/SlidePropertiesPanel.cpp
+    src/MetadataPanel.cpp
     src/MainWindow.cpp
 )
 
