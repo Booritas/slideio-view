@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include "slideio/viewer/core/Metadata.h"
 
 namespace slideio::viewer::core
 {
@@ -172,6 +173,8 @@ struct SlideInfo
     std::vector<SceneInfo> scenes;
     std::vector<SceneInfo> auxImages;
     std::vector<LevelInfo> levels;
+    MetadataNode slideMetadata;   // populated from slideio::Slide::getMetadata()
+    MetadataNode sceneMetadata;   // populated from slideio::Scene::getMetadata()
 };
 
 template<typename T>
