@@ -3,8 +3,11 @@
 #include "slideio/viewer/core/ISlideSource.h"
 #include "slideio/viewer/core/Types.h"
 
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -45,13 +48,23 @@ public:
     core::TileData readBlock(int slideX, int slideY, int slideWidth, int slideHeight,
                               int targetWidth, int targetHeight) override;
 
+    void setOnLevelMarkedUnreliable(std::function<void(int)> callback) override;
+
 private:
+    bool isLevelUnreliable(int level) const;
+    // Returns true the first time this level is marked. Subsequent calls return false.
+    bool markLevelUnreliable(int level);
+
     std::string m_filePath;
     int m_sceneIndex = 0;
     std::shared_ptr<::slideio::Slide> m_slide;
     std::shared_ptr<::slideio::Scene> m_scene;
     std::vector<core::LevelInfo> m_levels;
     core::SlideInfo m_slideInfo;
+
+    mutable std::mutex m_unreliableLevelsMutex;
+    std::unordered_set<int> m_unreliableLevels;
+    std::function<void(int)> m_onLevelMarkedUnreliable;
 };
 
 } // namespace slideio::viewer::infra

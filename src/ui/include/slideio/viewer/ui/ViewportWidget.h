@@ -71,6 +71,7 @@ signals:
     void errorOccurred(const std::string& message);
     void sceneThumbnailReady(int sceneIndex, bool isAuxiliary, const std::string& name, const QImage& thumbnail);
     void loadingStarted(const QString& displayName);
+    void loadingStatusChanged(const QString& text);
     void loadingFinished();
 
 protected:

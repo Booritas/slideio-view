@@ -3,6 +3,7 @@
 #include "slideio/viewer/core/ISlideSource.h"
 
 #include <condition_variable>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -49,6 +50,11 @@ public:
     AdapterLoan acquire();
     int poolSize() const;
 
+    // Forwarded to every adapter in the pool. Each adapter fires the callback
+    // the first time it decides a pyramid level is unreliable; multiple
+    // adapters may fire the callback for the same level independently.
+    void setOnLevelMarkedUnreliable(std::function<void(int)> callback);
+
 private:
     friend class AdapterLoan;
     void returnAdapter(std::unique_ptr<core::ISlideSource> adapter);
@@ -62,6 +68,7 @@ private:
     std::vector<std::unique_ptr<core::ISlideSource>> m_available;
     mutable std::mutex m_mutex;
     std::condition_variable m_condition;
+    std::function<void(int)> m_onLevelMarkedUnreliable;
 };
 
 } // namespace slideio::viewer::infra

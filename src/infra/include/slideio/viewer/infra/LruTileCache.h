@@ -27,6 +27,7 @@ public:
     std::shared_ptr<core::TileData> lookup(const core::TileKey& key) const override;
     void insert(const core::TileKey& key, std::shared_ptr<core::TileData> data) override;
     void evict(const core::TileKey& key) override;
+    size_t evictLevel(int level) override;
     void clear() override;
     size_t currentBytes() const override;
     size_t budgetBytes() const override;

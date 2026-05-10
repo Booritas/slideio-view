@@ -16,6 +16,7 @@ public:
     virtual std::shared_ptr<TileData> lookup(const TileKey& key) const = 0;
     virtual void insert(const TileKey& key, std::shared_ptr<TileData> data) = 0;
     virtual void evict(const TileKey& key) = 0;
+    virtual size_t evictLevel(int level) = 0;
     virtual void clear() = 0;
     virtual size_t currentBytes() const = 0;
     virtual size_t budgetBytes() const = 0;

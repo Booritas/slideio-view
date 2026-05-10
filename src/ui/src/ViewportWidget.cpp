@@ -734,9 +734,12 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
 using slideio::viewer::ui::SceneOpenResult;
 
 // Open a scene synchronously (intended to run on a background thread). Captures
-// any exception into result.errorMsg.
+// any exception into result.errorMsg. statusCallback (if non-null) is invoked
+// when the adapter first decides a pyramid level is unreliable, so the loading
+// overlay can change its label to indicate the slow-but-correct fallback path.
 SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
-                              const std::string& driverId)
+                              const std::string& driverId,
+                              std::function<void(QString)> statusCallback = {})
 {
     namespace core = slideio::viewer::core;
     namespace infra = slideio::viewer::infra;
@@ -750,6 +753,11 @@ SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
             auto levels = loan->levels();
             r.pyramid = std::make_shared<core::TilePyramid>(
                 r.slideInfo.width, r.slideInfo.height, levels);
+        }
+        if (statusCallback) {
+            r.adapterPool->setOnLevelMarkedUnreliable([statusCallback](int level) {
+                statusCallback(QStringLiteral("Working around corrupted tiles (level %1)…").arg(level));
+            });
         }
         r.tileCache = std::make_shared<infra::LruTileCache>();
         try {
@@ -780,7 +788,8 @@ SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
 
 // Open an auxiliary image synchronously (background thread).
 SceneOpenResult openAuxImageSync(const std::string& filePath, const std::string& auxImageName,
-                                 const std::string& driverId)
+                                 const std::string& driverId,
+                                 std::function<void(QString)> statusCallback = {})
 {
     namespace core = slideio::viewer::core;
     namespace infra = slideio::viewer::infra;
@@ -795,6 +804,11 @@ SceneOpenResult openAuxImageSync(const std::string& filePath, const std::string&
             auto levels = loan->levels();
             r.pyramid = std::make_shared<core::TilePyramid>(
                 r.slideInfo.width, r.slideInfo.height, levels);
+        }
+        if (statusCallback) {
+            r.adapterPool->setOnLevelMarkedUnreliable([statusCallback](int level) {
+                statusCallback(QStringLiteral("Working around corrupted tiles (level %1)…").arg(level));
+            });
         }
         r.tileCache = std::make_shared<infra::LruTileCache>();
         try {
@@ -1401,8 +1415,14 @@ void ViewportWidget::openSlide(const std::string& filePath, const std::string& d
     if (slash >= 0) displayName = displayName.mid(slash + 1);
     emit loadingStarted(displayName);
 
-    std::thread([this, opId, filePath, driverId]() {
-        SceneOpenResult result = openSceneSync(filePath, 0, driverId);
+    auto statusCallback = [this](QString msg) {
+        QMetaObject::invokeMethod(this, [this, msg]() {
+            emit loadingStatusChanged(msg);
+        }, Qt::QueuedConnection);
+    };
+
+    std::thread([this, opId, filePath, driverId, statusCallback]() {
+        SceneOpenResult result = openSceneSync(filePath, 0, driverId, statusCallback);
         // Always enumerate scenes so the scene panel can populate, even if scene 0 worked.
         try {
             auto enumResult = infra::SlideIOAdapter::enumerateScenes(filePath, driverId);
@@ -1426,56 +1446,71 @@ void ViewportWidget::generateSceneThumbnails()
         return;
     }
 
-    const auto& filePath = m_impl->currentFilePath;
-    const auto& driverId = m_impl->currentDriverId;
+    // Snapshot inputs and run on a background thread. With the per-tile
+    // finer-level fallback active for slides that have a corrupt pyramid
+    // level, the coarse-tile assembly inside this loop can take tens of
+    // seconds; doing it on the UI thread froze the loading spinner. Each
+    // scene gets its own SlideIOAdapter (no shared pool), so this work is
+    // isolated from the open viewport's adapter pool.
+    const std::string filePath = m_impl->currentFilePath;
+    const std::string driverId = m_impl->currentDriverId;
+    const auto scenes = m_impl->slideInfo.scenes;
+    const uint64_t opId = m_impl->openOpId.load();
+
     spdlog::info("generateSceneThumbnails: {} scenes, {} aux images",
-                 m_impl->slideInfo.scenes.size(), m_impl->slideInfo.auxImages.size());
+                 scenes.size(), m_impl->slideInfo.auxImages.size());
 
-    for (const auto& sceneInfo : m_impl->slideInfo.scenes) {
-        try {
-            infra::SlideIOAdapter tempAdapter(filePath, sceneInfo.index, driverId);
-            auto tempInfo = tempAdapter.slideInfo();
+    std::thread([this, opId, filePath, driverId, scenes]() {
+        for (const auto& sceneInfo : scenes) {
+            // Bail if the user opened a different slide in the meantime.
+            if (m_impl->openOpId.load() != opId) return;
+            try {
+                infra::SlideIOAdapter tempAdapter(filePath, sceneInfo.index, driverId);
+                auto tempInfo = tempAdapter.slideInfo();
 
-            if (tempInfo.width <= 0 || tempInfo.height <= 0) continue;
-            int numCh = tempInfo.numChannels;
-            if (numCh <= 0) continue;
+                if (tempInfo.width <= 0 || tempInfo.height <= 0) continue;
+                int numCh = tempInfo.numChannels;
+                if (numCh <= 0) continue;
 
-            // Target thumbnail dimensions are derived from the FULL SCENE dims so
-            // SlideIO can pick a finer pyramid level and resample down. Without
-            // this, scenes whose coarsest pyramid level is small (e.g., ~200x160)
-            // would only produce a tiny coarse thumbnail.
-            constexpr int kThumbSize = 512;
-            int thumbW = tempInfo.width;
-            int thumbH = tempInfo.height;
-            if (thumbW > kThumbSize || thumbH > kThumbSize) {
-                double ratio = std::min(static_cast<double>(kThumbSize) / thumbW,
-                                        static_cast<double>(kThumbSize) / thumbH);
-                thumbW = std::max(1, static_cast<int>(thumbW * ratio));
-                thumbH = std::max(1, static_cast<int>(thumbH * ratio));
+                // Target thumbnail dimensions are derived from the FULL SCENE dims so
+                // SlideIO can pick a finer pyramid level and resample down. Without
+                // this, scenes whose coarsest pyramid level is small (e.g., ~200x160)
+                // would only produce a tiny coarse thumbnail.
+                constexpr int kThumbSize = 512;
+                int thumbW = tempInfo.width;
+                int thumbH = tempInfo.height;
+                if (thumbW > kThumbSize || thumbH > kThumbSize) {
+                    double ratio = std::min(static_cast<double>(kThumbSize) / thumbW,
+                                            static_cast<double>(kThumbSize) / thumbH);
+                    thumbW = std::max(1, static_cast<int>(thumbW * ratio));
+                    thumbH = std::max(1, static_cast<int>(thumbH * ratio));
+                }
+
+                auto blockData = tempAdapter.readBlock(0, 0, tempInfo.width, tempInfo.height,
+                                                        thumbW, thumbH);
+                QImage thumb;
+                if (!blockData.isEmpty() && !blockData.isError()) {
+                    thumb = tileDataToQImage(blockData, numCh);
+                }
+                if (thumb.isNull()) {
+                    spdlog::info("generateSceneThumbnails: scene {} readBlock failed; "
+                                 "falling back to coarse-tile assembly", sceneInfo.index);
+                    thumb = buildCoarseLevelThumbnailFallback(tempAdapter, numCh, thumbW, thumbH);
+                }
+                if (thumb.isNull()) continue;
+                if (m_impl->openOpId.load() != opId) return;
+
+                QImage copy = thumb.copy();
+                int idx = sceneInfo.index;
+                std::string name = sceneInfo.name;
+                QMetaObject::invokeMethod(this, [this, idx, name, copy]() {
+                    emit sceneThumbnailReady(idx, false, name, copy);
+                }, Qt::QueuedConnection);
+            } catch (const std::exception& ex) {
+                spdlog::warn("generateSceneThumbnails: failed for scene {}: {}", sceneInfo.index, ex.what());
             }
-
-            auto blockData = tempAdapter.readBlock(0, 0, tempInfo.width, tempInfo.height,
-                                                    thumbW, thumbH);
-            QImage thumb;
-            if (!blockData.isEmpty() && !blockData.isError()) {
-                thumb = tileDataToQImage(blockData, numCh);
-            }
-            if (thumb.isNull()) {
-                // SlideIO's resampled read failed (often a single corrupted
-                // tile at the chosen pyramid level taints the whole call).
-                // Fall back to assembling the coarsest level tile-by-tile.
-                spdlog::info("generateSceneThumbnails: scene {} readBlock failed; "
-                             "falling back to coarse-tile assembly", sceneInfo.index);
-                thumb = buildCoarseLevelThumbnailFallback(tempAdapter, numCh, thumbW, thumbH);
-            }
-            if (thumb.isNull()) continue;
-
-            emit sceneThumbnailReady(sceneInfo.index, false, sceneInfo.name, thumb.copy());
-        } catch (const std::exception& ex) {
-            spdlog::warn("generateSceneThumbnails: failed for scene {}: {}", sceneInfo.index, ex.what());
         }
-    }
-
+    }).detach();
 }
 
 void ViewportWidget::generateAuxImageThumbnails()
@@ -1486,52 +1521,62 @@ void ViewportWidget::generateAuxImageThumbnails()
         return;
     }
 
-    const auto& filePath = m_impl->currentFilePath;
-    const auto& driverId = m_impl->currentDriverId;
-    spdlog::info("generateAuxImageThumbnails: {} aux images",
-                 m_impl->slideInfo.auxImages.size());
+    const std::string filePath = m_impl->currentFilePath;
+    const std::string driverId = m_impl->currentDriverId;
+    const auto auxImages = m_impl->slideInfo.auxImages;
+    const uint64_t opId = m_impl->openOpId.load();
 
-    for (const auto& auxInfo : m_impl->slideInfo.auxImages) {
-        try {
-            const std::string& auxName = auxInfo.auxiliaryName.empty()
-                ? auxInfo.name : auxInfo.auxiliaryName;
-            infra::SlideIOAdapter tempAdapter(filePath, auxName, driverId);
-            auto tempInfo = tempAdapter.slideInfo();
+    spdlog::info("generateAuxImageThumbnails: {} aux images", auxImages.size());
 
-            if (tempInfo.width <= 0 || tempInfo.height <= 0) continue;
-            int numCh = tempInfo.numChannels;
-            if (numCh <= 0) continue;
+    std::thread([this, opId, filePath, driverId, auxImages]() {
+        for (const auto& auxInfo : auxImages) {
+            if (m_impl->openOpId.load() != opId) return;
+            try {
+                const std::string& auxName = auxInfo.auxiliaryName.empty()
+                    ? auxInfo.name : auxInfo.auxiliaryName;
+                infra::SlideIOAdapter tempAdapter(filePath, auxName, driverId);
+                auto tempInfo = tempAdapter.slideInfo();
 
-            constexpr int kThumbSize = 512;
-            int thumbW = tempInfo.width;
-            int thumbH = tempInfo.height;
-            if (thumbW > kThumbSize || thumbH > kThumbSize) {
-                double ratio = std::min(static_cast<double>(kThumbSize) / thumbW,
-                                        static_cast<double>(kThumbSize) / thumbH);
-                thumbW = std::max(1, static_cast<int>(thumbW * ratio));
-                thumbH = std::max(1, static_cast<int>(thumbH * ratio));
+                if (tempInfo.width <= 0 || tempInfo.height <= 0) continue;
+                int numCh = tempInfo.numChannels;
+                if (numCh <= 0) continue;
+
+                constexpr int kThumbSize = 512;
+                int thumbW = tempInfo.width;
+                int thumbH = tempInfo.height;
+                if (thumbW > kThumbSize || thumbH > kThumbSize) {
+                    double ratio = std::min(static_cast<double>(kThumbSize) / thumbW,
+                                            static_cast<double>(kThumbSize) / thumbH);
+                    thumbW = std::max(1, static_cast<int>(thumbW * ratio));
+                    thumbH = std::max(1, static_cast<int>(thumbH * ratio));
+                }
+
+                auto blockData = tempAdapter.readBlock(0, 0, tempInfo.width, tempInfo.height,
+                                                        thumbW, thumbH);
+                QImage thumb;
+                if (!blockData.isEmpty() && !blockData.isError()) {
+                    thumb = tileDataToQImage(blockData, numCh);
+                }
+                if (thumb.isNull()) {
+                    spdlog::info("generateAuxImageThumbnails: aux '{}' readBlock failed; "
+                                 "falling back to coarse-tile assembly", auxName);
+                    thumb = buildCoarseLevelThumbnailFallback(tempAdapter, numCh, thumbW, thumbH);
+                }
+                if (thumb.isNull()) continue;
+                if (m_impl->openOpId.load() != opId) return;
+
+                // Aux images don't have a scene index; use -1 and identify by name.
+                QImage copy = thumb.copy();
+                std::string nameCopy = auxName;
+                QMetaObject::invokeMethod(this, [this, nameCopy, copy]() {
+                    emit sceneThumbnailReady(-1, true, nameCopy, copy);
+                }, Qt::QueuedConnection);
+            } catch (const std::exception& ex) {
+                spdlog::warn("generateAuxImageThumbnails: failed for '{}': {}",
+                             auxInfo.name, ex.what());
             }
-
-            auto blockData = tempAdapter.readBlock(0, 0, tempInfo.width, tempInfo.height,
-                                                    thumbW, thumbH);
-            QImage thumb;
-            if (!blockData.isEmpty() && !blockData.isError()) {
-                thumb = tileDataToQImage(blockData, numCh);
-            }
-            if (thumb.isNull()) {
-                spdlog::info("generateAuxImageThumbnails: aux '{}' readBlock failed; "
-                             "falling back to coarse-tile assembly", auxName);
-                thumb = buildCoarseLevelThumbnailFallback(tempAdapter, numCh, thumbW, thumbH);
-            }
-            if (thumb.isNull()) continue;
-
-            // Aux images don't have a scene index; use -1 and identify by name.
-            emit sceneThumbnailReady(-1, true, auxName, thumb.copy());
-        } catch (const std::exception& ex) {
-            spdlog::warn("generateAuxImageThumbnails: failed for '{}': {}",
-                         auxInfo.name, ex.what());
         }
-    }
+    }).detach();
 }
 
 QImage ViewportWidget::loadAuxImage(const std::string& auxImageName)
@@ -1574,8 +1619,14 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
     if (sceneIndex > 0) displayName += QStringLiteral(" (scene %1)").arg(sceneIndex);
     emit loadingStarted(displayName);
 
-    std::thread([this, opId, filePath, sceneIndex, driverId]() {
-        SceneOpenResult result = openSceneSync(filePath, sceneIndex, driverId);
+    auto statusCallback = [this](QString msg) {
+        QMetaObject::invokeMethod(this, [this, msg]() {
+            emit loadingStatusChanged(msg);
+        }, Qt::QueuedConnection);
+    };
+
+    std::thread([this, opId, filePath, sceneIndex, driverId, statusCallback]() {
+        SceneOpenResult result = openSceneSync(filePath, sceneIndex, driverId, statusCallback);
         QMetaObject::invokeMethod(this,
             [this, opId, r = std::move(result)]() mutable {
                 installSceneOpenResult(opId, std::move(r));
@@ -1627,8 +1678,14 @@ void ViewportWidget::openAuxImage(const std::string& filePath, const std::string
     displayName += QStringLiteral(" (%1)").arg(QString::fromStdString(auxImageName));
     emit loadingStarted(displayName);
 
-    std::thread([this, opId, filePath, auxImageName, driverId]() {
-        SceneOpenResult result = openAuxImageSync(filePath, auxImageName, driverId);
+    auto statusCallback = [this](QString msg) {
+        QMetaObject::invokeMethod(this, [this, msg]() {
+            emit loadingStatusChanged(msg);
+        }, Qt::QueuedConnection);
+    };
+
+    std::thread([this, opId, filePath, auxImageName, driverId, statusCallback]() {
+        SceneOpenResult result = openAuxImageSync(filePath, auxImageName, driverId, statusCallback);
         QMetaObject::invokeMethod(this,
             [this, opId, r = std::move(result)]() mutable {
                 installSceneOpenResult(opId, std::move(r));
@@ -1949,20 +2006,55 @@ void ViewportWidget::paintGL()
     int fbHeight = static_cast<int>(height() * devicePixelRatioF());
     m_impl->gl->glViewport(0, 0, fbWidth, fbHeight);
 
-    // Set clear color: white for brightfield (matches slide glass, so a failed
-    // tile reads as background instead of a stark black hole), black for
-    // fluorescence (additive blending neutral), gray when no slide is open.
-    if (m_impl->slideOpen && m_impl->slideInfo.isBrightfield) {
-        m_impl->gl->glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-    } else if (m_impl->slideOpen && m_impl->slideInfo.numChannels > 1) {
-        m_impl->gl->glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    } else {
-        m_impl->gl->glClearColor(0.251f, 0.251f, 0.251f, 1.0f);
-    }
+    // Periphery (outside the slide rect) stays the neutral chrome gray
+    // regardless of slide type — what the user sees before any slide is open.
+    m_impl->gl->glClearColor(0.251f, 0.251f, 0.251f, 1.0f);
     m_impl->gl->glClear(GL_COLOR_BUFFER_BIT);
 
     if (!m_impl->controller || !m_impl->slideOpen) {
         return;
+    }
+
+    // Inside the slide rect, fill the background with a color that matches
+    // what an untiled region "should" look like: white for brightfield H&E
+    // (slide glass) so a failed tile reads as background, black for
+    // fluorescence (FBO composite's additive-neutral). Only applied when the
+    // slide kind is unambiguous (>=3 channels) — 1-channel slides could be
+    // grayscale brightfield OR grayscale fluorescence and the isBrightfield
+    // heuristic in SlideIOAdapter flags both as brightfield, which would
+    // paint white under a dark fluorescence image. Falling through to the
+    // chrome gray keeps the slide-rect / periphery boundary invisible.
+    if (m_impl->slideInfo.numChannels >= 3) {
+        const auto& vpInfo = m_impl->controller->viewport();
+        double tlx = 0.0, tly = 0.0, brx = 0.0, bry = 0.0;
+        vpInfo.slideToScreen(0.0, 0.0, tlx, tly);
+        vpInfo.slideToScreen(static_cast<double>(m_impl->slideInfo.width),
+                             static_cast<double>(m_impl->slideInfo.height),
+                             brx, bry);
+        const double dpr = devicePixelRatioF();
+        int sx = static_cast<int>(std::floor(tlx * dpr));
+        int sy = static_cast<int>(std::floor(tly * dpr));
+        int sw = static_cast<int>(std::ceil((brx - tlx) * dpr));
+        int sh = static_cast<int>(std::ceil((bry - tly) * dpr));
+        int x0 = std::max(0, sx);
+        int y0 = std::max(0, sy);
+        int x1 = std::min(fbWidth, sx + sw);
+        int y1 = std::min(fbHeight, sy + sh);
+        if (x1 > x0 && y1 > y0) {
+            // glScissor uses bottom-left origin, screen Y is top-down.
+            int scissorY = fbHeight - y1;
+            int scissorH = y1 - y0;
+            int scissorW = x1 - x0;
+            if (m_impl->slideInfo.isBrightfield) {
+                m_impl->gl->glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+            } else {
+                m_impl->gl->glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+            }
+            m_impl->gl->glEnable(GL_SCISSOR_TEST);
+            m_impl->gl->glScissor(x0, scissorY, scissorW, scissorH);
+            m_impl->gl->glClear(GL_COLOR_BUFFER_BIT);
+            m_impl->gl->glDisable(GL_SCISSOR_TEST);
+        }
     }
 
     bool morePending = m_impl->uploadPendingTextures();

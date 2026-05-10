@@ -27,6 +27,18 @@ TileLoadScheduler::TileLoadScheduler(std::shared_ptr<SlideIOAdapterPool> adapter
         numWorkers = std::max(2, hw - 2);
     }
 
+    // Once an adapter detects a pyramid level is unreliable, drop any cached
+    // tiles from that level. They came from earlier "successful" reads at the
+    // broken level and can be off by a tile (data shifted from a wrong file
+    // offset). The renderer will re-request them, and the adapter's fallback
+    // path now reads from a finer level.
+    auto cacheWeak = std::weak_ptr<core::ITileCache>(m_tileCache);
+    m_adapterPool->setOnLevelMarkedUnreliable([cacheWeak](int level) {
+        if (auto cache = cacheWeak.lock()) {
+            cache->evictLevel(level);
+        }
+    });
+
     spdlog::info("TileLoadScheduler: starting {} worker threads", numWorkers);
 
     m_workers.reserve(static_cast<size_t>(numWorkers));

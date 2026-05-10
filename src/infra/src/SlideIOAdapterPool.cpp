@@ -145,10 +145,29 @@ int SlideIOAdapterPool::poolSize() const
     return m_poolSize;
 }
 
+void SlideIOAdapterPool::setOnLevelMarkedUnreliable(std::function<void(int)> callback)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_onLevelMarkedUnreliable = callback;
+    // Adapters in m_available now; loaned-out adapters return through
+    // returnAdapter() and aren't reachable here. They miss the propagation
+    // until they come back, so when they return we'll need to re-apply.
+    for (auto& adapter : m_available) {
+        if (adapter) {
+            adapter->setOnLevelMarkedUnreliable(m_onLevelMarkedUnreliable);
+        }
+    }
+}
+
 void SlideIOAdapterPool::returnAdapter(std::unique_ptr<core::ISlideSource> adapter)
 {
     {
         std::lock_guard<std::mutex> lock(m_mutex);
+        // Re-apply current callback in case it was set while this adapter was
+        // out on loan.
+        if (adapter && m_onLevelMarkedUnreliable) {
+            adapter->setOnLevelMarkedUnreliable(m_onLevelMarkedUnreliable);
+        }
         m_available.push_back(std::move(adapter));
         spdlog::debug("SlideIOAdapterPool: adapter returned, {} available", m_available.size());
     }

@@ -328,6 +328,11 @@ struct MainWindow::Impl
                 loadingOverlay->start(displayName);
             });
 
+        QObject::connect(viewportWidget, &ViewportWidget::loadingStatusChanged, owner,
+            [this](const QString& text) {
+                loadingOverlay->setStatus(text);
+            });
+
         QObject::connect(viewportWidget, &ViewportWidget::loadingFinished, owner, [this]() {
             loadingOverlay->stop();
         });

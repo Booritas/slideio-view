@@ -12,8 +12,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <stdexcept>
 #include <tuple>
+#include <type_traits>
 
 namespace
 {
@@ -151,6 +153,73 @@ slideio::viewer::core::MetadataNode convertMetadata(
     }
 
     return node;
+}
+
+// Box-filter downsample of a packed pixel buffer (rows × cols × channels) by an
+// integer factor. srcW/srcH must be exact multiples of dstW/dstH. Used as the
+// final step of the finer-level fallback path in readTile (see below): we ask
+// SlideIO for an N× larger output that forces it to read from a finer pyramid
+// level, then average down to the requested tile size. The channel loop is
+// hoisted inside the dy/dx loops so the per-row pointer is computed once per
+// row instead of once per channel; for byte data we use an integer accumulator,
+// which is the common brightfield path.
+template<typename T, typename Accum>
+void downsampleBoxAverageT(const uint8_t* srcBytes, int srcW, int srcH, int channels,
+                           uint8_t* dstBytes, int dstW, int dstH)
+{
+    const T* src = reinterpret_cast<const T*>(srcBytes);
+    T* dst = reinterpret_cast<T*>(dstBytes);
+    const int factorX = srcW / dstW;
+    const int factorY = srcH / dstH;
+    if (factorX <= 0 || factorY <= 0) return;
+    const Accum factor = static_cast<Accum>(factorX) * static_cast<Accum>(factorY);
+    const Accum halfFactor = factor / 2;
+    constexpr int kMaxChannels = 16;
+    Accum sum[kMaxChannels];
+    for (int y = 0; y < dstH; ++y) {
+        for (int x = 0; x < dstW; ++x) {
+            for (int c = 0; c < channels; ++c) sum[c] = Accum{0};
+            const int sy0 = y * factorY;
+            const int sx0 = x * factorX;
+            for (int dy = 0; dy < factorY; ++dy) {
+                const T* row = src + (static_cast<size_t>(sy0 + dy) * srcW + sx0) * channels;
+                for (int dx = 0; dx < factorX; ++dx) {
+                    const T* px = row + dx * channels;
+                    for (int c = 0; c < channels; ++c) {
+                        sum[c] += static_cast<Accum>(px[c]);
+                    }
+                }
+            }
+            T* dstPx = dst + (static_cast<size_t>(y) * dstW + x) * channels;
+            for (int c = 0; c < channels; ++c) {
+                if constexpr (std::is_integral_v<Accum>) {
+                    dstPx[c] = static_cast<T>((sum[c] + halfFactor) / factor);
+                } else {
+                    dstPx[c] = static_cast<T>(sum[c] / factor);
+                }
+            }
+        }
+    }
+}
+
+bool downsampleByDataType(const uint8_t* src, int srcW, int srcH,
+                          slideio::viewer::core::DataType dataType, int channels,
+                          uint8_t* dst, int dstW, int dstH)
+{
+    using DT = slideio::viewer::core::DataType;
+    if (channels > 16) return false;  // sum[] is sized for up to 16 channels
+    switch (dataType) {
+    case DT::Byte:    downsampleBoxAverageT<uint8_t,  uint32_t>(src, srcW, srcH, channels, dst, dstW, dstH); return true;
+    case DT::Int8:    downsampleBoxAverageT<int8_t,   int32_t> (src, srcW, srcH, channels, dst, dstW, dstH); return true;
+    case DT::UInt16:  downsampleBoxAverageT<uint16_t, uint64_t>(src, srcW, srcH, channels, dst, dstW, dstH); return true;
+    case DT::Int16:   downsampleBoxAverageT<int16_t,  int64_t> (src, srcW, srcH, channels, dst, dstW, dstH); return true;
+    case DT::UInt32:  downsampleBoxAverageT<uint32_t, uint64_t>(src, srcW, srcH, channels, dst, dstW, dstH); return true;
+    case DT::Int32:   downsampleBoxAverageT<int32_t,  int64_t> (src, srcW, srcH, channels, dst, dstW, dstH); return true;
+    case DT::Float32: downsampleBoxAverageT<float,    double>  (src, srcW, srcH, channels, dst, dstW, dstH); return true;
+    case DT::Float64: downsampleBoxAverageT<double,   double>  (src, srcW, srcH, channels, dst, dstW, dstH); return true;
+    default:
+        return false;
+    }
 }
 
 } // anonymous namespace
@@ -609,6 +678,37 @@ std::vector<core::LevelInfo> SlideIOAdapter::levels() const
     return m_levels;
 }
 
+bool SlideIOAdapter::isLevelUnreliable(int level) const
+{
+    std::lock_guard<std::mutex> lock(m_unreliableLevelsMutex);
+    return m_unreliableLevels.count(level) > 0;
+}
+
+bool SlideIOAdapter::markLevelUnreliable(int level)
+{
+    bool firstTime = false;
+    {
+        std::lock_guard<std::mutex> lock(m_unreliableLevelsMutex);
+        firstTime = m_unreliableLevels.insert(level).second;
+    }
+    if (firstTime) {
+        spdlog::warn("SlideIOAdapter: level {} marked unreliable; will route reads through finer levels", level);
+        if (m_onLevelMarkedUnreliable) {
+            try {
+                m_onLevelMarkedUnreliable(level);
+            } catch (const std::exception& ex) {
+                spdlog::warn("SlideIOAdapter: onLevelMarkedUnreliable callback threw: {}", ex.what());
+            }
+        }
+    }
+    return firstTime;
+}
+
+void SlideIOAdapter::setOnLevelMarkedUnreliable(std::function<void(int)> callback)
+{
+    m_onLevelMarkedUnreliable = std::move(callback);
+}
+
 core::TileData SlideIOAdapter::readTile(const core::TileKey& key)
 {
     int level = key.level();
@@ -628,71 +728,160 @@ core::TileData SlideIOAdapter::readTile(const core::TileKey& key)
         return core::TileData::createError(lvl.tileWidth, lvl.tileHeight);
     }
 
-    try {
-        // Compute the pixel rectangle in level coordinates
-        int tileX = col * lvl.tileWidth;
-        int tileY = row * lvl.tileHeight;
-        int tileW = std::min(lvl.tileWidth, lvl.width - tileX);
-        int tileH = std::min(lvl.tileHeight, lvl.height - tileY);
+    // Compute the pixel rectangle in level coordinates
+    int tileX = col * lvl.tileWidth;
+    int tileY = row * lvl.tileHeight;
+    int tileW = std::min(lvl.tileWidth, lvl.width - tileX);
+    int tileH = std::min(lvl.tileHeight, lvl.height - tileY);
 
-        if (tileW <= 0 || tileH <= 0) {
-            spdlog::error("SlideIOAdapter::readTile: computed tile dimensions {}x{} invalid", tileW, tileH);
-            return core::TileData::createError(lvl.tileWidth, lvl.tileHeight);
-        }
-
-        // Convert level-coordinate rect to slide-coordinate rect.
-        // lvl.scale = level_pixels / slide_pixels, so slide_coord = level_coord / scale.
-        double invScale = (lvl.scale > 0.0) ? (1.0 / lvl.scale) : 1.0;
-        int slideX = static_cast<int>(std::round(tileX * invScale));
-        int slideY = static_cast<int>(std::round(tileY * invScale));
-        int slideRight = static_cast<int>(std::round((tileX + tileW) * invScale));
-        int slideBottom = static_cast<int>(std::round((tileY + tileH) * invScale));
-        int slideW = slideRight - slideX;
-        int slideH = slideBottom - slideY;
-
-        // Clamp to slide bounds
-        slideW = std::min(slideW, m_slideInfo.width - slideX);
-        slideH = std::min(slideH, m_slideInfo.height - slideY);
-
-        if (slideW <= 0 || slideH <= 0) {
-            spdlog::error("SlideIOAdapter::readTile: slide rect {}x{} invalid after clamping", slideW, slideH);
-            return core::TileData::createError(tileW, tileH);
-        }
-
-        std::tuple<int, int, int, int> blockRect(slideX, slideY, slideW, slideH);
-        std::tuple<int, int> blockSize(tileW, tileH);
-
-        // Build channel index vector for all channels
-        int numChannels = m_slideInfo.numChannels;
-        std::vector<int> channels(static_cast<size_t>(numChannels));
-        for (int ch = 0; ch < numChannels; ++ch) {
-            channels[static_cast<size_t>(ch)] = ch;
-        }
-
-        size_t pixelBytes = core::dataTypeSize(m_slideInfo.channelDataType);
-        size_t bufSize = static_cast<size_t>(tileW) * static_cast<size_t>(tileH)
-                         * static_cast<size_t>(numChannels) * pixelBytes;
-
-        std::vector<uint8_t> buffer(bufSize);
-
-        int zIdx = key.zIndex();
-        int tIdx = key.tFrame();
-        if (m_slideInfo.numZSlices > 1 || m_slideInfo.numTFrames > 1) {
-            // Use 4D reading for slides with Z-slices or time frames
-            std::tuple<int, int> zRange(zIdx, zIdx + 1);
-            std::tuple<int, int> tRange(tIdx, tIdx + 1);
-            m_scene->readResampled4DBlockChannels(blockRect, blockSize, channels,
-                                                   zRange, tRange, buffer.data(), bufSize);
-        } else {
-            m_scene->readResampledBlockChannels(blockRect, blockSize, channels, buffer.data(), bufSize);
-        }
-
-        return core::TileData(std::move(buffer), tileW, tileH, numChannels, m_slideInfo.channelDataType);
-    }
-    catch (const std::exception& ex) {
-        spdlog::error("SlideIOAdapter::readTile: exception reading tile {}: {}", key.toString(), ex.what());
+    if (tileW <= 0 || tileH <= 0) {
+        spdlog::error("SlideIOAdapter::readTile: computed tile dimensions {}x{} invalid", tileW, tileH);
         return core::TileData::createError(lvl.tileWidth, lvl.tileHeight);
     }
+
+    // Convert level-coordinate rect to slide-coordinate rect.
+    // lvl.scale = level_pixels / slide_pixels, so slide_coord = level_coord / scale.
+    double invScale = (lvl.scale > 0.0) ? (1.0 / lvl.scale) : 1.0;
+    int slideX = static_cast<int>(std::round(tileX * invScale));
+    int slideY = static_cast<int>(std::round(tileY * invScale));
+    int slideRight = static_cast<int>(std::round((tileX + tileW) * invScale));
+    int slideBottom = static_cast<int>(std::round((tileY + tileH) * invScale));
+    int slideW = slideRight - slideX;
+    int slideH = slideBottom - slideY;
+
+    // Clamp to slide bounds
+    slideW = std::min(slideW, m_slideInfo.width - slideX);
+    slideH = std::min(slideH, m_slideInfo.height - slideY);
+
+    if (slideW <= 0 || slideH <= 0) {
+        spdlog::error("SlideIOAdapter::readTile: slide rect {}x{} invalid after clamping", slideW, slideH);
+        return core::TileData::createError(tileW, tileH);
+    }
+
+    std::tuple<int, int, int, int> blockRect(slideX, slideY, slideW, slideH);
+
+    int numChannels = m_slideInfo.numChannels;
+    std::vector<int> channels(static_cast<size_t>(numChannels));
+    for (int ch = 0; ch < numChannels; ++ch) {
+        channels[static_cast<size_t>(ch)] = ch;
+    }
+    size_t pixelBytes = core::dataTypeSize(m_slideInfo.channelDataType);
+
+    // Some SVS files have a corrupt tile-offset table at one pyramid level: a
+    // single tile read throws (TiffTools error), and other "successful" reads
+    // at the same level return data shifted from a wrong file offset. Aperio
+    // ImageScope shows the artifact as-is; QuPath bypasses the broken level by
+    // reading from a finer level and downsampling. We do the same: when a
+    // level is known unreliable, ask SlideIO for the same slide region at an
+    // N× larger output, which forces it to read from a finer level. Then we
+    // box-filter down to the requested tile size.
+    //
+    // The initial multiplier targets the next reliable finer level by actual
+    // scale ratio (not just *2), so on a 4×-step pyramid we go straight from
+    // 1× to 4× instead of wasting an exception-throw at 2× that still resolves
+    // to the broken level.
+    int maxMultiplier = std::max(1, static_cast<int>(std::round(invScale)));
+    int multiplier = 1;
+    if (isLevelUnreliable(level)) {
+        int targetLevel = level - 1;
+        while (targetLevel >= 0 && isLevelUnreliable(targetLevel)) --targetLevel;
+        if (targetLevel < 0) {
+            return core::TileData::createError(tileW, tileH);
+        }
+        double targetScale = m_levels[static_cast<size_t>(targetLevel)].scale;
+        double currentScale = lvl.scale;
+        if (currentScale > 0.0) {
+            multiplier = std::max(2, static_cast<int>(std::ceil(targetScale / currentScale)));
+        } else {
+            multiplier = 2;
+        }
+    }
+
+    while (multiplier <= maxMultiplier) {
+        int srcW = tileW * multiplier;
+        int srcH = tileH * multiplier;
+        srcW = std::min(srcW, slideW);
+        srcH = std::min(srcH, slideH);
+        // Re-derive to keep an integer factor for the downsample step.
+        int factorX = std::max(1, srcW / tileW);
+        int factorY = std::max(1, srcH / tileH);
+        srcW = factorX * tileW;
+        srcH = factorY * tileH;
+
+        std::tuple<int, int> srcBlockSize(srcW, srcH);
+        size_t srcBufSize = static_cast<size_t>(srcW) * static_cast<size_t>(srcH)
+                          * static_cast<size_t>(numChannels) * pixelBytes;
+        std::vector<uint8_t> srcBuffer(srcBufSize);
+
+        try {
+            int zIdx = key.zIndex();
+            int tIdx = key.tFrame();
+            if (m_slideInfo.numZSlices > 1 || m_slideInfo.numTFrames > 1) {
+                std::tuple<int, int> zRange(zIdx, zIdx + 1);
+                std::tuple<int, int> tRange(tIdx, tIdx + 1);
+                m_scene->readResampled4DBlockChannels(blockRect, srcBlockSize, channels,
+                                                      zRange, tRange, srcBuffer.data(), srcBufSize);
+            } else {
+                m_scene->readResampledBlockChannels(blockRect, srcBlockSize, channels,
+                                                     srcBuffer.data(), srcBufSize);
+            }
+        } catch (const std::exception& ex) {
+            spdlog::error("SlideIOAdapter::readTile: exception reading tile {} (multiplier={}): {}",
+                          key.toString(), multiplier, ex.what());
+            // Figure out which level SlideIO most likely used for this read, so
+            // we can mark that level (not just the requested one) unreliable.
+            double effectiveScale = static_cast<double>(multiplier) * lvl.scale;
+            int suspectLevel = level;
+            double bestDelta = std::numeric_limits<double>::infinity();
+            for (size_t i = 0; i < m_levels.size(); ++i) {
+                double delta = std::abs(m_levels[i].scale - effectiveScale);
+                if (delta < bestDelta) {
+                    bestDelta = delta;
+                    suspectLevel = static_cast<int>(i);
+                }
+            }
+            markLevelUnreliable(suspectLevel);
+            // Jump straight to the next reliable finer level by scale ratio,
+            // not just *2 (avoids re-throwing on irregular pyramid steps).
+            int targetLevel = suspectLevel - 1;
+            while (targetLevel >= 0 && isLevelUnreliable(targetLevel)) --targetLevel;
+            if (targetLevel < 0) {
+                return core::TileData::createError(tileW, tileH);
+            }
+            double targetScale = m_levels[static_cast<size_t>(targetLevel)].scale;
+            if (lvl.scale > 0.0) {
+                int nextMultiplier = std::max(multiplier + 1,
+                    static_cast<int>(std::ceil(targetScale / lvl.scale)));
+                multiplier = nextMultiplier;
+            } else {
+                multiplier *= 2;
+            }
+            continue;
+        }
+
+        if (multiplier == 1 && factorX == 1 && factorY == 1) {
+            return core::TileData(std::move(srcBuffer), tileW, tileH, numChannels,
+                                  m_slideInfo.channelDataType);
+        }
+
+        size_t dstBufSize = static_cast<size_t>(tileW) * static_cast<size_t>(tileH)
+                          * static_cast<size_t>(numChannels) * pixelBytes;
+        std::vector<uint8_t> dstBuffer(dstBufSize);
+        if (!downsampleByDataType(srcBuffer.data(), srcW, srcH,
+                                  m_slideInfo.channelDataType, numChannels,
+                                  dstBuffer.data(), tileW, tileH)) {
+            spdlog::error("SlideIOAdapter::readTile: unsupported data type for downsample fallback");
+            return core::TileData::createError(tileW, tileH);
+        }
+        if (multiplier > 1) {
+            spdlog::debug("SlideIOAdapter::readTile: tile {} satisfied via finer-level fallback (multiplier={})",
+                          key.toString(), multiplier);
+        }
+        return core::TileData(std::move(dstBuffer), tileW, tileH, numChannels,
+                              m_slideInfo.channelDataType);
+    }
+
+    return core::TileData::createError(tileW, tileH);
 }
 
 std::vector<std::string> SlideIOAdapter::availableDriverIds()

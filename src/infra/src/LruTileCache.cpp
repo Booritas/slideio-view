@@ -84,6 +84,32 @@ void LruTileCache::evict(const core::TileKey& key)
     spdlog::trace("LruTileCache: evicted {} ({} bytes), total {} bytes", key.toString(), entryBytes, m_currentBytes);
 }
 
+size_t LruTileCache::evictLevel(int level)
+{
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
+
+    size_t evicted = 0;
+    size_t freedBytes = 0;
+    for (auto it = m_lruList.begin(); it != m_lruList.end(); ) {
+        if (it->first.level() == level) {
+            size_t entryBytes = it->second->byteSize();
+            m_map.erase(it->first);
+            m_currentBytes -= entryBytes;
+            freedBytes += entryBytes;
+            it = m_lruList.erase(it);
+            ++evicted;
+        } else {
+            ++it;
+        }
+    }
+
+    if (evicted > 0) {
+        spdlog::info("LruTileCache: evicted {} entries at level {} ({} bytes)",
+                     evicted, level, freedBytes);
+    }
+    return evicted;
+}
+
 void LruTileCache::clear()
 {
     std::unique_lock<std::shared_mutex> lock(m_mutex);
