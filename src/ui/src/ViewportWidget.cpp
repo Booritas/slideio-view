@@ -445,6 +445,104 @@ QImage tileDataToQImage(const slideio::viewer::core::TileData& block, int slideN
     return out;
 }
 
+// Fallback used when readBlock fails (e.g., a single corrupted tile at the
+// pyramid level SlideIO picked taints the whole resampled read). Walks the
+// coarsest level tile-by-tile through the source, skipping individual tile
+// failures, assembles the survivors at coarse-level dimensions, and scales
+// down to (targetW, targetH). Returns null if the level is unusable or no
+// tile could be read.
+QImage buildCoarseLevelThumbnailFallback(slideio::viewer::core::ISlideSource& source,
+                                          int slideNumChannels,
+                                          int targetW, int targetH)
+{
+    namespace core = slideio::viewer::core;
+    auto levels = source.levels();
+    if (levels.empty()) return {};
+    const int coarsestLevel = static_cast<int>(levels.size()) - 1;
+    const auto& lvl = levels[static_cast<size_t>(coarsestLevel)];
+    if (lvl.width <= 0 || lvl.height <= 0
+        || lvl.tileWidth <= 0 || lvl.tileHeight <= 0) return {};
+
+    const int tilesX = lvl.tilesX > 0 ? lvl.tilesX
+                                      : (lvl.width + lvl.tileWidth - 1) / lvl.tileWidth;
+    const int tilesY = lvl.tilesY > 0 ? lvl.tilesY
+                                      : (lvl.height + lvl.tileHeight - 1) / lvl.tileHeight;
+
+    std::vector<core::TileData> tiles;
+    tiles.reserve(static_cast<size_t>(tilesX) * static_cast<size_t>(tilesY));
+    DataType dt = DataType::None;
+    int srcCh = 0;
+    int validTiles = 0;
+    for (int r = 0; r < tilesY; ++r) {
+        for (int c = 0; c < tilesX; ++c) {
+            core::TileKey key(coarsestLevel, c, r);
+            auto td = source.readTile(key);
+            if (!td.isEmpty() && !td.isError()) {
+                if (dt == DataType::None) dt = td.dataType();
+                if (srcCh == 0) srcCh = td.numChannels();
+                ++validTiles;
+            }
+            tiles.push_back(std::move(td));
+        }
+    }
+    if (validTiles == 0 || srcCh <= 0) return {};
+
+    const bool useRGB = slideNumChannels >= 3 && srcCh >= 3;
+
+    double rMin = std::numeric_limits<double>::max();
+    double rMax = std::numeric_limits<double>::lowest();
+    double gMin = rMin, gMax = rMax;
+    double bMin = rMin, bMax = rMax;
+    double mn = rMin, mx = rMax;
+    for (const auto& td : tiles) {
+        if (td.isEmpty() || td.isError()) continue;
+        size_t pixelCount = static_cast<size_t>(td.width()) * static_cast<size_t>(td.height());
+        if (useRGB) {
+            computeMinMaxStrided(td.buffer().data(), pixelCount, srcCh, 0, dt, rMin, rMax);
+            computeMinMaxStrided(td.buffer().data(), pixelCount, srcCh, 1, dt, gMin, gMax);
+            computeMinMaxStrided(td.buffer().data(), pixelCount, srcCh, 2, dt, bMin, bMax);
+        } else {
+            computeMinMaxStrided(td.buffer().data(), pixelCount, srcCh, 0, dt, mn, mx);
+        }
+    }
+
+    QImage::Format imgFmt = useRGB ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
+    QImage levelImg(lvl.width, lvl.height, imgFmt);
+    levelImg.fill(Qt::white);
+
+    int tileIdx = 0;
+    for (int r = 0; r < tilesY; ++r) {
+        for (int c = 0; c < tilesX; ++c) {
+            const auto& td = tiles[static_cast<size_t>(tileIdx++)];
+            if (td.isEmpty() || td.isError()) continue;
+            const int tw = td.width();
+            const int th = td.height();
+            const int tileX0 = c * lvl.tileWidth;
+            const int tileY0 = r * lvl.tileHeight;
+            const uint8_t* src = td.buffer().data();
+            for (int y = 0; y < th && (tileY0 + y) < lvl.height; ++y) {
+                uint8_t* dst = levelImg.scanLine(tileY0 + y);
+                for (int x = 0; x < tw && (tileX0 + x) < lvl.width; ++x) {
+                    size_t srcElem = static_cast<size_t>((y * tw + x) * srcCh);
+                    if (useRGB) {
+                        int dstIdx = (tileX0 + x) * 3;
+                        dst[dstIdx + 0] = mapPixelToUint8(src, srcElem + 0, dt, rMin, rMax);
+                        dst[dstIdx + 1] = mapPixelToUint8(src, srcElem + 1, dt, gMin, gMax);
+                        dst[dstIdx + 2] = mapPixelToUint8(src, srcElem + 2, dt, bMin, bMax);
+                    } else {
+                        dst[tileX0 + x] = mapPixelToUint8(src, srcElem, dt, mn, mx);
+                    }
+                }
+            }
+        }
+    }
+
+    if (targetW > 0 && targetH > 0 && (targetW != lvl.width || targetH != lvl.height)) {
+        return levelImg.scaled(targetW, targetH, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+    return levelImg;
+}
+
 // Read the coarsest pyramid level synchronously: detect global and per-channel
 // display ranges, build a thumbnail QImage, and insert the tiles into the
 // cache so the very first paint has a base layer to show. Throws on errors;
@@ -1358,9 +1456,18 @@ void ViewportWidget::generateSceneThumbnails()
 
             auto blockData = tempAdapter.readBlock(0, 0, tempInfo.width, tempInfo.height,
                                                     thumbW, thumbH);
-            if (blockData.isEmpty() || blockData.isError()) continue;
-
-            QImage thumb = tileDataToQImage(blockData, numCh);
+            QImage thumb;
+            if (!blockData.isEmpty() && !blockData.isError()) {
+                thumb = tileDataToQImage(blockData, numCh);
+            }
+            if (thumb.isNull()) {
+                // SlideIO's resampled read failed (often a single corrupted
+                // tile at the chosen pyramid level taints the whole call).
+                // Fall back to assembling the coarsest level tile-by-tile.
+                spdlog::info("generateSceneThumbnails: scene {} readBlock failed; "
+                             "falling back to coarse-tile assembly", sceneInfo.index);
+                thumb = buildCoarseLevelThumbnailFallback(tempAdapter, numCh, thumbW, thumbH);
+            }
             if (thumb.isNull()) continue;
 
             emit sceneThumbnailReady(sceneInfo.index, false, sceneInfo.name, thumb.copy());
@@ -1407,9 +1514,15 @@ void ViewportWidget::generateAuxImageThumbnails()
 
             auto blockData = tempAdapter.readBlock(0, 0, tempInfo.width, tempInfo.height,
                                                     thumbW, thumbH);
-            if (blockData.isEmpty() || blockData.isError()) continue;
-
-            QImage thumb = tileDataToQImage(blockData, numCh);
+            QImage thumb;
+            if (!blockData.isEmpty() && !blockData.isError()) {
+                thumb = tileDataToQImage(blockData, numCh);
+            }
+            if (thumb.isNull()) {
+                spdlog::info("generateAuxImageThumbnails: aux '{}' readBlock failed; "
+                             "falling back to coarse-tile assembly", auxName);
+                thumb = buildCoarseLevelThumbnailFallback(tempAdapter, numCh, thumbW, thumbH);
+            }
             if (thumb.isNull()) continue;
 
             // Aux images don't have a scene index; use -1 and identify by name.
