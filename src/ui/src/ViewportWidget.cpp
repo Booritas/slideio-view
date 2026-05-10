@@ -1949,8 +1949,12 @@ void ViewportWidget::paintGL()
     int fbHeight = static_cast<int>(height() * devicePixelRatioF());
     m_impl->gl->glViewport(0, 0, fbWidth, fbHeight);
 
-    // Set clear color: black for multi-channel (additive blending), gray for single-channel
-    if (m_impl->slideOpen && m_impl->slideInfo.numChannels > 1) {
+    // Set clear color: white for brightfield (matches slide glass, so a failed
+    // tile reads as background instead of a stark black hole), black for
+    // fluorescence (additive blending neutral), gray when no slide is open.
+    if (m_impl->slideOpen && m_impl->slideInfo.isBrightfield) {
+        m_impl->gl->glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+    } else if (m_impl->slideOpen && m_impl->slideInfo.numChannels > 1) {
         m_impl->gl->glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     } else {
         m_impl->gl->glClearColor(0.251f, 0.251f, 0.251f, 1.0f);
@@ -2064,6 +2068,11 @@ void ViewportWidget::paintGL()
                 if (tileData && !tileData->isEmpty() && !tileData->isError()) {
                     texId = m_impl->uploadTileTexture(*tileData);
                     m_impl->textures[key] = texId;
+                } else if (tileData && tileData->isError()) {
+                    // Permanent read failure: don't retry, don't trigger
+                    // the tilesSkipped repaint storm. Region falls through
+                    // to the clear color (white for brightfield).
+                    continue;
                 } else {
                     ++tilesSkipped;
                     continue;
@@ -2228,8 +2237,14 @@ void ViewportWidget::paintGL()
             auto texIt = m_impl->fluorescenceTextures.find(key);
             if (texIt == m_impl->fluorescenceTextures.end()) {
                 auto tileData = m_impl->tileCache->lookup(key);
-                if (!tileData || tileData->isEmpty() || tileData->isError()) {
+                if (!tileData || tileData->isEmpty()) {
                     ++tilesSkipped;
+                    continue;
+                }
+                if (tileData->isError()) {
+                    // Permanent read failure: don't retry, don't trigger
+                    // the tilesSkipped repaint storm. Region falls through
+                    // to the clear color (white for brightfield).
                     continue;
                 }
                 m_impl->fluorescenceTextures[key] = m_impl->uploadTileChannelTextures(*tileData);
