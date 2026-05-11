@@ -56,13 +56,27 @@ add_executable(slideio-viewer WIN32 MACOSX_BUNDLE ${_executable_sources})
 target_link_libraries(slideio-viewer PRIVATE slideio-viewer-ui spdlog::spdlog)
 
 if(APPLE)
-    # Dev-only: keep link-time dylib directories (conan cache, SlideIO install/lib)
-    # in the installed binary's rpath, and add SlideIO install/bin where transitive
-    # deps like libglog.*.dylib live. For a distributable build, copy dylibs/frameworks
-    # into .app/Contents/Frameworks and rewrite install names instead.
+    # Self-contained bundle: dependent dylibs/frameworks are copied into
+    # Contents/Frameworks/ at install time, located at runtime via
+    # @executable_path/../Frameworks. macdeployqt handles Qt + plugins;
+    # BundleUtilities::fixup_bundle handles SlideIO and transitive deps.
     set_target_properties(slideio-viewer PROPERTIES
-        INSTALL_RPATH_USE_LINK_PATH TRUE
-        INSTALL_RPATH "$<IF:$<CONFIG:Debug>,${SLIDEIO_ROOT}/debug/bin,${SLIDEIO_ROOT}/release/bin>")
+        INSTALL_RPATH "@executable_path/../Frameworks")
+
+    if(TARGET Qt6::qmake)
+        get_target_property(_qmake_loc Qt6::qmake IMPORTED_LOCATION)
+        get_filename_component(_qt_bin_dir "${_qmake_loc}" DIRECTORY)
+        find_program(MACDEPLOYQT_EXECUTABLE
+            NAMES macdeployqt
+            PATHS "${_qt_bin_dir}"
+            NO_DEFAULT_PATH)
+    endif()
+    if(NOT MACDEPLOYQT_EXECUTABLE)
+        find_program(MACDEPLOYQT_EXECUTABLE NAMES macdeployqt)
+    endif()
+    if(NOT MACDEPLOYQT_EXECUTABLE)
+        message(WARNING "macdeployqt not found; Qt will not be embedded in the bundle")
+    endif()
 endif()
 
 if(APPLE AND EXISTS "${_app_icon_icns_path}")
@@ -204,6 +218,15 @@ if(_qt_release_bin_dir OR _qt_debug_bin_dir)
         file(WRITE "${CMAKE_INSTALL_PREFIX}/${_config_lower}/bin/qt.conf"
             "[Paths]\nPlugins=../plugins\n")
     ]])
+endif()
+
+# macOS: bundle Qt + SlideIO into the .app so it runs on a machine without
+# conan or SlideIO installed. macdeployqt handles Qt frameworks/plugins;
+# BundleUtilities::fixup_bundle walks the rest of the dependency graph.
+if(APPLE)
+    install(CODE "set(MACDEPLOYQT_EXECUTABLE \"${MACDEPLOYQT_EXECUTABLE}\")")
+    install(CODE "set(SLIDEIO_ROOT \"${SLIDEIO_ROOT}\")")
+    install(SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/DeployMacOSBundle.cmake")
 endif()
 
 # ── Packaging (CPack) ──────────────────────────────────────────────────────────
