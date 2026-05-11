@@ -175,6 +175,7 @@ struct SlideInfo
     std::vector<LevelInfo> levels;
     MetadataNode slideMetadata;   // populated from slideio::Slide::getMetadata()
     MetadataNode sceneMetadata;   // populated from slideio::Scene::getMetadata()
+    MetadataNode channelMetadata; // populated from slideio::Scene::getChannelAttributes()
 };
 
 template<typename T>

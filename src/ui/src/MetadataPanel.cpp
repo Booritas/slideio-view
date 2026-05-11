@@ -137,6 +137,7 @@ void MetadataPanel::setSlideInfo(const core::SlideInfo& info)
     m_impl->tree->clear();
     addRootNode(m_impl->tree, QStringLiteral("Slide"), info.slideMetadata);
     addRootNode(m_impl->tree, QStringLiteral("Scene"), info.sceneMetadata);
+    addRootNode(m_impl->tree, QStringLiteral("Channels"), info.channelMetadata);
 }
 
 } // namespace slideio::viewer::ui
