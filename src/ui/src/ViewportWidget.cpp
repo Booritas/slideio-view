@@ -324,8 +324,10 @@ void scanMinMaxStrided(const uint8_t* data, size_t pixelCount, int numChannels, 
     const T* typed = reinterpret_cast<const T*>(data);
     T minVal = typed[channelIndex];
     T maxVal = typed[channelIndex];
+    const size_t numChannels_z = static_cast<size_t>(numChannels);
+    const size_t channelIndex_z = static_cast<size_t>(channelIndex);
     for (size_t p = 1; p < pixelCount; ++p) {
-        T v = typed[p * numChannels + channelIndex];
+        T v = typed[p * numChannels_z + channelIndex_z];
         if (v < minVal) minVal = v;
         if (v > maxVal) maxVal = v;
     }
@@ -607,22 +609,25 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
 
     // Per-channel min/max for multi-channel slides
     if (numCh > 1) {
-        std::vector<double> channelMin(numCh, std::numeric_limits<double>::max());
-        std::vector<double> channelMax(numCh, std::numeric_limits<double>::lowest());
+        std::vector<double> channelMin(static_cast<size_t>(numCh), std::numeric_limits<double>::max());
+        std::vector<double> channelMax(static_cast<size_t>(numCh), std::numeric_limits<double>::lowest());
         for (const auto& tileData : coarseTiles) {
             if (tileData.isEmpty() || tileData.isError()) continue;
-            size_t pixelCount = static_cast<size_t>(tileData.width()) * tileData.height();
+            size_t pixelCount = static_cast<size_t>(tileData.width())
+                              * static_cast<size_t>(tileData.height());
             for (int ch = 0; ch < numCh; ++ch) {
+                const size_t ch_z = static_cast<size_t>(ch);
                 computeMinMaxStrided(tileData.buffer().data(), pixelCount,
-                                     numCh, ch, dt, channelMin[ch], channelMax[ch]);
+                                     numCh, ch, dt, channelMin[ch_z], channelMax[ch_z]);
             }
         }
         for (int ch = 0; ch < numCh; ++ch) {
+            const size_t ch_z = static_cast<size_t>(ch);
             if (ch < static_cast<int>(slideInfo.channels.size())) {
-                if (channelMin[ch] < channelMax[ch]) {
-                    slideInfo.channels[ch].displayRange.displayMin = channelMin[ch];
-                    slideInfo.channels[ch].displayRange.displayMax = channelMax[ch];
-                    slideInfo.channels[ch].displayRange.autoDetected = true;
+                if (channelMin[ch_z] < channelMax[ch_z]) {
+                    slideInfo.channels[ch_z].displayRange.displayMin = channelMin[ch_z];
+                    slideInfo.channels[ch_z].displayRange.displayMax = channelMax[ch_z];
+                    slideInfo.channels[ch_z].displayRange.autoDetected = true;
                 }
             }
         }
@@ -634,16 +639,18 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
     // range for single-channel rendering or when per-channel ranges weren't
     // detected.
     auto channelMinFor = [&](int ch) {
+        const size_t ch_z = static_cast<size_t>(ch);
         if (numCh > 1 && ch < static_cast<int>(slideInfo.channels.size())
-            && slideInfo.channels[ch].displayRange.autoDetected) {
-            return slideInfo.channels[ch].displayRange.displayMin;
+            && slideInfo.channels[ch_z].displayRange.autoDetected) {
+            return slideInfo.channels[ch_z].displayRange.displayMin;
         }
         return globalMin;
     };
     auto channelMaxFor = [&](int ch) {
+        const size_t ch_z = static_cast<size_t>(ch);
         if (numCh > 1 && ch < static_cast<int>(slideInfo.channels.size())
-            && slideInfo.channels[ch].displayRange.autoDetected) {
-            return slideInfo.channels[ch].displayRange.displayMax;
+            && slideInfo.channels[ch_z].displayRange.autoDetected) {
+            return slideInfo.channels[ch_z].displayRange.displayMax;
         }
         return globalMax;
     };
@@ -956,7 +963,9 @@ struct ViewportWidget::Impl
         gl->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
         if (glFmt.requiresCpuConversion) {
-            size_t pixelCount = static_cast<size_t>(tile.width()) * tile.height() * channels;
+            size_t pixelCount = static_cast<size_t>(tile.width())
+                              * static_cast<size_t>(tile.height())
+                              * static_cast<size_t>(channels);
             auto converted = convertBufferToFloat32(tile.buffer().data(), pixelCount, tile.dataType());
             gl->glTexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(glFmt.internalFormat),
                              tile.width(), tile.height(), 0, glFmt.format, glFmt.type,
@@ -993,7 +1002,8 @@ struct ViewportWidget::Impl
     {
         TileTextures result;
         int numChannels = tile.numChannels();
-        size_t pixelCount = static_cast<size_t>(tile.width()) * tile.height();
+        size_t pixelCount = static_cast<size_t>(tile.width())
+                          * static_cast<size_t>(tile.height());
         size_t bytesPerElement = core::dataTypeSize(tile.dataType());
         auto glFmt = glTextureFormatForDataType(tile.dataType(), 1);
 
@@ -1012,8 +1022,10 @@ struct ViewportWidget::Impl
             // Extract single-channel data from interleaved buffer
             std::vector<uint8_t> channelData(pixelCount * bytesPerElement);
             const uint8_t* src = tile.buffer().data();
+            const size_t numChannels_z = static_cast<size_t>(numChannels);
+            const size_t ch_z = static_cast<size_t>(ch);
             for (size_t p = 0; p < pixelCount; ++p) {
-                const uint8_t* srcElem = src + (p * numChannels + ch) * bytesPerElement;
+                const uint8_t* srcElem = src + (p * numChannels_z + ch_z) * bytesPerElement;
                 uint8_t* dstElem = channelData.data() + p * bytesPerElement;
                 std::memcpy(dstElem, srcElem, bytesPerElement);
             }
@@ -1411,7 +1423,7 @@ void ViewportWidget::openSlide(const std::string& filePath, const std::string& d
     const uint64_t opId = ++m_impl->openOpId;
 
     QString displayName = QString::fromStdString(filePath);
-    int slash = std::max(displayName.lastIndexOf('/'), displayName.lastIndexOf('\\'));
+    const auto slash = std::max(displayName.lastIndexOf('/'), displayName.lastIndexOf('\\'));
     if (slash >= 0) displayName = displayName.mid(slash + 1);
     emit loadingStarted(displayName);
 
@@ -1614,7 +1626,7 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
     const uint64_t opId = ++m_impl->openOpId;
 
     QString displayName = QString::fromStdString(filePath);
-    int slash = std::max(displayName.lastIndexOf('/'), displayName.lastIndexOf('\\'));
+    const auto slash = std::max(displayName.lastIndexOf('/'), displayName.lastIndexOf('\\'));
     if (slash >= 0) displayName = displayName.mid(slash + 1);
     if (sceneIndex > 0) displayName += QStringLiteral(" (scene %1)").arg(sceneIndex);
     emit loadingStarted(displayName);
@@ -1673,7 +1685,7 @@ void ViewportWidget::openAuxImage(const std::string& filePath, const std::string
     const uint64_t opId = ++m_impl->openOpId;
 
     QString displayName = QString::fromStdString(filePath);
-    int slash = std::max(displayName.lastIndexOf('/'), displayName.lastIndexOf('\\'));
+    const auto slash = std::max(displayName.lastIndexOf('/'), displayName.lastIndexOf('\\'));
     if (slash >= 0) displayName = displayName.mid(slash + 1);
     displayName += QStringLiteral(" (%1)").arg(QString::fromStdString(auxImageName));
     emit loadingStarted(displayName);
