@@ -20,6 +20,72 @@
 namespace
 {
 
+// Parse a channel "Color" attribute string into normalized [0,1] R/G/B floats.
+// Accepts "RRGGBB" or "AARRGGBB" (alpha is leading and is ignored), with or
+// without leading '#', case-insensitive. Returns false (and leaves r/g/b
+// unchanged) for any other form.
+bool parseChannelHexColor(const std::string& hex, float& r, float& g, float& b)
+{
+    const char* p = hex.c_str();
+    size_t n = hex.size();
+    if (n > 0 && p[0] == '#') { ++p; --n; }
+    if (n != 6 && n != 8) return false;
+
+    auto hexDigit = [](char c, int& out) -> bool {
+        if (c >= '0' && c <= '9') { out = c - '0';        return true; }
+        if (c >= 'A' && c <= 'F') { out = c - 'A' + 10;   return true; }
+        if (c >= 'a' && c <= 'f') { out = c - 'a' + 10;   return true; }
+        return false;
+    };
+    auto byteAt = [&](size_t i, int& out) -> bool {
+        int hi, lo;
+        if (!hexDigit(p[i], hi) || !hexDigit(p[i + 1], lo)) return false;
+        out = (hi << 4) | lo;
+        return true;
+    };
+
+    const size_t rOff = (n == 8) ? 2 : 0;  // skip leading AA in AARRGGBB
+    int ri, gi, bi;
+    if (!byteAt(rOff, ri) || !byteAt(rOff + 2, gi) || !byteAt(rOff + 4, bi)) return false;
+
+    r = static_cast<float>(ri) / 255.0f;
+    g = static_cast<float>(gi) / 255.0f;
+    b = static_cast<float>(bi) / 255.0f;
+    return true;
+}
+
+// Override default channel colors with the "Color" attribute from the scene's
+// channel metadata, when present and parseable. SlideIO exposes this via
+// Scene::getChannelAttributes() — an Array of length numChannels(), each entry
+// an Object keyed by attribute name. Drivers (OME-TIFF, CZI) populate "Color"
+// verbatim from the source file; format is typically "#RRGGBB".
+void applyMetadataChannelColors(const ::slideio::Scene& scene,
+                                std::vector<slideio::viewer::core::ChannelInfo>& channels)
+{
+    try {
+        const ::slideio::Metadata& attrs = scene.getChannelAttributes();
+        if (attrs.type() != ::slideio::Metadata::Type::Array) return;
+        const size_t n = std::min(attrs.size(), channels.size());
+        for (size_t ch = 0; ch < n; ++ch) {
+            ::slideio::Metadata chanAttrs = attrs[ch];
+            if (chanAttrs.type() != ::slideio::Metadata::Type::Object) continue;
+            if (!chanAttrs.contains("Color")) continue;
+            const std::string colorStr = chanAttrs["Color"].asString();
+            float r, g, b;
+            if (parseChannelHexColor(colorStr, r, g, b)) {
+                channels[ch].colorR = r;
+                channels[ch].colorG = g;
+                channels[ch].colorB = b;
+            } else if (!colorStr.empty()) {
+                spdlog::debug("SlideIOAdapter: channel {} 'Color' attribute '{}' is not a hex color, keeping default",
+                              ch, colorStr);
+            }
+        }
+    } catch (const std::exception& ex) {
+        spdlog::warn("SlideIOAdapter: getChannelAttributes failed: {}", ex.what());
+    }
+}
+
 slideio::viewer::core::DataType convertSlideIODataType(::slideio::DataType srcType)
 {
     using DT = slideio::viewer::core::DataType;
@@ -153,6 +219,54 @@ slideio::viewer::core::MetadataNode convertMetadata(
     }
 
     return node;
+}
+
+// Build the per-channel attribute subtree shown under "Channels" in the
+// Metadata pane. Wraps Scene::getChannelAttributes() — an Array of length
+// numChannels() where each entry is an Object keyed by attribute name — into
+// our layer-neutral MetadataNode form, labelling each child with the channel
+// name when known. Returns a Null node (rendered as "(no metadata)" by the
+// panel) when no channel has any attribute.
+slideio::viewer::core::MetadataNode buildChannelMetadataNode(
+    const ::slideio::Scene& scene,
+    const std::vector<slideio::viewer::core::ChannelInfo>& channels)
+{
+    using NodeType = slideio::viewer::core::MetadataNode::Type;
+    slideio::viewer::core::MetadataNode root;
+    try {
+        const ::slideio::Metadata& attrs = scene.getChannelAttributes();
+        if (attrs.type() != ::slideio::Metadata::Type::Array || attrs.size() == 0) {
+            return root;  // Null
+        }
+
+        bool anyAttribute = false;
+        for (size_t i = 0; i < attrs.size(); ++i) {
+            if (attrs[i].type() == ::slideio::Metadata::Type::Object && attrs[i].size() > 0) {
+                anyAttribute = true;
+                break;
+            }
+        }
+        if (!anyAttribute) {
+            return root;  // Null
+        }
+
+        root.type = NodeType::Array;
+        const size_t n = attrs.size();
+        root.children.reserve(n);
+        for (size_t i = 0; i < n; ++i) {
+            std::string label;
+            if (i < channels.size() && !channels[i].name.empty()) {
+                label = "Channel " + std::to_string(i) + ": " + channels[i].name;
+            } else {
+                label = "Channel " + std::to_string(i);
+            }
+            root.children.push_back(convertMetadata(attrs[i], label));
+        }
+    } catch (const std::exception& ex) {
+        spdlog::warn("SlideIOAdapter::buildChannelMetadataNode: {}", ex.what());
+        root = {};
+    }
+    return root;
 }
 
 // Box-filter downsample of a packed pixel buffer (rows × cols × channels) by an
@@ -314,6 +428,9 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
         }
     }
 
+    // Override with explicit "Color" attribute from the source file, if present.
+    applyMetadataChannelColors(*m_scene, m_slideInfo.channels);
+
     spdlog::info("SlideIOAdapter: isBrightfield={}, {} channels", m_slideInfo.isBrightfield, m_slideInfo.numChannels);
     for (int ch = 0; ch < m_slideInfo.numChannels; ++ch) {
         const auto& info = m_slideInfo.channels[static_cast<size_t>(ch)];
@@ -418,6 +535,7 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
     } catch (const std::exception& ex) {
         spdlog::warn("SlideIOAdapter: getMetadata failed: {}", ex.what());
     }
+    m_slideInfo.channelMetadata = buildChannelMetadataNode(*m_scene, m_slideInfo.channels);
 
     spdlog::info("SlideIOAdapter: opened slide {}x{}, {} channels, {} levels, Z={}, T={}",
                  m_slideInfo.width, m_slideInfo.height, m_slideInfo.numChannels,
@@ -495,6 +613,9 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
             core::assignDefaultFluorescenceColor(info, ch);
         }
     }
+
+    // Override with explicit "Color" attribute from the source file, if present.
+    applyMetadataChannelColors(*m_scene, m_slideInfo.channels);
 
     spdlog::info("SlideIOAdapter: isBrightfield={}, {} channels", m_slideInfo.isBrightfield, m_slideInfo.numChannels);
 
@@ -589,6 +710,7 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
     } catch (const std::exception& ex) {
         spdlog::warn("SlideIOAdapter: getMetadata failed: {}", ex.what());
     }
+    m_slideInfo.channelMetadata = buildChannelMetadataNode(*m_scene, m_slideInfo.channels);
 
     spdlog::info("SlideIOAdapter: opened aux image '{}' {}x{}, {} channels, {} levels",
                  auxImageName, m_slideInfo.width, m_slideInfo.height, m_slideInfo.numChannels,
