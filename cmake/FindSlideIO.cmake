@@ -66,19 +66,39 @@ set(_slideio_include_genex
     "$<IF:$<CONFIG:Debug>,${SlideIO_INCLUDE_DIR_DEBUG},${SlideIO_INCLUDE_DIR_RELEASE}>")
 
 if(SlideIO_FOUND AND NOT TARGET SlideIO::slideio)
+    if(WIN32)
+        # Windows: lib/ holds the import library (.lib); the runtime DLL lives in bin/.
+        set(_slideio_loc_release   "${_slideio_release_prefix}/bin/slideio.dll")
+        set(_slideio_loc_debug     "${_slideio_debug_prefix}/bin/slideio_d.dll")
+        set(_slideio_core_loc_release "${_slideio_release_prefix}/bin/slideio-core.dll")
+        set(_slideio_core_loc_debug   "${_slideio_debug_prefix}/bin/slideio-core_d.dll")
+    else()
+        # macOS/Linux: find_library located the actual shared library; no separate impl lib.
+        set(_slideio_loc_release      "${SlideIO_LIBRARY_RELEASE}")
+        set(_slideio_loc_debug        "${SlideIO_LIBRARY_DEBUG}")
+        set(_slideio_core_loc_release "${SlideIO_CORE_LIBRARY_RELEASE}")
+        set(_slideio_core_loc_debug   "${SlideIO_CORE_LIBRARY_DEBUG}")
+    endif()
+
     add_library(SlideIO::slideio SHARED IMPORTED)
     set_target_properties(SlideIO::slideio PROPERTIES
-        IMPORTED_IMPLIB_RELEASE "${SlideIO_LIBRARY_RELEASE}"
-        IMPORTED_LOCATION_RELEASE "${_slideio_release_prefix}/bin/slideio.dll"
+        IMPORTED_LOCATION_RELEASE "${_slideio_loc_release}"
         INTERFACE_INCLUDE_DIRECTORIES "${_slideio_include_genex}"
         MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release
         MAP_IMPORTED_CONFIG_MINSIZEREL Release
     )
+    if(WIN32)
+        set_target_properties(SlideIO::slideio PROPERTIES
+            IMPORTED_IMPLIB_RELEASE "${SlideIO_LIBRARY_RELEASE}")
+    endif()
     if(SlideIO_LIBRARY_DEBUG)
         set_target_properties(SlideIO::slideio PROPERTIES
-            IMPORTED_IMPLIB_DEBUG "${SlideIO_LIBRARY_DEBUG}"
-            IMPORTED_LOCATION_DEBUG "${_slideio_debug_prefix}/bin/slideio_d.dll"
+            IMPORTED_LOCATION_DEBUG "${_slideio_loc_debug}"
         )
+        if(WIN32)
+            set_target_properties(SlideIO::slideio PROPERTIES
+                IMPORTED_IMPLIB_DEBUG "${SlideIO_LIBRARY_DEBUG}")
+        endif()
     else()
         set_target_properties(SlideIO::slideio PROPERTIES
             MAP_IMPORTED_CONFIG_DEBUG Release
@@ -87,17 +107,23 @@ if(SlideIO_FOUND AND NOT TARGET SlideIO::slideio)
 
     add_library(SlideIO::core SHARED IMPORTED)
     set_target_properties(SlideIO::core PROPERTIES
-        IMPORTED_IMPLIB_RELEASE "${SlideIO_CORE_LIBRARY_RELEASE}"
-        IMPORTED_LOCATION_RELEASE "${_slideio_release_prefix}/bin/slideio-core.dll"
+        IMPORTED_LOCATION_RELEASE "${_slideio_core_loc_release}"
         INTERFACE_INCLUDE_DIRECTORIES "${_slideio_include_genex}"
         MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release
         MAP_IMPORTED_CONFIG_MINSIZEREL Release
     )
+    if(WIN32)
+        set_target_properties(SlideIO::core PROPERTIES
+            IMPORTED_IMPLIB_RELEASE "${SlideIO_CORE_LIBRARY_RELEASE}")
+    endif()
     if(SlideIO_CORE_LIBRARY_DEBUG)
         set_target_properties(SlideIO::core PROPERTIES
-            IMPORTED_IMPLIB_DEBUG "${SlideIO_CORE_LIBRARY_DEBUG}"
-            IMPORTED_LOCATION_DEBUG "${_slideio_debug_prefix}/bin/slideio-core_d.dll"
+            IMPORTED_LOCATION_DEBUG "${_slideio_core_loc_debug}"
         )
+        if(WIN32)
+            set_target_properties(SlideIO::core PROPERTIES
+                IMPORTED_IMPLIB_DEBUG "${SlideIO_CORE_LIBRARY_DEBUG}")
+        endif()
     else()
         set_target_properties(SlideIO::core PROPERTIES
             MAP_IMPORTED_CONFIG_DEBUG Release

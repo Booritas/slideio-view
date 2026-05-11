@@ -55,6 +55,16 @@ endif()
 add_executable(slideio-viewer WIN32 MACOSX_BUNDLE ${_executable_sources})
 target_link_libraries(slideio-viewer PRIVATE slideio-viewer-ui spdlog::spdlog)
 
+if(APPLE)
+    # Dev-only: keep link-time dylib directories (conan cache, SlideIO install/lib)
+    # in the installed binary's rpath, and add SlideIO install/bin where transitive
+    # deps like libglog.*.dylib live. For a distributable build, copy dylibs/frameworks
+    # into .app/Contents/Frameworks and rewrite install names instead.
+    set_target_properties(slideio-viewer PROPERTIES
+        INSTALL_RPATH_USE_LINK_PATH TRUE
+        INSTALL_RPATH "$<IF:$<CONFIG:Debug>,${SLIDEIO_ROOT}/debug/bin,${SLIDEIO_ROOT}/release/bin>")
+endif()
+
 if(APPLE AND EXISTS "${_app_icon_icns_path}")
     set_source_files_properties("${_app_icon_icns_path}" PROPERTIES
         MACOSX_PACKAGE_LOCATION Resources)
@@ -99,6 +109,7 @@ set(_install_plugins "$<LOWER_CASE:$<CONFIG>>/plugins")
 # Executable
 install(TARGETS slideio-viewer
     RUNTIME DESTINATION ${_install_bin}
+    BUNDLE DESTINATION ${_install_bin}
 )
 
 # SlideIO DLLs

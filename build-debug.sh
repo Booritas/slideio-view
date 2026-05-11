@@ -1,3 +1,3 @@
-export CONAN_PROFIlE=conan/profiles/Windows/debug
+#!/usr/bin/env bash
 export BUILD_TYPE=Debug
 ./build-template.sh
