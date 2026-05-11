@@ -369,9 +369,9 @@ std::pair<double, double> computeMinMax(const uint8_t* data, size_t totalElement
     }
 }
 
-// Map a pixel element from native type through [min,max] -> [0,255] for thumbnails
-uint8_t mapPixelToUint8(const uint8_t* buffer, size_t elementIndex,
-                        DataType dataType, double minVal, double maxVal)
+// Map a pixel element from native type through [min,max] -> [0,1] for thumbnail mixing.
+double mapPixelNormalized(const uint8_t* buffer, size_t elementIndex,
+                          DataType dataType, double minVal, double maxVal)
 {
     double value = 0.0;
     switch (dataType) {
@@ -386,9 +386,16 @@ uint8_t mapPixelToUint8(const uint8_t* buffer, size_t elementIndex,
     default: value = static_cast<double>(buffer[elementIndex]); break;
     }
     double range = maxVal - minVal;
-    if (range <= 0.0) return 0;
-    double normalized = (value - minVal) / range;
-    return static_cast<uint8_t>(std::clamp(normalized * 255.0, 0.0, 255.0));
+    if (range <= 0.0) return 0.0;
+    return std::clamp((value - minVal) / range, 0.0, 1.0);
+}
+
+// Map a pixel element from native type through [min,max] -> [0,255] for thumbnails
+uint8_t mapPixelToUint8(const uint8_t* buffer, size_t elementIndex,
+                        DataType dataType, double minVal, double maxVal)
+{
+    return static_cast<uint8_t>(
+        std::round(mapPixelNormalized(buffer, elementIndex, dataType, minVal, maxVal) * 255.0));
 }
 
 // Render a resampled block to an 8-bit QImage (RGB888 or Grayscale8),
@@ -658,14 +665,64 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
     double gMin = channelMinFor(1), gMax = channelMaxFor(1);
     double bMin = channelMinFor(2), bMax = channelMaxFor(2);
 
+    // For multichannel/fluorescence slides, mix all visible channels using
+    // ChannelInfo::colorR/G/B * intensity (matching the viewport's fluorescence
+    // shader). For brightfield (numCh==1 or 3-channel byte) keep the direct
+    // R/G/B mapping the viewport's brightfield path uses.
+    const bool useChannelMix = !slideInfo.isBrightfield && numCh >= 1;
+    struct ChannelMix
+    {
+        double minVal = 0.0;
+        double maxVal = 1.0;
+        float r = 1.0f, g = 1.0f, b = 1.0f;  // colorR/G/B * intensity, premultiplied
+        bool active = false;
+    };
+    std::vector<ChannelMix> mix;
+    if (useChannelMix) {
+        mix.resize(static_cast<size_t>(numCh));
+        for (int ch = 0; ch < numCh; ++ch) {
+            const size_t ch_z = static_cast<size_t>(ch);
+            ChannelMix& m = mix[ch_z];
+            m.minVal = channelMinFor(ch);
+            m.maxVal = channelMaxFor(ch);
+            if (ch < static_cast<int>(slideInfo.channels.size())) {
+                const auto& chInfo = slideInfo.channels[ch_z];
+                if (!chInfo.visible) continue;
+                float intensity = std::clamp(chInfo.intensity, 0.0f, 1.0f);
+                m.r = chInfo.colorR * intensity;
+                m.g = chInfo.colorG * intensity;
+                m.b = chInfo.colorB * intensity;
+                m.active = true;
+            }
+        }
+    }
+
+    auto writeMixedPixel = [&](uint8_t* dst, const uint8_t* src, size_t srcElem, int srcCh) {
+        float accR = 0.0f, accG = 0.0f, accB = 0.0f;
+        const int upTo = std::min(numCh, srcCh);
+        for (int ch = 0; ch < upTo; ++ch) {
+            const ChannelMix& m = mix[static_cast<size_t>(ch)];
+            if (!m.active) continue;
+            float v = static_cast<float>(mapPixelNormalized(
+                src, srcElem + static_cast<size_t>(ch), dt, m.minVal, m.maxVal));
+            accR += v * m.r;
+            accG += v * m.g;
+            accB += v * m.b;
+        }
+        dst[0] = static_cast<uint8_t>(std::clamp(accR * 255.0f, 0.0f, 255.0f));
+        dst[1] = static_cast<uint8_t>(std::clamp(accG * 255.0f, 0.0f, 255.0f));
+        dst[2] = static_cast<uint8_t>(std::clamp(accB * 255.0f, 0.0f, 255.0f));
+    };
+
     // Pass 2: build the thumbnail QImage. Read the whole slide resampled to
     // the target thumbnail resolution via SlideIO (it picks the best pyramid
     // level internally). This gives a sharp thumbnail even when the coarsest
     // pyramid level itself is very small (e.g., 200x160) — much sharper than
     // upscaling from the coarsest tiles.
-    QImage::Format imgFmt = (numCh >= 3) ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
+    QImage::Format imgFmt = (useChannelMix || numCh >= 3)
+        ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
     QImage thumbImg(thumbW, thumbH, imgFmt);
-    thumbImg.fill(Qt::white);
+    thumbImg.fill(slideInfo.isBrightfield ? Qt::white : Qt::black);
 
     // SlideIOAdapterPool uses a different concrete type as the loan; cast back
     // to access readBlock. (loan is a unique_ptr-like wrapper around the adapter.)
@@ -678,7 +735,9 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
             uint8_t* dst = thumbImg.scanLine(y);
             for (int x = 0; x < thumbW; ++x) {
                 size_t srcElem = static_cast<size_t>((y * thumbW + x) * srcCh);
-                if (numCh >= 3) {
+                if (useChannelMix) {
+                    writeMixedPixel(dst + x * 3, src, srcElem, srcCh);
+                } else if (numCh >= 3) {
                     int dstIdx = x * 3;
                     dst[dstIdx + 0] = mapPixelToUint8(src, srcElem + 0, dt, rMin, rMax);
                     dst[dstIdx + 1] = mapPixelToUint8(src, srcElem + 1, dt, gMin, gMax);
@@ -692,7 +751,7 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
     } else {
         // Fallback: assemble from the coarsest tiles we already have
         QImage levelImg(coarseLvl.width, coarseLvl.height, imgFmt);
-        levelImg.fill(Qt::white);
+        levelImg.fill(slideInfo.isBrightfield ? Qt::white : Qt::black);
         int tileIdx = 0;
         for (int r = 0; r < coarseLvl.tilesY; ++r) {
             for (int c = 0; c < coarseLvl.tilesX; ++c) {
@@ -708,7 +767,9 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
                     uint8_t* dst = levelImg.scanLine(tileY0 + y);
                     for (int x = 0; x < tw && (tileX0 + x) < coarseLvl.width; ++x) {
                         size_t srcElem = static_cast<size_t>((y * tw + x) * tCh);
-                        if (numCh >= 3) {
+                        if (useChannelMix) {
+                            writeMixedPixel(dst + (tileX0 + x) * 3, src, srcElem, tCh);
+                        } else if (numCh >= 3) {
                             int dstIdx = (tileX0 + x) * 3;
                             dst[dstIdx + 0] = mapPixelToUint8(src, srcElem + 0, dt, rMin, rMax);
                             dst[dstIdx + 1] = mapPixelToUint8(src, srcElem + 1, dt, gMin, gMax);
