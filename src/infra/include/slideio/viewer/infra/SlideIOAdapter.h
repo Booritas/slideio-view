@@ -56,7 +56,6 @@ private:
     bool markLevelUnreliable(int level);
 
     std::string m_filePath;
-    int m_sceneIndex = 0;
     std::shared_ptr<::slideio::Slide> m_slide;
     std::shared_ptr<::slideio::Scene> m_scene;
     std::vector<core::LevelInfo> m_levels;

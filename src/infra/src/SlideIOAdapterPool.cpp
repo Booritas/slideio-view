@@ -77,9 +77,7 @@ SlideIOAdapterPool::SlideIOAdapterPool(const std::string& filePath, int sceneInd
                                        const std::string& driverId)
     : m_filePath(filePath)
     , m_poolSize(poolSize)
-    , m_sceneIndex(sceneIndex)
     , m_driverId(driverId)
-    , m_isAuxiliary(false)
 {
     if (poolSize <= 0) {
         throw std::invalid_argument("SlideIOAdapterPool: poolSize must be > 0");
@@ -100,10 +98,8 @@ SlideIOAdapterPool::SlideIOAdapterPool(const std::string& filePath, const std::s
                                        const std::string& driverId)
     : m_filePath(filePath)
     , m_poolSize(poolSize)
-    , m_sceneIndex(-1)
     , m_auxImageName(auxImageName)
     , m_driverId(driverId)
-    , m_isAuxiliary(true)
 {
     if (poolSize <= 0) {
         throw std::invalid_argument("SlideIOAdapterPool: poolSize must be > 0");

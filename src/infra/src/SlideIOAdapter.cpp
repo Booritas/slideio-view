@@ -176,21 +176,26 @@ void downsampleBoxAverageT(const uint8_t* srcBytes, int srcW, int srcH, int chan
     const Accum halfFactor = factor / 2;
     constexpr int kMaxChannels = 16;
     Accum sum[kMaxChannels];
+    const size_t srcW_z    = static_cast<size_t>(srcW);
+    const size_t dstW_z    = static_cast<size_t>(dstW);
+    const size_t channels_z = static_cast<size_t>(channels);
     for (int y = 0; y < dstH; ++y) {
         for (int x = 0; x < dstW; ++x) {
             for (int c = 0; c < channels; ++c) sum[c] = Accum{0};
             const int sy0 = y * factorY;
             const int sx0 = x * factorX;
             for (int dy = 0; dy < factorY; ++dy) {
-                const T* row = src + (static_cast<size_t>(sy0 + dy) * srcW + sx0) * channels;
+                const T* row = src + (static_cast<size_t>(sy0 + dy) * srcW_z
+                                      + static_cast<size_t>(sx0)) * channels_z;
                 for (int dx = 0; dx < factorX; ++dx) {
-                    const T* px = row + dx * channels;
+                    const T* px = row + static_cast<size_t>(dx) * channels_z;
                     for (int c = 0; c < channels; ++c) {
                         sum[c] += static_cast<Accum>(px[c]);
                     }
                 }
             }
-            T* dstPx = dst + (static_cast<size_t>(y) * dstW + x) * channels;
+            T* dstPx = dst + (static_cast<size_t>(y) * dstW_z
+                              + static_cast<size_t>(x)) * channels_z;
             for (int c = 0; c < channels; ++c) {
                 if constexpr (std::is_integral_v<Accum>) {
                     dstPx[c] = static_cast<T>((sum[c] + halfFactor) / factor);
@@ -230,7 +235,6 @@ namespace slideio::viewer::infra
 SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
                                const std::string& driverId)
     : m_filePath(filePath)
-    , m_sceneIndex(sceneIndex)
 {
     spdlog::info("SlideIOAdapter: opening slide '{}', scene {}, driver '{}'",
                  filePath, sceneIndex, driverId);
@@ -424,7 +428,6 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
 SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& auxImageName,
                                const std::string& driverId)
     : m_filePath(filePath)
-    , m_sceneIndex(-1)
 {
     spdlog::info("SlideIOAdapter: opening slide '{}', aux image '{}', driver '{}'",
                  filePath, auxImageName, driverId);
