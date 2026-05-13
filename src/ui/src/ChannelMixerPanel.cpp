@@ -103,9 +103,9 @@ struct ChannelMixerPanel::Impl
             });
             hLayout->addWidget(row.colorButton);
 
-            // Intensity slider (0–100, maps to 0.0–1.0)
+            // Intensity slider (0–400, maps to 0.0–4.0; 1.0× at the 25% mark)
             row.intensitySlider = new QSlider(Qt::Horizontal, contentWidget);
-            row.intensitySlider->setRange(0, 100);
+            row.intensitySlider->setRange(0, 400);
             row.intensitySlider->setValue(static_cast<int>(ch.intensity * 100.0f));
             row.intensitySlider->setFixedWidth(80);
             row.intensitySlider->setStyleSheet(
