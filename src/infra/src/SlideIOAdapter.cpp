@@ -116,6 +116,44 @@ void applyMetadataChannelColors(const ::slideio::Scene& scene,
     }
 }
 
+// Returns true if any channel's attributes indicate fluorescence imaging
+// (ContrastMethod or IlluminationType). Used to disambiguate the otherwise
+// ambiguous "single-channel grayscale" case in the isBrightfield heuristic:
+// without this, a grayscale fluorescence channel (e.g. EGFP) would be flagged
+// as brightfield, take the grayscale render path, and ignore its assigned
+// channel color.
+bool channelsIndicateFluorescence(const ::slideio::Scene& scene)
+{
+    auto containsFluorescenceHint = [](const std::string& s) {
+        std::string lower;
+        lower.reserve(s.size());
+        for (char c : s) lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        return lower.find("fluorescence") != std::string::npos
+            || lower.find("epifluor") != std::string::npos;
+    };
+    try {
+        const ::slideio::Metadata& attrs = scene.getChannelAttributes();
+        if (attrs.type() != ::slideio::Metadata::Type::Array) return false;
+        const size_t n = attrs.size();
+        for (size_t ch = 0; ch < n; ++ch) {
+            ::slideio::Metadata chanAttrs = attrs[ch];
+            if (chanAttrs.type() != ::slideio::Metadata::Type::Object) continue;
+            if (chanAttrs.contains("ContrastMethod")
+                && containsFluorescenceHint(chanAttrs["ContrastMethod"].asString())) {
+                return true;
+            }
+            if (chanAttrs.contains("IlluminationType")
+                && containsFluorescenceHint(chanAttrs["IlluminationType"].asString())) {
+                return true;
+            }
+        }
+    } catch (const std::exception&) {
+        // Treat lookup failures as "no fluorescence hint" — fall back to the
+        // channel-count heuristic.
+    }
+    return false;
+}
+
 slideio::viewer::core::DataType convertSlideIODataType(::slideio::DataType srcType)
 {
     using DT = slideio::viewer::core::DataType;
@@ -443,10 +481,14 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
         info.visible = true;
     }
 
-    // Determine if this is a brightfield slide
-    m_slideInfo.isBrightfield =
+    // Determine if this is a brightfield slide. The channel-count heuristic
+    // cannot disambiguate 1-channel grayscale brightfield from 1-channel
+    // grayscale fluorescence, so an explicit fluorescence hint in channel
+    // metadata overrides it.
+    const bool fluorescenceHint = channelsIndicateFluorescence(*m_scene);
+    m_slideInfo.isBrightfield = !fluorescenceHint && (
         (m_slideInfo.numChannels == 1) ||
-        (m_slideInfo.numChannels == 3 && m_slideInfo.channelDataType == core::DataType::Byte);
+        (m_slideInfo.numChannels == 3 && m_slideInfo.channelDataType == core::DataType::Byte));
 
     // Assign default channel colors based on image type
     for (int ch = 0; ch < m_slideInfo.numChannels; ++ch) {
@@ -630,10 +672,12 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
         info.visible = true;
     }
 
-    // Determine if this is a brightfield slide
-    m_slideInfo.isBrightfield =
+    // Determine if this is a brightfield slide. See sibling call site for the
+    // disambiguation rationale.
+    const bool fluorescenceHint = channelsIndicateFluorescence(*m_scene);
+    m_slideInfo.isBrightfield = !fluorescenceHint && (
         (m_slideInfo.numChannels == 1) ||
-        (m_slideInfo.numChannels == 3 && m_slideInfo.channelDataType == core::DataType::Byte);
+        (m_slideInfo.numChannels == 3 && m_slideInfo.channelDataType == core::DataType::Byte));
 
     for (int ch = 0; ch < m_slideInfo.numChannels; ++ch) {
         auto& info = m_slideInfo.channels[static_cast<size_t>(ch)];
