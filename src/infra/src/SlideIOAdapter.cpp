@@ -69,16 +69,46 @@ void applyMetadataChannelColors(const ::slideio::Scene& scene,
         for (size_t ch = 0; ch < n; ++ch) {
             ::slideio::Metadata chanAttrs = attrs[ch];
             if (chanAttrs.type() != ::slideio::Metadata::Type::Object) continue;
-            if (!chanAttrs.contains("Color")) continue;
-            const std::string colorStr = chanAttrs["Color"].asString();
-            float r, g, b;
-            if (parseChannelHexColor(colorStr, r, g, b)) {
-                channels[ch].colorR = r;
-                channels[ch].colorG = g;
-                channels[ch].colorB = b;
-            } else if (!colorStr.empty()) {
-                spdlog::debug("SlideIOAdapter: channel {} 'Color' attribute '{}' is not a hex color, keeping default",
-                              ch, colorStr);
+            // Step 1: apply an explicit, non-white "Color" attribute if the
+            // driver exposes one. White is treated as a "no preference"
+            // sentinel (Zen/CZI convention for spectral channels).
+            bool explicitColorApplied = false;
+            if (chanAttrs.contains("Color")) {
+                const std::string colorStr = chanAttrs["Color"].asString();
+                float r, g, b;
+                if (parseChannelHexColor(colorStr, r, g, b)) {
+                    const bool isWhite = r >= 0.999f && g >= 0.999f && b >= 0.999f;
+                    if (!isWhite) {
+                        channels[ch].colorR = r;
+                        channels[ch].colorG = g;
+                        channels[ch].colorB = b;
+                        explicitColorApplied = true;
+                    }
+                } else if (!colorStr.empty()) {
+                    spdlog::debug("SlideIOAdapter: channel {} 'Color' attribute '{}' is not a hex color, keeping default",
+                                  ch, colorStr);
+                }
+            }
+
+            // Step 2: if no explicit color (missing Color, or white sentinel),
+            // derive color from EmissionWavelength when available. SlideIO's
+            // CZI driver exposes EmissionWavelength under
+            // Information/Image/Dimensions/Channels/Channel but does NOT
+            // forward DisplaySetting/.../Color — so for spectral CZI files
+            // this path is what produces the correct hue (matches Zen/QuPath).
+            if (!explicitColorApplied && chanAttrs.contains("EmissionWavelength")) {
+                double nm = 0.0;
+                try { nm = chanAttrs["EmissionWavelength"].asDouble(); }
+                catch (const std::exception&) { nm = 0.0; }
+                float wr, wg, wb;
+                if (nm > 0.0 && slideio::viewer::core::wavelengthToSrgb(nm, wr, wg, wb)) {
+                    channels[ch].colorR = wr;
+                    channels[ch].colorG = wg;
+                    channels[ch].colorB = wb;
+                    spdlog::debug("SlideIOAdapter: channel {} color derived from emission wavelength "
+                                  "{:.1f} nm -> ({:.2f},{:.2f},{:.2f})",
+                                  ch, nm, wr, wg, wb);
+                }
             }
         }
     } catch (const std::exception& ex) {

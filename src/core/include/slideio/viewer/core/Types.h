@@ -67,6 +67,42 @@ struct ChannelInfo
     DisplayRange displayRange;
 };
 
+/// Map a visible-spectrum wavelength (nm) to an sRGB color via Bruton's
+/// piecewise-linear approximation. Returns false (and leaves outputs untouched)
+/// for wavelengths outside 380–780 nm. Outputs saturated colors — no
+/// brightness falloff at spectrum edges — because callers want a hue cue,
+/// not a perceptual luminance.
+inline bool wavelengthToSrgb(double nm, float& r, float& g, float& b)
+{
+    if (nm < 380.0 || nm > 780.0) return false;
+    if (nm < 440.0) {
+        r = static_cast<float>(-(nm - 440.0) / (440.0 - 380.0));
+        g = 0.0f;
+        b = 1.0f;
+    } else if (nm < 490.0) {
+        r = 0.0f;
+        g = static_cast<float>((nm - 440.0) / (490.0 - 440.0));
+        b = 1.0f;
+    } else if (nm < 510.0) {
+        r = 0.0f;
+        g = 1.0f;
+        b = static_cast<float>(-(nm - 510.0) / (510.0 - 490.0));
+    } else if (nm < 580.0) {
+        r = static_cast<float>((nm - 510.0) / (580.0 - 510.0));
+        g = 1.0f;
+        b = 0.0f;
+    } else if (nm < 645.0) {
+        r = 1.0f;
+        g = static_cast<float>(-(nm - 645.0) / (645.0 - 580.0));
+        b = 0.0f;
+    } else { // 645–780 nm
+        r = 1.0f;
+        g = 0.0f;
+        b = 0.0f;
+    }
+    return true;
+}
+
 /// Assign a default pseudo-color for fluorescence channels.
 /// Matches known dye names first, then falls back to index-based defaults.
 inline void assignDefaultFluorescenceColor(ChannelInfo& ch, int channelIndex)
