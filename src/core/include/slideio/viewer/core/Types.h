@@ -62,7 +62,7 @@ struct ChannelInfo
     float colorR = 1.0f;
     float colorG = 1.0f;
     float colorB = 1.0f;
-    float intensity = 1.0f; // 0.0–1.0 brightness multiplier
+    float intensity = 1.0f; // 0.0–4.0 brightness multiplier (1.0 = unity gain)
     bool visible = true;
     DisplayRange displayRange;
 };

@@ -688,7 +688,7 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
             if (ch < static_cast<int>(slideInfo.channels.size())) {
                 const auto& chInfo = slideInfo.channels[ch_z];
                 if (!chInfo.visible) continue;
-                float intensity = std::clamp(chInfo.intensity, 0.0f, 1.0f);
+                float intensity = std::clamp(chInfo.intensity, 0.0f, 4.0f);
                 m.r = chInfo.colorR * intensity;
                 m.g = chInfo.colorG * intensity;
                 m.b = chInfo.colorB * intensity;
@@ -2290,7 +2290,7 @@ void ViewportWidget::paintGL()
                     chInfo.displayRange.displayMin, chInfo.displayRange.displayMax, chInfo.dataType);
                 m_impl->channelShader->setUniformValue("uDisplayMin", chSamplerMin);
                 m_impl->channelShader->setUniformValue("uDisplayMax", chSamplerMax);
-                float intensity = std::clamp(chInfo.intensity, 0.0f, 1.0f);
+                float intensity = std::clamp(chInfo.intensity, 0.0f, 4.0f);
                 m_impl->channelShader->setUniformValue("uChannelColor",
                     chInfo.colorR * intensity, chInfo.colorG * intensity, chInfo.colorB * intensity);
 
