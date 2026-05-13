@@ -2158,8 +2158,12 @@ void ViewportWidget::paintGL()
     int tilesRendered = 0;
     int tilesSkipped = 0;
 
-    if (m_impl->slideInfo.numChannels <= 1) {
-        // --- Single-channel rendering path ---
+    if (m_impl->slideInfo.isBrightfield && m_impl->slideInfo.numChannels <= 1) {
+        // --- Single-channel brightfield rendering path ---
+        // Direct tile sampling; no per-channel color tint. (1-channel
+        // fluorescence falls through to the channel-mix path below so that
+        // the channel's pseudo-color is applied — otherwise it would render
+        // as grayscale regardless of the assigned color.)
         m_impl->tileShader->bind();
         m_impl->tileShader->setUniformValue("uViewportSize",
             static_cast<float>(viewport.screenWidth()), static_cast<float>(viewport.screenHeight()));
@@ -2286,8 +2290,19 @@ void ViewportWidget::paintGL()
                 const auto& chInfo = m_impl->slideInfo.channels[ch];
                 if (!chInfo.visible) continue;
 
-                auto [chSamplerMin, chSamplerMax] = toSamplerRange(
-                    chInfo.displayRange.displayMin, chInfo.displayRange.displayMax, chInfo.dataType);
+                // Fall back to the slide's global display range when per-channel
+                // autodetection didn't run (e.g. single-channel fluorescence,
+                // which historically took the brightfield path). Without this the
+                // default {0,255} clamps Gray16 data into saturation and the
+                // entire image renders as a flat color.
+                const bool useChannelRange = chInfo.displayRange.autoDetected;
+                const double dispMin = useChannelRange
+                    ? chInfo.displayRange.displayMin
+                    : m_impl->slideInfo.displayRange.displayMin;
+                const double dispMax = useChannelRange
+                    ? chInfo.displayRange.displayMax
+                    : m_impl->slideInfo.displayRange.displayMax;
+                auto [chSamplerMin, chSamplerMax] = toSamplerRange(dispMin, dispMax, chInfo.dataType);
                 m_impl->channelShader->setUniformValue("uDisplayMin", chSamplerMin);
                 m_impl->channelShader->setUniformValue("uDisplayMax", chSamplerMax);
                 float intensity = std::clamp(chInfo.intensity, 0.0f, 4.0f);
