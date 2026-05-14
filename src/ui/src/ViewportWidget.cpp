@@ -403,7 +403,17 @@ uint8_t mapPixelToUint8(const uint8_t* buffer, size_t elementIndex,
 // this rescale, non-Byte data types (e.g., UInt16) produce distorted thumbnails
 // because the buffer carries multiple bytes per sample, but a straight byte
 // copy assumes one byte per channel.
-QImage tileDataToQImage(const slideio::viewer::core::TileData& block, int slideNumChannels)
+//
+// Channel-mix mode (mirrors the minimap / viewport channelShader path): when
+// the slide is not single-channel brightfield, each channel's normalized value
+// is multiplied by its assigned colorR/G/B * intensity and summed into RGB.
+// This matters for Bgr24 CZIs, where SlideIO labels channels 0/1/2 with
+// colors blue/green/red — a naive src[0]→R / src[1]→G / src[2]→B copy would
+// swap R and B.
+QImage tileDataToQImage(const slideio::viewer::core::TileData& block,
+                        int slideNumChannels,
+                        const std::vector<slideio::viewer::core::ChannelInfo>& channels,
+                        bool isBrightfield)
 {
     if (block.isEmpty() || block.isError()) return {};
     const int width = block.width();
@@ -414,28 +424,60 @@ QImage tileDataToQImage(const slideio::viewer::core::TileData& block, int slideN
     const DataType dt = block.dataType();
     const uint8_t* src = block.buffer().data();
     const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
-    const bool useRGB = slideNumChannels >= 3 && srcCh >= 3;
 
-    QImage::Format imgFmt = useRGB ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
+    const bool useChannelMix = !(isBrightfield && slideNumChannels <= 1)
+                               && slideNumChannels >= 1
+                               && !channels.empty();
+    const int mixCh = useChannelMix
+        ? std::min({slideNumChannels, srcCh, static_cast<int>(channels.size())})
+        : 0;
+
+    QImage::Format imgFmt = useChannelMix
+        ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
     QImage out(width, height, imgFmt);
-    out.fill(Qt::white);
+    out.fill(isBrightfield ? Qt::white : Qt::black);
 
-    if (useRGB) {
-        double rMin = std::numeric_limits<double>::max();
-        double rMax = std::numeric_limits<double>::lowest();
-        double gMin = rMin, gMax = rMax;
-        double bMin = rMin, bMax = rMax;
-        computeMinMaxStrided(src, pixelCount, srcCh, 0, dt, rMin, rMax);
-        computeMinMaxStrided(src, pixelCount, srcCh, 1, dt, gMin, gMax);
-        computeMinMaxStrided(src, pixelCount, srcCh, 2, dt, bMin, bMax);
+    if (useChannelMix) {
+        struct ChannelMix
+        {
+            double minVal = 0.0;
+            double maxVal = 1.0;
+            float r = 0.0f, g = 0.0f, b = 0.0f;
+            bool active = false;
+        };
+        std::vector<ChannelMix> mix(static_cast<size_t>(mixCh));
+        for (int ch = 0; ch < mixCh; ++ch) {
+            ChannelMix& m = mix[static_cast<size_t>(ch)];
+            double mn = std::numeric_limits<double>::max();
+            double mx = std::numeric_limits<double>::lowest();
+            computeMinMaxStrided(src, pixelCount, srcCh, ch, dt, mn, mx);
+            m.minVal = mn; m.maxVal = mx;
+            const auto& chInfo = channels[static_cast<size_t>(ch)];
+            if (!chInfo.visible) continue;
+            float intensity = std::clamp(chInfo.intensity, 0.0f, 4.0f);
+            m.r = chInfo.colorR * intensity;
+            m.g = chInfo.colorG * intensity;
+            m.b = chInfo.colorB * intensity;
+            m.active = true;
+        }
         for (int y = 0; y < height; ++y) {
             uint8_t* dst = out.scanLine(y);
             for (int x = 0; x < width; ++x) {
                 size_t srcElem = static_cast<size_t>((y * width + x) * srcCh);
+                float accR = 0.0f, accG = 0.0f, accB = 0.0f;
+                for (int ch = 0; ch < mixCh; ++ch) {
+                    const ChannelMix& m = mix[static_cast<size_t>(ch)];
+                    if (!m.active) continue;
+                    float v = static_cast<float>(mapPixelNormalized(
+                        src, srcElem + static_cast<size_t>(ch), dt, m.minVal, m.maxVal));
+                    accR += v * m.r;
+                    accG += v * m.g;
+                    accB += v * m.b;
+                }
                 int dstIdx = x * 3;
-                dst[dstIdx + 0] = mapPixelToUint8(src, srcElem + 0, dt, rMin, rMax);
-                dst[dstIdx + 1] = mapPixelToUint8(src, srcElem + 1, dt, gMin, gMax);
-                dst[dstIdx + 2] = mapPixelToUint8(src, srcElem + 2, dt, bMin, bMax);
+                dst[dstIdx + 0] = static_cast<uint8_t>(std::clamp(accR * 255.0f, 0.0f, 255.0f));
+                dst[dstIdx + 1] = static_cast<uint8_t>(std::clamp(accG * 255.0f, 0.0f, 255.0f));
+                dst[dstIdx + 2] = static_cast<uint8_t>(std::clamp(accB * 255.0f, 0.0f, 255.0f));
             }
         }
     } else {
@@ -462,6 +504,8 @@ QImage tileDataToQImage(const slideio::viewer::core::TileData& block, int slideN
 // tile could be read.
 QImage buildCoarseLevelThumbnailFallback(slideio::viewer::core::ISlideSource& source,
                                           int slideNumChannels,
+                                          const std::vector<slideio::viewer::core::ChannelInfo>& channels,
+                                          bool isBrightfield,
                                           int targetW, int targetH)
 {
     namespace core = slideio::viewer::core;
@@ -496,28 +540,60 @@ QImage buildCoarseLevelThumbnailFallback(slideio::viewer::core::ISlideSource& so
     }
     if (validTiles == 0 || srcCh <= 0) return {};
 
-    const bool useRGB = slideNumChannels >= 3 && srcCh >= 3;
+    // Channel-mix mode mirrors tileDataToQImage / the viewport channelShader:
+    // apply each channel's color * intensity. See the comment on
+    // tileDataToQImage for the BGR-ordering rationale.
+    const bool useChannelMix = !(isBrightfield && slideNumChannels <= 1)
+                               && slideNumChannels >= 1
+                               && !channels.empty();
+    const int mixCh = useChannelMix
+        ? std::min({slideNumChannels, srcCh, static_cast<int>(channels.size())})
+        : 0;
 
-    double rMin = std::numeric_limits<double>::max();
-    double rMax = std::numeric_limits<double>::lowest();
-    double gMin = rMin, gMax = rMax;
-    double bMin = rMin, bMax = rMax;
-    double mn = rMin, mx = rMax;
-    for (const auto& td : tiles) {
-        if (td.isEmpty() || td.isError()) continue;
-        size_t pixelCount = static_cast<size_t>(td.width()) * static_cast<size_t>(td.height());
-        if (useRGB) {
-            computeMinMaxStrided(td.buffer().data(), pixelCount, srcCh, 0, dt, rMin, rMax);
-            computeMinMaxStrided(td.buffer().data(), pixelCount, srcCh, 1, dt, gMin, gMax);
-            computeMinMaxStrided(td.buffer().data(), pixelCount, srcCh, 2, dt, bMin, bMax);
-        } else {
+    struct ChannelMix
+    {
+        double minVal = std::numeric_limits<double>::max();
+        double maxVal = std::numeric_limits<double>::lowest();
+        float r = 0.0f, g = 0.0f, b = 0.0f;
+        bool active = false;
+    };
+    std::vector<ChannelMix> mix;
+    double mn = std::numeric_limits<double>::max();
+    double mx = std::numeric_limits<double>::lowest();
+
+    if (useChannelMix) {
+        mix.resize(static_cast<size_t>(mixCh));
+        for (int ch = 0; ch < mixCh; ++ch) {
+            const auto& chInfo = channels[static_cast<size_t>(ch)];
+            ChannelMix& m = mix[static_cast<size_t>(ch)];
+            if (!chInfo.visible) continue;
+            float intensity = std::clamp(chInfo.intensity, 0.0f, 4.0f);
+            m.r = chInfo.colorR * intensity;
+            m.g = chInfo.colorG * intensity;
+            m.b = chInfo.colorB * intensity;
+            m.active = true;
+        }
+        for (const auto& td : tiles) {
+            if (td.isEmpty() || td.isError()) continue;
+            size_t pixelCount = static_cast<size_t>(td.width()) * static_cast<size_t>(td.height());
+            for (int ch = 0; ch < mixCh; ++ch) {
+                computeMinMaxStrided(td.buffer().data(), pixelCount, srcCh, ch, dt,
+                                     mix[static_cast<size_t>(ch)].minVal,
+                                     mix[static_cast<size_t>(ch)].maxVal);
+            }
+        }
+    } else {
+        for (const auto& td : tiles) {
+            if (td.isEmpty() || td.isError()) continue;
+            size_t pixelCount = static_cast<size_t>(td.width()) * static_cast<size_t>(td.height());
             computeMinMaxStrided(td.buffer().data(), pixelCount, srcCh, 0, dt, mn, mx);
         }
     }
 
-    QImage::Format imgFmt = useRGB ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
+    QImage::Format imgFmt = useChannelMix
+        ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
     QImage levelImg(lvl.width, lvl.height, imgFmt);
-    levelImg.fill(Qt::white);
+    levelImg.fill(isBrightfield ? Qt::white : Qt::black);
 
     int tileIdx = 0;
     for (int r = 0; r < tilesY; ++r) {
@@ -533,11 +609,21 @@ QImage buildCoarseLevelThumbnailFallback(slideio::viewer::core::ISlideSource& so
                 uint8_t* dst = levelImg.scanLine(tileY0 + y);
                 for (int x = 0; x < tw && (tileX0 + x) < lvl.width; ++x) {
                     size_t srcElem = static_cast<size_t>((y * tw + x) * srcCh);
-                    if (useRGB) {
+                    if (useChannelMix) {
+                        float accR = 0.0f, accG = 0.0f, accB = 0.0f;
+                        for (int ch = 0; ch < mixCh; ++ch) {
+                            const ChannelMix& m = mix[static_cast<size_t>(ch)];
+                            if (!m.active) continue;
+                            float v = static_cast<float>(mapPixelNormalized(
+                                src, srcElem + static_cast<size_t>(ch), dt, m.minVal, m.maxVal));
+                            accR += v * m.r;
+                            accG += v * m.g;
+                            accB += v * m.b;
+                        }
                         int dstIdx = (tileX0 + x) * 3;
-                        dst[dstIdx + 0] = mapPixelToUint8(src, srcElem + 0, dt, rMin, rMax);
-                        dst[dstIdx + 1] = mapPixelToUint8(src, srcElem + 1, dt, gMin, gMax);
-                        dst[dstIdx + 2] = mapPixelToUint8(src, srcElem + 2, dt, bMin, bMax);
+                        dst[dstIdx + 0] = static_cast<uint8_t>(std::clamp(accR * 255.0f, 0.0f, 255.0f));
+                        dst[dstIdx + 1] = static_cast<uint8_t>(std::clamp(accG * 255.0f, 0.0f, 255.0f));
+                        dst[dstIdx + 2] = static_cast<uint8_t>(std::clamp(accB * 255.0f, 0.0f, 255.0f));
                     } else {
                         dst[tileX0 + x] = mapPixelToUint8(src, srcElem, dt, mn, mx);
                     }
@@ -665,11 +751,14 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
     double gMin = channelMinFor(1), gMax = channelMaxFor(1);
     double bMin = channelMinFor(2), bMax = channelMaxFor(2);
 
-    // For multichannel/fluorescence slides, mix all visible channels using
-    // ChannelInfo::colorR/G/B * intensity (matching the viewport's fluorescence
-    // shader). For brightfield (numCh==1 or 3-channel byte) keep the direct
-    // R/G/B mapping the viewport's brightfield path uses.
-    const bool useChannelMix = !slideInfo.isBrightfield && numCh >= 1;
+    // Mix all visible channels using ChannelInfo::colorR/G/B * intensity to
+    // mirror the viewport's channelShader path (which is taken whenever the
+    // viewport does not use its single-channel-brightfield fast path). This
+    // matters for 3-channel brightfield CZIs where SlideIO labels the BGR
+    // planes with channel colors blue/green/red — a naive src[0]→R / src[1]→G
+    // / src[2]→B copy would swap R and B and the minimap would not match the
+    // viewport.
+    const bool useChannelMix = !(slideInfo.isBrightfield && numCh <= 1) && numCh >= 1;
     struct ChannelMix
     {
         double minVal = 0.0;
@@ -1563,12 +1652,13 @@ void ViewportWidget::generateSceneThumbnails()
                                                         thumbW, thumbH);
                 QImage thumb;
                 if (!blockData.isEmpty() && !blockData.isError()) {
-                    thumb = tileDataToQImage(blockData, numCh);
+                    thumb = tileDataToQImage(blockData, numCh, tempInfo.channels, tempInfo.isBrightfield);
                 }
                 if (thumb.isNull()) {
                     spdlog::info("generateSceneThumbnails: scene {} readBlock failed; "
                                  "falling back to coarse-tile assembly", sceneInfo.index);
-                    thumb = buildCoarseLevelThumbnailFallback(tempAdapter, numCh, thumbW, thumbH);
+                    thumb = buildCoarseLevelThumbnailFallback(tempAdapter, numCh, tempInfo.channels,
+                                                              tempInfo.isBrightfield, thumbW, thumbH);
                 }
                 if (thumb.isNull()) continue;
                 if (m_impl->openOpId.load() != opId) return;
@@ -1628,12 +1718,13 @@ void ViewportWidget::generateAuxImageThumbnails()
                                                         thumbW, thumbH);
                 QImage thumb;
                 if (!blockData.isEmpty() && !blockData.isError()) {
-                    thumb = tileDataToQImage(blockData, numCh);
+                    thumb = tileDataToQImage(blockData, numCh, tempInfo.channels, tempInfo.isBrightfield);
                 }
                 if (thumb.isNull()) {
                     spdlog::info("generateAuxImageThumbnails: aux '{}' readBlock failed; "
                                  "falling back to coarse-tile assembly", auxName);
-                    thumb = buildCoarseLevelThumbnailFallback(tempAdapter, numCh, thumbW, thumbH);
+                    thumb = buildCoarseLevelThumbnailFallback(tempAdapter, numCh, tempInfo.channels,
+                                                              tempInfo.isBrightfield, thumbW, thumbH);
                 }
                 if (thumb.isNull()) continue;
                 if (m_impl->openOpId.load() != opId) return;
@@ -1669,7 +1760,7 @@ QImage ViewportWidget::loadAuxImage(const std::string& auxImageName)
                                         info.width, info.height);
         if (block.isEmpty() || block.isError()) return {};
 
-        QImage out = tileDataToQImage(block, numCh);
+        QImage out = tileDataToQImage(block, numCh, info.channels, info.isBrightfield);
         if (out.isNull()) return {};
         return out.copy();
     } catch (const std::exception& ex) {
