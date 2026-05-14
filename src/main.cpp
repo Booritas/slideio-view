@@ -47,7 +47,6 @@ int main(int argc, char* argv[])
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/app.png")));
 
     slideio::viewer::ui::MainWindow mainWindow;
-    mainWindow.resize(1280, 800);
     mainWindow.show();
 
     if (argc > 1) {

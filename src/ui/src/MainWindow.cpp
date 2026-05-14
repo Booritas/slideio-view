@@ -25,9 +25,12 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QRegion>
+#include <QScreen>
 #include <QSet>
 #include <QSettings>
 #include <QStatusBar>
@@ -623,9 +626,30 @@ MainWindow::MainWindow(QWidget* parent)
         m_impl->repositionOverlays();
     });
 
-    // Restore saved window geometry and dock layout
+    // Restore saved window geometry and dock layout. If no geometry was saved,
+    // or the saved rectangle no longer fits any available display (monitor
+    // disconnected, resolution changed, …), fall back to a default size
+    // centred on the primary screen.
     QSettings settings;
-    restoreGeometry(settings.value("mainWindow/geometry").toByteArray());
+    const QByteArray savedGeometry = settings.value("mainWindow/geometry").toByteArray();
+    bool useDefault = savedGeometry.isEmpty() || !restoreGeometry(savedGeometry);
+    if (!useDefault) {
+        QRegion availableArea;
+        const auto screens = QGuiApplication::screens();
+        for (const QScreen* screen : screens) {
+            availableArea += screen->availableGeometry();
+        }
+        if (!availableArea.contains(frameGeometry())) {
+            useDefault = true;
+        }
+    }
+    if (useDefault) {
+        resize(1280, 800);
+        if (QScreen* primary = QGuiApplication::primaryScreen()) {
+            const QRect avail = primary->availableGeometry();
+            move(avail.center() - QPoint(width() / 2, height() / 2));
+        }
+    }
     restoreState(settings.value("mainWindow/state").toByteArray());
 }
 
