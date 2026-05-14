@@ -255,7 +255,7 @@ struct MainWindow::Impl
                 // NOT changed here — those are user-controlled via the View
                 // menu and persisted across runs by save/restoreState().
                 const auto& info = viewportWidget->slideInfo();
-                if (info.numChannels > 1) {
+                if (info.numChannels > 0) {
                     channelMixerPanel->setChannels(info.channels);
                 } else {
                     channelMixerPanel->clearChannels();

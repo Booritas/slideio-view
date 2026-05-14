@@ -97,6 +97,7 @@ uniform sampler2D uTileTexture;
 uniform float uAlpha;
 uniform float uDisplayMin;
 uniform float uDisplayMax;
+uniform vec3 uChannelColor;
 
 out vec4 fragColor;
 
@@ -106,7 +107,7 @@ void main()
     float range = uDisplayMax - uDisplayMin;
     float invRange = (range > 0.0) ? (1.0 / range) : 1.0;
     vec3 mapped = clamp((texel.rgb - uDisplayMin) * invRange, 0.0, 1.0);
-    fragColor = vec4(mapped, texel.a * uAlpha);
+    fragColor = vec4(mapped * uChannelColor, texel.a * uAlpha);
 }
 )glsl";
 
@@ -2251,10 +2252,11 @@ void ViewportWidget::paintGL()
 
     if (m_impl->slideInfo.isBrightfield && m_impl->slideInfo.numChannels <= 1) {
         // --- Single-channel brightfield rendering path ---
-        // Direct tile sampling; no per-channel color tint. (1-channel
-        // fluorescence falls through to the channel-mix path below so that
-        // the channel's pseudo-color is applied — otherwise it would render
-        // as grayscale regardless of the assigned color.)
+        // Direct tile sampling with a single channel-color * intensity tint
+        // pulled from slideInfo.channels[0]. The default brightfield color
+        // for a single-channel slide is white, so an unmoved slider at 1.0×
+        // reproduces native grayscale. (1-channel fluorescence falls through
+        // to the channel-mix path below.)
         m_impl->tileShader->bind();
         m_impl->tileShader->setUniformValue("uViewportSize",
             static_cast<float>(viewport.screenWidth()), static_cast<float>(viewport.screenHeight()));
@@ -2269,6 +2271,24 @@ void ViewportWidget::paintGL()
             m_impl->slideInfo.channelDataType);
         m_impl->tileShader->setUniformValue("uDisplayMin", samplerMin);
         m_impl->tileShader->setUniformValue("uDisplayMax", samplerMax);
+
+        // Channel color × intensity from the channel mixer panel. When the
+        // channel is hidden or the channels vector is unexpectedly empty,
+        // pass black so the slide is suppressed instead of rendering with
+        // stale uniform values from a previous frame.
+        float tintR = 1.0f, tintG = 1.0f, tintB = 1.0f;
+        if (!m_impl->slideInfo.channels.empty()) {
+            const auto& ch0 = m_impl->slideInfo.channels.front();
+            if (ch0.visible) {
+                float intensity = std::clamp(ch0.intensity, 0.0f, 4.0f);
+                tintR = ch0.colorR * intensity;
+                tintG = ch0.colorG * intensity;
+                tintB = ch0.colorB * intensity;
+            } else {
+                tintR = tintG = tintB = 0.0f;
+            }
+        }
+        m_impl->tileShader->setUniformValue("uChannelColor", tintR, tintG, tintB);
 
         // Default tex coord uniforms (full texture, no sub-region)
         m_impl->tileShader->setUniformValue("uTexCoordOffset", 0.0f, 0.0f);
