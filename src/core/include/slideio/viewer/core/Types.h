@@ -153,8 +153,13 @@ inline void assignDefaultFluorescenceColor(ChannelInfo& ch, int channelIndex)
 
 /// Assign default channel colors for brightfield RGB images.
 /// Channel 0=Red, 1=Green, 2=Blue (matching typical RGB interleaving).
-inline void assignDefaultBrightfieldColor(ChannelInfo& ch, int channelIndex)
+/// Single-channel brightfield is grayscale, so its lone channel is tinted white.
+inline void assignDefaultBrightfieldColor(ChannelInfo& ch, int channelIndex, int numChannels)
 {
+    if (numChannels <= 1) {
+        ch.colorR = 1.0f; ch.colorG = 1.0f; ch.colorB = 1.0f;
+        return;
+    }
     switch (channelIndex) {
     case 0: ch.colorR = 1.0f; ch.colorG = 0.0f; ch.colorB = 0.0f; break; // Red
     case 1: ch.colorR = 0.0f; ch.colorG = 1.0f; ch.colorB = 0.0f; break; // Green

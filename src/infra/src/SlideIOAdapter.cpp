@@ -508,7 +508,7 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
     for (int ch = 0; ch < m_slideInfo.numChannels; ++ch) {
         auto& info = m_slideInfo.channels[static_cast<size_t>(ch)];
         if (m_slideInfo.isBrightfield) {
-            core::assignDefaultBrightfieldColor(info, ch);
+            core::assignDefaultBrightfieldColor(info, ch, m_slideInfo.numChannels);
         } else {
             core::assignDefaultFluorescenceColor(info, ch);
         }
@@ -696,7 +696,7 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
     for (int ch = 0; ch < m_slideInfo.numChannels; ++ch) {
         auto& info = m_slideInfo.channels[static_cast<size_t>(ch)];
         if (m_slideInfo.isBrightfield) {
-            core::assignDefaultBrightfieldColor(info, ch);
+            core::assignDefaultBrightfieldColor(info, ch, m_slideInfo.numChannels);
         } else {
             core::assignDefaultFluorescenceColor(info, ch);
         }
