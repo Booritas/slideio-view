@@ -70,15 +70,17 @@ void applyMetadataChannelColors(const ::slideio::Scene& scene,
             ::slideio::Metadata chanAttrs = attrs[ch];
             if (chanAttrs.type() != ::slideio::Metadata::Type::Object) continue;
             // Step 1: apply an explicit, non-white "Color" attribute if the
-            // driver exposes one. White is treated as a "no preference"
-            // sentinel (Zen/CZI convention for spectral channels).
+            // driver exposes one. White is initially treated as a "no
+            // preference" sentinel (Zen/CZI convention for spectral channels)
+            // and resolution is deferred to Step 2/3.
             bool explicitColorApplied = false;
+            bool parsedAsWhite = false;
             if (chanAttrs.contains("Color")) {
                 const std::string colorStr = chanAttrs["Color"].asString();
                 float r, g, b;
                 if (parseChannelHexColor(colorStr, r, g, b)) {
-                    const bool isWhite = r >= 0.999f && g >= 0.999f && b >= 0.999f;
-                    if (!isWhite) {
+                    parsedAsWhite = r >= 0.999f && g >= 0.999f && b >= 0.999f;
+                    if (!parsedAsWhite) {
                         channels[ch].colorR = r;
                         channels[ch].colorG = g;
                         channels[ch].colorB = b;
@@ -96,6 +98,7 @@ void applyMetadataChannelColors(const ::slideio::Scene& scene,
             // Information/Image/Dimensions/Channels/Channel but does NOT
             // forward DisplaySetting/.../Color — so for spectral CZI files
             // this path is what produces the correct hue (matches Zen/QuPath).
+            bool wavelengthApplied = false;
             if (!explicitColorApplied && chanAttrs.contains("EmissionWavelength")) {
                 double nm = 0.0;
                 try { nm = chanAttrs["EmissionWavelength"].asDouble(); }
@@ -105,10 +108,21 @@ void applyMetadataChannelColors(const ::slideio::Scene& scene,
                     channels[ch].colorR = wr;
                     channels[ch].colorG = wg;
                     channels[ch].colorB = wb;
+                    wavelengthApplied = true;
                     spdlog::debug("SlideIOAdapter: channel {} color derived from emission wavelength "
                                   "{:.1f} nm -> ({:.2f},{:.2f},{:.2f})",
                                   ch, nm, wr, wg, wb);
                 }
+            }
+
+            // Step 3: Color was white and we couldn't derive a wavelength
+            // color — honor the literal white. This is the right call for
+            // non-fluorescence channels (transmission/DIC overlay) where
+            // white is a deliberate display choice, not a sentinel.
+            if (!explicitColorApplied && !wavelengthApplied && parsedAsWhite) {
+                channels[ch].colorR = 1.0f;
+                channels[ch].colorG = 1.0f;
+                channels[ch].colorB = 1.0f;
             }
         }
     } catch (const std::exception& ex) {
