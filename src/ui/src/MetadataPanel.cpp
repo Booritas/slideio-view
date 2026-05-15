@@ -4,6 +4,10 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QHeaderView>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QMenu>
 #include <QPoint>
 #include <QString>
@@ -77,6 +81,48 @@ void appendItemAsText(const QTreeWidgetItem* item, int depth, QStringList& out)
     }
 }
 
+QJsonValue metadataNodeToJson(const slideio::viewer::core::MetadataNode& node)
+{
+    using Type = slideio::viewer::core::MetadataNode::Type;
+    switch (node.type) {
+    case Type::Null:
+        return QJsonValue(QJsonValue::Null);
+    case Type::Bool:
+        return QJsonValue(node.value == "true");
+    case Type::Int: {
+        // SlideIOAdapter writes via std::to_string, so this round-trips exactly.
+        const QString text = QString::fromStdString(node.value);
+        bool ok = false;
+        const qint64 v = text.toLongLong(&ok);
+        return ok ? QJsonValue(v) : QJsonValue(text);
+    }
+    case Type::Double: {
+        // SlideIOAdapter formats with %.15g; parse back to a numeric JSON value.
+        const QString text = QString::fromStdString(node.value);
+        bool ok = false;
+        const double v = text.toDouble(&ok);
+        return ok ? QJsonValue(v) : QJsonValue(text);
+    }
+    case Type::String:
+        return QJsonValue(QString::fromStdString(node.value));
+    case Type::Array: {
+        QJsonArray arr;
+        for (const auto& child : node.children) {
+            arr.append(metadataNodeToJson(child));
+        }
+        return arr;
+    }
+    case Type::Object: {
+        QJsonObject obj;
+        for (const auto& child : node.children) {
+            obj.insert(QString::fromStdString(child.name), metadataNodeToJson(child));
+        }
+        return obj;
+    }
+    }
+    return QJsonValue(QJsonValue::Null);
+}
+
 } // namespace
 
 namespace slideio::viewer::ui
@@ -85,6 +131,13 @@ namespace slideio::viewer::ui
 struct MetadataPanel::Impl
 {
     QTreeWidget* tree = nullptr;
+    // Retained from the last setSlideInfo() so "Copy metadata as JSON" can
+    // serialize the original typed tree instead of the display-string view
+    // exposed by the QTreeWidget.
+    core::MetadataNode slideMetadata;
+    core::MetadataNode sceneMetadata;
+    core::MetadataNode channelMetadata;
+    bool hasInfo = false;
 };
 
 MetadataPanel::MetadataPanel(QWidget* parent)
@@ -111,17 +164,27 @@ MetadataPanel::MetadataPanel(QWidget* parent)
     connect(m_impl->tree, &QWidget::customContextMenuRequested, this,
         [this](const QPoint& pos) {
             QMenu menu(m_impl->tree);
-            QAction* copyAction = menu.addAction(QStringLiteral("Copy metadata as text"));
-            copyAction->setEnabled(m_impl->tree->topLevelItemCount() > 0);
+            const bool hasContent = m_impl->tree->topLevelItemCount() > 0;
+            QAction* copyTextAction = menu.addAction(QStringLiteral("Copy metadata as text"));
+            copyTextAction->setEnabled(hasContent);
+            QAction* copyJsonAction = menu.addAction(QStringLiteral("Copy metadata as JSON"));
+            copyJsonAction->setEnabled(hasContent && m_impl->hasInfo);
             QAction* picked = menu.exec(m_impl->tree->viewport()->mapToGlobal(pos));
-            if (picked != copyAction) return;
-
-            QStringList lines;
-            const int topCount = m_impl->tree->topLevelItemCount();
-            for (int i = 0; i < topCount; ++i) {
-                appendItemAsText(m_impl->tree->topLevelItem(i), 0, lines);
+            if (picked == copyTextAction) {
+                QStringList lines;
+                const int topCount = m_impl->tree->topLevelItemCount();
+                for (int i = 0; i < topCount; ++i) {
+                    appendItemAsText(m_impl->tree->topLevelItem(i), 0, lines);
+                }
+                QApplication::clipboard()->setText(lines.join(QChar('\n')));
+            } else if (picked == copyJsonAction) {
+                QJsonObject root;
+                root.insert(QStringLiteral("Slide"), metadataNodeToJson(m_impl->slideMetadata));
+                root.insert(QStringLiteral("Scene"), metadataNodeToJson(m_impl->sceneMetadata));
+                root.insert(QStringLiteral("Channels"), metadataNodeToJson(m_impl->channelMetadata));
+                const QByteArray json = QJsonDocument(root).toJson(QJsonDocument::Indented);
+                QApplication::clipboard()->setText(QString::fromUtf8(json));
             }
-            QApplication::clipboard()->setText(lines.join(QChar('\n')));
         });
 }
 
@@ -130,14 +193,22 @@ MetadataPanel::~MetadataPanel() = default;
 void MetadataPanel::clear()
 {
     m_impl->tree->clear();
+    m_impl->slideMetadata = {};
+    m_impl->sceneMetadata = {};
+    m_impl->channelMetadata = {};
+    m_impl->hasInfo = false;
 }
 
 void MetadataPanel::setSlideInfo(const core::SlideInfo& info)
 {
     m_impl->tree->clear();
-    addRootNode(m_impl->tree, QStringLiteral("Slide"), info.slideMetadata);
-    addRootNode(m_impl->tree, QStringLiteral("Scene"), info.sceneMetadata);
-    addRootNode(m_impl->tree, QStringLiteral("Channels"), info.channelMetadata);
+    m_impl->slideMetadata = info.slideMetadata;
+    m_impl->sceneMetadata = info.sceneMetadata;
+    m_impl->channelMetadata = info.channelMetadata;
+    m_impl->hasInfo = true;
+    addRootNode(m_impl->tree, QStringLiteral("Slide"), m_impl->slideMetadata);
+    addRootNode(m_impl->tree, QStringLiteral("Scene"), m_impl->sceneMetadata);
+    addRootNode(m_impl->tree, QStringLiteral("Channels"), m_impl->channelMetadata);
 }
 
 } // namespace slideio::viewer::ui
