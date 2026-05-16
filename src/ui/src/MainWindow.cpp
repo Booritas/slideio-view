@@ -266,6 +266,8 @@ struct MainWindow::Impl
 
                 spdlog::info("MainWindow: setting Z/T: numZ={}, numT={}", info.numZSlices, info.numTFrames);
                 ztNavigationWidget->setSliceFrameCounts(info.numZSlices, info.numTFrames);
+                ztNavigationWidget->setCurrentValues(viewportWidget->currentZSlice(),
+                                                     viewportWidget->currentTFrame());
                 ztNavigationWidget->raise();
 
                 // On intra-slide opens (clicking a scene/aux thumbnail in the

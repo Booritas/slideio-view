@@ -46,7 +46,8 @@ public:
     // SlideIO picks the best pyramid level internally and interpolates as needed.
     // Useful for sharp thumbnails and overview images. Throws on read errors.
     core::TileData readBlock(int slideX, int slideY, int slideWidth, int slideHeight,
-                              int targetWidth, int targetHeight) override;
+                              int targetWidth, int targetHeight,
+                              int zIndex = 0, int tFrame = 0) override;
 
     void setOnLevelMarkedUnreliable(std::function<void(int)> callback) override;
 
