@@ -507,7 +507,8 @@ QImage buildCoarseLevelThumbnailFallback(slideio::viewer::core::ISlideSource& so
                                           int slideNumChannels,
                                           const std::vector<slideio::viewer::core::ChannelInfo>& channels,
                                           bool isBrightfield,
-                                          int targetW, int targetH)
+                                          int targetW, int targetH,
+                                          int zIndex = 0)
 {
     namespace core = slideio::viewer::core;
     auto levels = source.levels();
@@ -529,7 +530,7 @@ QImage buildCoarseLevelThumbnailFallback(slideio::viewer::core::ISlideSource& so
     int validTiles = 0;
     for (int r = 0; r < tilesY; ++r) {
         for (int c = 0; c < tilesX; ++c) {
-            core::TileKey key(coarsestLevel, c, r);
+            core::TileKey key(coarsestLevel, c, r, zIndex);
             auto td = source.readTile(key);
             if (!td.isEmpty() && !td.isError()) {
                 if (dt == DataType::None) dt = td.dataType();
@@ -673,27 +674,63 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
     DataType dt = slideInfo.channelDataType;
 
     // Pass 1: read all coarsest-level tiles and compute global min/max
+    // Iterate over all Z slices when scanning for display ranges. A Z=0
+    // default would miss the signal in fluorescence Z-stacks whose top slice
+    // is out of focus and reads as all zeros (the case that prompted this:
+    // a VSI 2-channel UInt16 Z-stack rendered as black because Z=0 was empty
+    // and QuPath's reported peaks lived in middle slices). Tiles are cached
+    // only for Z=0 / T=0 — the active slice on slide open — to match the
+    // viewport's initial render state without bloating the cache for stacks.
     std::vector<core::TileData> coarseTiles;
     double globalMin = std::numeric_limits<double>::max();
     double globalMax = std::numeric_limits<double>::lowest();
+    std::vector<double> channelMin;
+    std::vector<double> channelMax;
+    if (numCh > 1) {
+        channelMin.assign(static_cast<size_t>(numCh), std::numeric_limits<double>::max());
+        channelMax.assign(static_cast<size_t>(numCh), std::numeric_limits<double>::lowest());
+    }
+
+    const int numZ = std::max(1, slideInfo.numZSlices);
+    // Preferred Z for cache + thumbnail rendering. Middle slice for stacks,
+    // which is the usual in-focus slice for fluorescence Z-stacks and far
+    // more useful as a startup view than Z=0 (which is often blank).
+    const int preferredZ = numZ > 1 ? numZ / 2 : 0;
 
     for (int r = 0; r < coarseLvl.tilesY; ++r) {
         for (int c = 0; c < coarseLvl.tilesX; ++c) {
-            core::TileKey tileKey(coarsestLevel, c, r);
-            auto tileData = loan->readTile(tileKey);
-            if (tileData.isEmpty() || tileData.isError()) {
-                coarseTiles.push_back(std::move(tileData));
-                continue;
+            for (int z = 0; z < numZ; ++z) {
+                core::TileKey tileKey(coarsestLevel, c, r, z);
+                auto tileData = loan->readTile(tileKey);
+                const bool valid = !tileData.isEmpty() && !tileData.isError();
+                if (valid) {
+                    size_t pixelCount = static_cast<size_t>(tileData.width())
+                                      * static_cast<size_t>(tileData.height());
+                    size_t totalElements = pixelCount
+                                         * static_cast<size_t>(tileData.numChannels());
+                    auto [tMin, tMax] = computeMinMax(tileData.buffer().data(), totalElements, dt);
+                    globalMin = std::min(globalMin, tMin);
+                    globalMax = std::max(globalMax, tMax);
+                    if (numCh > 1) {
+                        for (int ch = 0; ch < numCh; ++ch) {
+                            const size_t ch_z = static_cast<size_t>(ch);
+                            computeMinMaxStrided(tileData.buffer().data(), pixelCount,
+                                                 numCh, ch, dt, channelMin[ch_z], channelMax[ch_z]);
+                        }
+                    }
+                }
+                if (z == preferredZ) {
+                    coarseTiles.push_back(std::move(tileData));
+                }
             }
-            size_t totalElements = static_cast<size_t>(tileData.width())
-                                 * static_cast<size_t>(tileData.height())
-                                 * static_cast<size_t>(tileData.numChannels());
-            auto [tMin, tMax] = computeMinMax(tileData.buffer().data(), totalElements, dt);
-            globalMin = std::min(globalMin, tMin);
-            globalMax = std::max(globalMax, tMax);
-            coarseTiles.push_back(std::move(tileData));
         }
     }
+
+    spdlog::info("autodetect: coarse-tile pass: numZ={} numTiles={} valid={} dt={} globalMin={} globalMax={}",
+                 numZ, coarseTiles.size(),
+                 std::count_if(coarseTiles.begin(), coarseTiles.end(),
+                               [](const core::TileData& t){ return !t.isEmpty() && !t.isError(); }),
+                 static_cast<int>(dt), globalMin, globalMax);
 
     if (globalMin < globalMax) {
         slideInfo.displayRange.displayMin = globalMin;
@@ -701,22 +738,11 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
         slideInfo.displayRange.autoDetected = true;
     }
 
-    // Per-channel min/max for multi-channel slides
     if (numCh > 1) {
-        std::vector<double> channelMin(static_cast<size_t>(numCh), std::numeric_limits<double>::max());
-        std::vector<double> channelMax(static_cast<size_t>(numCh), std::numeric_limits<double>::lowest());
-        for (const auto& tileData : coarseTiles) {
-            if (tileData.isEmpty() || tileData.isError()) continue;
-            size_t pixelCount = static_cast<size_t>(tileData.width())
-                              * static_cast<size_t>(tileData.height());
-            for (int ch = 0; ch < numCh; ++ch) {
-                const size_t ch_z = static_cast<size_t>(ch);
-                computeMinMaxStrided(tileData.buffer().data(), pixelCount,
-                                     numCh, ch, dt, channelMin[ch_z], channelMax[ch_z]);
-            }
-        }
         for (int ch = 0; ch < numCh; ++ch) {
             const size_t ch_z = static_cast<size_t>(ch);
+            spdlog::info("autodetect: coarse-tile pass: channel {} min={} max={}",
+                         ch, channelMin[ch_z], channelMax[ch_z]);
             if (ch < static_cast<int>(slideInfo.channels.size())) {
                 if (channelMin[ch_z] < channelMax[ch_z]) {
                     slideInfo.channels[ch_z].displayRange.displayMin = channelMin[ch_z];
@@ -725,6 +751,74 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
                 }
             }
         }
+    }
+
+    // Read the full-slide thumbnail block up front. SlideIO picks its own
+    // pyramid level here, so this usually succeeds even when the coarsest
+    // level above failed to yield any readable tiles (VSI files in particular
+    // can have an unreliable coarsest level). The block data is consumed
+    // below for thumbnail rendering, and — when the per-tile pass above did
+    // not set autoDetected — used as a fallback source for display-range
+    // autodetection. Without this fallback, 16-bit slides whose data only
+    // populates a small fraction of the type range (e.g., UInt16 with peak
+    // ~2k) inherit the {0, 65535} fallback from openSceneSync and render
+    // as nearly black.
+    auto thumbLoan = pool.acquire();
+    auto blockData = thumbLoan->readBlock(0, 0, slideInfo.width, slideInfo.height,
+                                          thumbW, thumbH, preferredZ);
+    const bool blockUsable = !blockData.isEmpty() && !blockData.isError();
+    spdlog::info("autodetect: readBlock usable={} blockSize={}x{} blockCh={} blockDt={}",
+                 blockUsable, blockData.width(), blockData.height(),
+                 blockData.numChannels(), static_cast<int>(blockData.dataType()));
+
+    if (!slideInfo.displayRange.autoDetected && blockUsable) {
+        const int blockCh = blockData.numChannels();
+        const size_t blockPixels = static_cast<size_t>(blockData.width())
+                                 * static_cast<size_t>(blockData.height());
+        const size_t totalElements = blockPixels * static_cast<size_t>(blockCh);
+        auto [bMin, bMax] = computeMinMax(blockData.buffer().data(), totalElements, dt);
+        spdlog::info("autodetect: block fallback global: min={} max={}", bMin, bMax);
+        if (bMin < bMax) {
+            slideInfo.displayRange.displayMin = bMin;
+            slideInfo.displayRange.displayMax = bMax;
+            slideInfo.displayRange.autoDetected = true;
+            globalMin = bMin;
+            globalMax = bMax;
+        }
+        if (numCh > 1 && blockCh >= numCh) {
+            for (int ch = 0; ch < numCh; ++ch) {
+                const size_t ch_z = static_cast<size_t>(ch);
+                if (ch >= static_cast<int>(slideInfo.channels.size())) break;
+                if (slideInfo.channels[ch_z].displayRange.autoDetected) continue;
+                double cMin = std::numeric_limits<double>::max();
+                double cMax = std::numeric_limits<double>::lowest();
+                computeMinMaxStrided(blockData.buffer().data(), blockPixels,
+                                     blockCh, ch, dt, cMin, cMax);
+                spdlog::info("autodetect: block fallback channel {} min={} max={}",
+                             ch, cMin, cMax);
+                if (cMin < cMax) {
+                    slideInfo.channels[ch_z].displayRange.displayMin = cMin;
+                    slideInfo.channels[ch_z].displayRange.displayMax = cMax;
+                    slideInfo.channels[ch_z].displayRange.autoDetected = true;
+                }
+            }
+        }
+    }
+
+    // Final ranges, after both passes
+    spdlog::info("autodetect: final slide-wide: min={} max={} autoDetected={}",
+                 slideInfo.displayRange.displayMin,
+                 slideInfo.displayRange.displayMax,
+                 slideInfo.displayRange.autoDetected);
+    for (size_t ch = 0; ch < slideInfo.channels.size(); ++ch) {
+        const auto& dr = slideInfo.channels[ch].displayRange;
+        spdlog::info("autodetect: final channel {} min={} max={} autoDetected={} color=({:.2f},{:.2f},{:.2f}) intensity={:.2f} visible={}",
+                     ch, dr.displayMin, dr.displayMax, dr.autoDetected,
+                     slideInfo.channels[ch].colorR,
+                     slideInfo.channels[ch].colorG,
+                     slideInfo.channels[ch].colorB,
+                     slideInfo.channels[ch].intensity,
+                     slideInfo.channels[ch].visible);
     }
 
     // Thumbnail uses the same per-channel display ranges as the viewport's
@@ -814,11 +908,9 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
     QImage thumbImg(thumbW, thumbH, imgFmt);
     thumbImg.fill(slideInfo.isBrightfield ? Qt::white : Qt::black);
 
-    // SlideIOAdapterPool uses a different concrete type as the loan; cast back
-    // to access readBlock. (loan is a unique_ptr-like wrapper around the adapter.)
-    auto thumbLoan = pool.acquire();
-    auto blockData = thumbLoan->readBlock(0, 0, slideInfo.width, slideInfo.height, thumbW, thumbH);
-    if (!blockData.isEmpty() && !blockData.isError()) {
+    // blockData was read above (before display-range autodetection so its
+    // contents can serve as a fallback source for the min/max scan).
+    if (blockUsable) {
         const uint8_t* src = blockData.buffer().data();
         int srcCh = blockData.numChannels();
         for (int y = 0; y < thumbH; ++y) {
@@ -875,14 +967,15 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
             Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
     }
 
-    // Insert coarsest tiles into cache for instant base-layer preview
+    // Insert coarsest tiles into cache for instant base-layer preview at the
+    // preferred Z (middle slice for Z-stacks; otherwise Z=0).
     {
         int idx = 0;
         for (int r = 0; r < coarseLvl.tilesY; ++r) {
             for (int c = 0; c < coarseLvl.tilesX; ++c) {
                 auto& td = coarseTiles[static_cast<size_t>(idx++)];
                 if (td.isEmpty() || td.isError()) continue;
-                core::TileKey tileKey(coarsestLevel, c, r);
+                core::TileKey tileKey(coarsestLevel, c, r, preferredZ);
                 tileCache.insert(tileKey, std::make_shared<core::TileData>(std::move(td)));
             }
         }
@@ -927,6 +1020,8 @@ SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
 
         // Apply fallback display range if auto-detection didn't yield one
         if (!r.slideInfo.displayRange.autoDetected) {
+            spdlog::warn("openSceneSync: autodetection FAILED, applying fallback for dt={}",
+                         static_cast<int>(r.slideInfo.channelDataType));
             switch (r.slideInfo.channelDataType) {
             case DataType::Byte:    r.slideInfo.displayRange = {0.0, 255.0, false}; break;
             case DataType::UInt16:  r.slideInfo.displayRange = {0.0, 65535.0, false}; break;
@@ -1649,8 +1744,11 @@ void ViewportWidget::generateSceneThumbnails()
                     thumbH = std::max(1, static_cast<int>(thumbH * ratio));
                 }
 
+                // For Z-stacks, sample the middle slice — Z=0 is often blank
+                // in fluorescence stacks, which would produce an all-black thumbnail.
+                const int sceneZ = tempInfo.numZSlices > 1 ? tempInfo.numZSlices / 2 : 0;
                 auto blockData = tempAdapter.readBlock(0, 0, tempInfo.width, tempInfo.height,
-                                                        thumbW, thumbH);
+                                                        thumbW, thumbH, sceneZ);
                 QImage thumb;
                 if (!blockData.isEmpty() && !blockData.isError()) {
                     thumb = tileDataToQImage(blockData, numCh, tempInfo.channels, tempInfo.isBrightfield);
@@ -1659,7 +1757,8 @@ void ViewportWidget::generateSceneThumbnails()
                     spdlog::info("generateSceneThumbnails: scene {} readBlock failed; "
                                  "falling back to coarse-tile assembly", sceneInfo.index);
                     thumb = buildCoarseLevelThumbnailFallback(tempAdapter, numCh, tempInfo.channels,
-                                                              tempInfo.isBrightfield, thumbW, thumbH);
+                                                              tempInfo.isBrightfield, thumbW, thumbH,
+                                                              sceneZ);
                 }
                 if (thumb.isNull()) continue;
                 if (m_impl->openOpId.load() != opId) return;
@@ -1921,6 +2020,13 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
         m_impl->controller->resize(width(), height());
         m_impl->controller->fitToSlide();
     }
+    // Default to the middle slice for Z-stacks. Z=0 is often blank in
+    // fluorescence stacks (out-of-focus top slice), so opening there would
+    // show a black viewport even when the data is correct.
+    m_impl->currentZSlice = m_impl->slideInfo.numZSlices > 1
+        ? m_impl->slideInfo.numZSlices / 2 : 0;
+    m_impl->currentTFrame = 0;
+    m_impl->controller->setZT(m_impl->currentZSlice, m_impl->currentTFrame);
     m_impl->controller->setScheduler(m_impl->scheduler);
     m_impl->controller->requestVisibleTiles();
 
@@ -1929,6 +2035,15 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
     spdlog::info("ViewportWidget::installSceneOpenResult: slide {}x{}, {} levels, {} channels",
                  m_impl->slideInfo.width, m_impl->slideInfo.height,
                  m_impl->slideInfo.numZoomLevels, m_impl->slideInfo.numChannels);
+    spdlog::info("installSceneOpenResult: slide-wide displayRange min={} max={} autoDetected={}",
+                 m_impl->slideInfo.displayRange.displayMin,
+                 m_impl->slideInfo.displayRange.displayMax,
+                 m_impl->slideInfo.displayRange.autoDetected);
+    for (size_t ch = 0; ch < m_impl->slideInfo.channels.size(); ++ch) {
+        const auto& dr = m_impl->slideInfo.channels[ch].displayRange;
+        spdlog::info("installSceneOpenResult: channel {} displayRange min={} max={} autoDetected={}",
+                     ch, dr.displayMin, dr.displayMax, dr.autoDetected);
+    }
 
     if (!result.thumbnail.isNull()) {
         emit thumbnailReady(result.thumbnail);
@@ -2017,6 +2132,13 @@ void ViewportWidget::panByPixels(double dx, double dy)
 
 void ViewportWidget::setChannelSettings(const std::vector<core::ChannelInfo>& channels)
 {
+    for (size_t ch = 0; ch < channels.size(); ++ch) {
+        const auto& dr = channels[ch].displayRange;
+        spdlog::info("setChannelSettings: incoming ch {} displayRange min={} max={} autoDetected={} color=({:.2f},{:.2f},{:.2f}) intensity={:.2f} visible={}",
+                     ch, dr.displayMin, dr.displayMax, dr.autoDetected,
+                     channels[ch].colorR, channels[ch].colorG, channels[ch].colorB,
+                     channels[ch].intensity, channels[ch].visible);
+    }
     if (channels.size() == m_impl->slideInfo.channels.size()) {
         m_impl->slideInfo.channels = channels;
         update();

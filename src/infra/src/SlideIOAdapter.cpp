@@ -1108,7 +1108,8 @@ std::vector<std::string> SlideIOAdapter::availableDriverIds()
 }
 
 core::TileData SlideIOAdapter::readBlock(int slideX, int slideY, int slideWidth, int slideHeight,
-                                          int targetWidth, int targetHeight)
+                                          int targetWidth, int targetHeight,
+                                          int zIndex, int tFrame)
 {
     if (slideWidth <= 0 || slideHeight <= 0 || targetWidth <= 0 || targetHeight <= 0) {
         return core::TileData::createError(targetWidth, targetHeight);
@@ -1128,7 +1129,15 @@ core::TileData SlideIOAdapter::readBlock(int slideX, int slideY, int slideWidth,
                          * static_cast<size_t>(numChannels) * pixelBytes;
         std::vector<uint8_t> buffer(bufSize);
 
-        m_scene->readResampledBlockChannels(blockRect, blockSize, channels, buffer.data(), bufSize);
+        if (m_slideInfo.numZSlices > 1 || m_slideInfo.numTFrames > 1) {
+            std::tuple<int, int> zRange(zIndex, zIndex + 1);
+            std::tuple<int, int> tRange(tFrame, tFrame + 1);
+            m_scene->readResampled4DBlockChannels(blockRect, blockSize, channels,
+                                                   zRange, tRange, buffer.data(), bufSize);
+        } else {
+            m_scene->readResampledBlockChannels(blockRect, blockSize, channels,
+                                                 buffer.data(), bufSize);
+        }
 
         return core::TileData(std::move(buffer), targetWidth, targetHeight,
                                numChannels, m_slideInfo.channelDataType);
