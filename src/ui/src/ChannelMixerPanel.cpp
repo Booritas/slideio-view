@@ -78,7 +78,11 @@ struct ChannelMixerPanel::Impl
     void rebuildRows()
     {
         std::vector<bool> previousExpanded(rows.size());
-        for (size_t i = 0; i < rows.size(); ++i) previousExpanded[i] = rows[i].expanded;
+        std::vector<bool> previousLogScale(rows.size());
+        for (size_t i = 0; i < rows.size(); ++i) {
+            previousExpanded[i] = rows[i].expanded;
+            previousLogScale[i] = rows[i].logScale;
+        }
 
         clearRows();
         rows.reserve(channels.size());
@@ -86,6 +90,10 @@ struct ChannelMixerPanel::Impl
         for (size_t i = 0; i < channels.size(); ++i) {
             const auto& ch = channels[i];
             ChannelRow row;
+
+            if (i < previousLogScale.size()) {
+                row.logScale = previousLogScale[i];
+            }
 
             // Disclosure triangle button
             row.disclosure = new QToolButton(contentWidget);
@@ -219,6 +227,41 @@ struct ChannelMixerPanel::Impl
             "QLineEdit { background:#333; color:#CCC; border:1px solid #555; padding:1px 4px; }");
         editRow->addWidget(row.maxEdit);
 
+        auto* autoBtn = new QPushButton("Auto", frame);
+        autoBtn->setEnabled(ch.autoDisplayRange.autoDetected);
+        autoBtn->setStyleSheet(
+            "QPushButton { background:#444; color:#CCC; border:1px solid #666; padding:2px 8px; }"
+            "QPushButton:disabled { color:#666; }");
+        editRow->addWidget(autoBtn);
+        QObject::connect(autoBtn, &QPushButton::clicked, owner, [this, index]() {
+            applyAutoRange(index);
+        });
+
+        auto* resetBtn = new QPushButton("Reset", frame);
+        resetBtn->setStyleSheet(
+            "QPushButton { background:#444; color:#CCC; border:1px solid #666; padding:2px 8px; }");
+        editRow->addWidget(resetBtn);
+        QObject::connect(resetBtn, &QPushButton::clicked, owner, [this, index]() {
+            applyResetRange(index);
+        });
+
+        auto* logBtn = new QToolButton(frame);
+        logBtn->setText(row.logScale ? "Log" : "Lin");
+        logBtn->setCheckable(true);
+        logBtn->setChecked(row.logScale);
+        logBtn->setStyleSheet(
+            "QToolButton { background:#444; color:#CCC; border:1px solid #666; padding:2px 8px; }"
+            "QToolButton:checked { background:#555; }");
+        editRow->addWidget(logBtn);
+        QObject::connect(logBtn, &QToolButton::toggled, owner, [this, index, logBtn](bool checked) {
+            if (index >= rows.size()) return;
+            rows[index].logScale = checked;
+            logBtn->setText(checked ? "Log" : "Lin");
+            if (rows[index].histogramView) {
+                rows[index].histogramView->setLogScale(checked);
+            }
+        });
+
         vLayout->addLayout(editRow);
 
         // --- Wire histogram drag -> textboxes (live) ---
@@ -299,6 +342,61 @@ struct ChannelMixerPanel::Impl
             rows[index].histogramView->setDisplayRange(channels[index].displayRange.displayMin, v);
         }
         emit owner->channelSettingsChanged(channels);
+    }
+
+    void applyAutoRange(size_t index)
+    {
+        if (index >= channels.size() || index >= rows.size()) return;
+        auto& ch = channels[index];
+        if (!ch.autoDisplayRange.autoDetected) return;
+        ch.displayRange = ch.autoDisplayRange;
+        ch.userOverrideRange = false;
+        syncRowControls(index);
+        emit owner->channelSettingsChanged(channels);
+    }
+
+    void applyResetRange(size_t index)
+    {
+        if (index >= channels.size() || index >= rows.size()) return;
+        auto& ch = channels[index];
+        const auto [rMin, rMax] = dataTypeFullRange(ch.dataType);
+        ch.displayRange.displayMin = rMin;
+        ch.displayRange.displayMax = rMax;
+        ch.displayRange.autoDetected = false;
+        ch.userOverrideRange = true;
+        syncRowControls(index);
+        emit owner->channelSettingsChanged(channels);
+    }
+
+    void syncRowControls(size_t index)
+    {
+        if (index >= rows.size()) return;
+        auto& row = rows[index];
+        const auto& ch = channels[index];
+        if (row.minEdit) row.minEdit->setText(QString::number(ch.displayRange.displayMin));
+        if (row.maxEdit) row.maxEdit->setText(QString::number(ch.displayRange.displayMax));
+        if (row.histogramView) {
+            row.histogramView->setDisplayRange(ch.displayRange.displayMin,
+                                               ch.displayRange.displayMax);
+        }
+    }
+
+    static std::pair<double, double> dataTypeFullRange(core::DataType dt)
+    {
+        switch (dt) {
+            case core::DataType::Byte:    return {0.0, 255.0};
+            case core::DataType::Int8:    return {-128.0, 127.0};
+            case core::DataType::UInt16:  return {0.0, 65535.0};
+            case core::DataType::Int16:   return {-32768.0, 32767.0};
+            case core::DataType::UInt32:  return {0.0, 4294967295.0};
+            case core::DataType::Int32:   return {-2147483648.0, 2147483647.0};
+            case core::DataType::Int64:   return {-9223372036854775808.0, 9223372036854775807.0};
+            case core::DataType::UInt64:  return {0.0, 18446744073709551615.0};
+            case core::DataType::Float16: return {0.0, 1.0};
+            case core::DataType::Float32: return {0.0, 1.0};
+            case core::DataType::Float64: return {0.0, 1.0};
+            default:                      return {0.0, 255.0};
+        }
     }
 
     static double epsilonFor(core::DataType dt)
