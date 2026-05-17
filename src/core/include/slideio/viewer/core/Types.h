@@ -78,7 +78,8 @@ struct ChannelInfo
     float intensity = 1.0f; // 0.0–4.0 brightness multiplier (1.0 = unity gain)
     bool visible = true;
     DisplayRange displayRange;
-    DisplayRange autoDisplayRange;   // frozen snapshot of autodetect result; "Auto" button restores from this
+    DisplayRange autoDisplayRange;   // frozen snapshot of autodetect result; "Auto" button restores from this.
+                                     // INVARIANT: autoDisplayRange.autoDetected is true iff autodetect produced a usable range for this channel.
     ChannelHistogram histogram;      // populated once at slide open
     bool userOverrideRange = false;  // true when user has edited min/max or clicked Reset
 };
