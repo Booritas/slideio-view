@@ -32,6 +32,7 @@ CMakeUserPresets.json
 
 # Claude Code
 .claude/
+.superpowers/
 
 # OS
 Thumbs.db
