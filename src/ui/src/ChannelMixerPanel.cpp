@@ -170,7 +170,7 @@ struct ChannelMixerPanel::Impl
 
     QWidget* buildExpandedContainer(size_t index, ChannelRow& row)
     {
-        if (index >= channels.size()) return nullptr;
+        Q_ASSERT(index < channels.size());
         const auto& ch = channels[index];
 
         auto* frame = new QFrame(contentWidget);
@@ -248,7 +248,7 @@ struct ChannelMixerPanel::Impl
 
     void commitDisplayRange(size_t index, double minV, double maxV)
     {
-        if (index >= channels.size()) return;
+        if (index >= channels.size() || index >= rows.size()) return;
         channels[index].displayRange.displayMin = minV;
         channels[index].displayRange.displayMax = maxV;
         channels[index].userOverrideRange = true;
@@ -304,6 +304,7 @@ struct ChannelMixerPanel::Impl
     static double epsilonFor(core::DataType dt)
     {
         switch (dt) {
+            case core::DataType::Float16:
             case core::DataType::Float32:
             case core::DataType::Float64:
                 return 1e-6;
