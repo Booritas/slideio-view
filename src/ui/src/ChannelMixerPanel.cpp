@@ -405,15 +405,17 @@ struct ChannelMixerPanel::Impl
 
     void onMasterClicked()
     {
-        // The Qt click handler fires AFTER the widget's check-state is automatically
-        // toggled by tri-state cycle, but we ignore the new visual state and re-derive
-        // the action from `channels` (the source of truth).
+        // Click on Partial means "show all" (the literal sense of "All channels"),
+        // with the partial state stashed so the user can restore it later via
+        // Unchecked -> click. Without this, starting from Partial would cycle
+        // Partial -> Unchecked -> Partial and "all on" would be unreachable.
         Qt::CheckState pre = currentMasterState();
-        if (pre == Qt::Checked || pre == Qt::PartiallyChecked) {
-            // -> all-off, snapshot first
+        if (pre == Qt::PartiallyChecked) {
             std::vector<bool> snapshot(channels.size());
             for (size_t i = 0; i < channels.size(); ++i) snapshot[i] = channels[i].visible;
             preToggleVisibility = std::move(snapshot);
+            for (auto& ch : channels) ch.visible = true;
+        } else if (pre == Qt::Checked) {
             for (auto& ch : channels) ch.visible = false;
         } else {
             // pre == Unchecked
