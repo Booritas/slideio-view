@@ -8,6 +8,7 @@ add_library(slideio-viewer-ui STATIC
     src/ZoomIndicatorWidget.cpp
     src/StatusBarManager.cpp
     src/ChannelMixerPanel.cpp
+    src/ChannelHistogramView.cpp
     src/SceneThumbnailPanel.cpp
     src/ZTNavigationWidget.cpp
     src/LoadingOverlay.cpp
