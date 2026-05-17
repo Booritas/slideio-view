@@ -38,7 +38,7 @@ ChannelHistogramView::ChannelHistogramView(QWidget* parent)
 void ChannelHistogramView::setHistogram(const core::ChannelHistogram& h)
 {
     m_histogram = h;
-    if (m_displayMin == 0.0 && m_displayMax == 0.0) {
+    if (!m_displayRangeSet) {
         m_displayMin = h.rangeMin;
         m_displayMax = h.rangeMax;
     }
@@ -49,6 +49,7 @@ void ChannelHistogramView::setDisplayRange(double minVal, double maxVal)
 {
     m_displayMin = minVal;
     m_displayMax = maxVal;
+    m_displayRangeSet = true;
     update();
 }
 
@@ -106,7 +107,7 @@ void ChannelHistogramView::paintEvent(QPaintEvent*)
     const int h = height();
     p.fillRect(rect(), QColor(0x25, 0x25, 0x25));
 
-    if (!m_histogram.valid || m_histogram.bins.empty()) {
+    if (!m_histogram.valid || m_histogram.bins.size() < 2) {
         p.setPen(QColor(0x88, 0x88, 0x88));
         p.drawText(rect(), Qt::AlignCenter, QStringLiteral("Histogram unavailable"));
         return;
@@ -184,15 +185,11 @@ void ChannelHistogramView::mouseMoveEvent(QMouseEvent* event)
 
     const double newVal = xToValue(event->pos().x());
     if (m_dragHandle == Handle::Min) {
-        double clamped = clampToRange(newVal, m_histogram.rangeMin,
-                                      m_displayMax - 1e-6);
-        if (clamped >= m_displayMax) clamped = m_displayMax - 1e-6;
-        m_displayMin = clamped;
+        m_displayMin = clampToRange(newVal, m_histogram.rangeMin,
+                                    m_displayMax - 1e-6);
     } else {
-        double clamped = clampToRange(newVal, m_displayMin + 1e-6,
-                                      m_histogram.rangeMax);
-        if (clamped <= m_displayMin) clamped = m_displayMin + 1e-6;
-        m_displayMax = clamped;
+        m_displayMax = clampToRange(newVal, m_displayMin + 1e-6,
+                                    m_histogram.rangeMax);
     }
     update();
     emit displayRangeChanged(m_displayMin, m_displayMax);

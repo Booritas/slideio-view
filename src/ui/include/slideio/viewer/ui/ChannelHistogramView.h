@@ -43,6 +43,7 @@ private:
     float m_colorG = 1.0f;
     float m_colorB = 1.0f;
     bool m_logScale = true;
+    bool m_displayRangeSet = false;
     Handle m_dragHandle = Handle::None;
 };
 
