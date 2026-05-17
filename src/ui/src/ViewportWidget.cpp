@@ -2591,7 +2591,7 @@ void ViewportWidget::paintGL()
                 // which historically took the brightfield path). Without this the
                 // default {0,255} clamps Gray16 data into saturation and the
                 // entire image renders as a flat color.
-                const bool useChannelRange = chInfo.displayRange.autoDetected;
+                const bool useChannelRange = chInfo.userOverrideRange || chInfo.displayRange.autoDetected;
                 const double dispMin = useChannelRange
                     ? chInfo.displayRange.displayMin
                     : m_impl->slideInfo.displayRange.displayMin;
