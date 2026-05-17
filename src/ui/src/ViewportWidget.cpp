@@ -717,6 +717,9 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
     const int preferredZ = numZ > 1 ? numZ / 2 : 0;
     const int numT = std::max(1, slideInfo.numTFrames);
     const int preferredT = numT > 1 ? numT / 2 : 0;
+    // TODO: the coarse-tile loop below iterates only over Z; T is only sampled
+    // in the readBlock thumbnail call. If a future T-series slide has an empty
+    // T=0, autodetect min/max may be wrong unless the block fallback succeeds.
 
     for (int r = 0; r < coarseLvl.tilesY; ++r) {
         for (int c = 0; c < coarseLvl.tilesX; ++c) {
