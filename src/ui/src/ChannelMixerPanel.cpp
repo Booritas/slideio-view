@@ -48,6 +48,12 @@ struct ChannelMixerPanel::Impl
     QCheckBox* masterCheckBox = nullptr;
     QLabel*    visibleCountLabel = nullptr;
     std::optional<std::vector<bool>> preToggleVisibility;
+    // Snapshot of the channel vector as it was when setChannels was last called.
+    // Drives the "Reset All" button — restores color, intensity, visibility, and
+    // displayRange to the post-slide-open state. autoDisplayRange and histogram
+    // are write-once and survive on the live channels too, so they need no
+    // separate snapshot.
+    std::optional<std::vector<core::ChannelInfo>> originalChannels;
 
     void buildUi()
     {
@@ -105,6 +111,17 @@ struct ChannelMixerPanel::Impl
             onMasterClicked();
         });
         headerLayout->addWidget(masterCheckBox);
+
+        auto* resetAllBtn = new QPushButton("Reset All", contentWidget);
+        resetAllBtn->setEnabled(originalChannels.has_value());
+        resetAllBtn->setStyleSheet(
+            "QPushButton { background:#444; color:#CCC; border:1px solid #666; padding:2px 8px; }"
+            "QPushButton:disabled { color:#666; }");
+        QObject::connect(resetAllBtn, &QPushButton::clicked, owner, [this]() {
+            resetAllChannels();
+        });
+        headerLayout->addWidget(resetAllBtn);
+
         headerLayout->addStretch();
 
         visibleCountLabel = new QLabel(contentWidget);
@@ -442,6 +459,18 @@ struct ChannelMixerPanel::Impl
         emit owner->channelSettingsChanged(channels);
     }
 
+    void resetAllChannels()
+    {
+        if (!originalChannels.has_value() ||
+            originalChannels->size() != channels.size()) {
+            return;
+        }
+        channels = *originalChannels;
+        preToggleVisibility.reset();
+        rebuildRows();
+        emit owner->channelSettingsChanged(channels);
+    }
+
     Qt::CheckState currentMasterState() const
     {
         if (channels.empty()) return Qt::Unchecked;
@@ -574,6 +603,7 @@ ChannelMixerPanel::~ChannelMixerPanel() = default;
 void ChannelMixerPanel::setChannels(const std::vector<core::ChannelInfo>& channels)
 {
     m_impl->channels = channels;
+    m_impl->originalChannels = channels;
     m_impl->preToggleVisibility.reset();
     m_impl->rebuildRows();
 }
@@ -581,6 +611,7 @@ void ChannelMixerPanel::setChannels(const std::vector<core::ChannelInfo>& channe
 void ChannelMixerPanel::clearChannels()
 {
     m_impl->channels.clear();
+    m_impl->originalChannels.reset();
     m_impl->preToggleVisibility.reset();
     m_impl->clearRows();
 }
