@@ -112,3 +112,18 @@ TEST_CASE("Histogram is a no-op when rangeMax <= rangeMin", "[core][Histogram]")
         REQUIRE(v == 0);
     }
 }
+
+TEST_CASE("Histogram of all-zero Byte buffer concentrates in bin 0", "[core][Histogram]")
+{
+    const std::array<uint8_t, 5> data = {0, 0, 0, 0, 0};
+    std::vector<uint32_t> bins(kNumBins, 0);
+
+    computeHistogramStrided(data.data(), data.size(), 1, 0,
+                            DataType::Byte, 0.0, 255.0,
+                            bins.data(), kNumBins);
+
+    REQUIRE(bins[0] == data.size());
+    for (int i = 1; i < kNumBins; ++i) {
+        REQUIRE(bins[i] == 0);
+    }
+}
