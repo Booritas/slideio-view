@@ -15,6 +15,7 @@
 #include <QVBoxLayout>
 
 #include <cmath>
+#include <optional>
 
 namespace slideio::viewer::ui
 {
@@ -43,6 +44,10 @@ struct ChannelMixerPanel::Impl
     QScrollArea* scrollArea = nullptr;
     QWidget* contentWidget = nullptr;
     QVBoxLayout* contentLayout = nullptr;
+
+    QCheckBox* masterCheckBox = nullptr;
+    QLabel*    visibleCountLabel = nullptr;
+    std::optional<std::vector<bool>> preToggleVisibility;
 
     void buildUi()
     {
@@ -87,6 +92,35 @@ struct ChannelMixerPanel::Impl
         clearRows();
         rows.reserve(channels.size());
 
+        // --- Master toggle header ---
+        auto* headerLayout = new QHBoxLayout();
+        headerLayout->setContentsMargins(0, 0, 0, 4);
+        headerLayout->setSpacing(4);
+
+        masterCheckBox = new QCheckBox(contentWidget);
+        masterCheckBox->setTristate(true);
+        masterCheckBox->setStyleSheet("QCheckBox { color: #CCC; font-weight: bold; }");
+        masterCheckBox->setText("All channels");
+        QObject::connect(masterCheckBox, &QCheckBox::clicked, owner, [this](bool /*checked*/) {
+            onMasterClicked();
+        });
+        headerLayout->addWidget(masterCheckBox);
+        headerLayout->addStretch();
+
+        visibleCountLabel = new QLabel(contentWidget);
+        visibleCountLabel->setStyleSheet("color:#888; font-size:11px;");
+        headerLayout->addWidget(visibleCountLabel);
+
+        contentLayout->addLayout(headerLayout);
+
+        // Separator
+        auto* sep = new QFrame(contentWidget);
+        sep->setFrameShape(QFrame::HLine);
+        sep->setStyleSheet("color:#444;");
+        contentLayout->addWidget(sep);
+
+        refreshMasterState();
+
         for (size_t i = 0; i < channels.size(); ++i) {
             const auto& ch = channels[i];
             ChannelRow row;
@@ -117,6 +151,7 @@ struct ChannelMixerPanel::Impl
             QObject::connect(row.checkBox, &QCheckBox::toggled, owner, [this, i](bool checked) {
                 if (i < channels.size()) {
                     channels[i].visible = checked;
+                    refreshMasterState();
                     emit owner->channelSettingsChanged(channels);
                 }
             });
@@ -368,6 +403,64 @@ struct ChannelMixerPanel::Impl
         emit owner->channelSettingsChanged(channels);
     }
 
+    void onMasterClicked()
+    {
+        // The Qt click handler fires AFTER the widget's check-state is automatically
+        // toggled by tri-state cycle, but we ignore the new visual state and re-derive
+        // the action from `channels` (the source of truth).
+        Qt::CheckState pre = currentMasterState();
+        if (pre == Qt::Checked || pre == Qt::PartiallyChecked) {
+            // -> all-off, snapshot first
+            std::vector<bool> snapshot(channels.size());
+            for (size_t i = 0; i < channels.size(); ++i) snapshot[i] = channels[i].visible;
+            preToggleVisibility = std::move(snapshot);
+            for (auto& ch : channels) ch.visible = false;
+        } else {
+            // pre == Unchecked
+            if (preToggleVisibility.has_value() &&
+                preToggleVisibility->size() == channels.size()) {
+                for (size_t i = 0; i < channels.size(); ++i) {
+                    channels[i].visible = (*preToggleVisibility)[i];
+                }
+                preToggleVisibility.reset();
+            } else {
+                for (auto& ch : channels) ch.visible = true;
+            }
+        }
+
+        // Reflect into per-row checkboxes WITHOUT re-emitting their toggled signals.
+        for (size_t i = 0; i < rows.size() && i < channels.size(); ++i) {
+            if (rows[i].checkBox) {
+                QSignalBlocker block(rows[i].checkBox);
+                rows[i].checkBox->setChecked(channels[i].visible);
+            }
+        }
+
+        refreshMasterState();
+        emit owner->channelSettingsChanged(channels);
+    }
+
+    Qt::CheckState currentMasterState() const
+    {
+        if (channels.empty()) return Qt::Unchecked;
+        size_t onCount = 0;
+        for (const auto& ch : channels) if (ch.visible) ++onCount;
+        if (onCount == 0) return Qt::Unchecked;
+        if (onCount == channels.size()) return Qt::Checked;
+        return Qt::PartiallyChecked;
+    }
+
+    void refreshMasterState()
+    {
+        if (!masterCheckBox || !visibleCountLabel) return;
+        QSignalBlocker block(masterCheckBox);
+        masterCheckBox->setCheckState(currentMasterState());
+
+        size_t visibleCount = 0;
+        for (const auto& ch : channels) if (ch.visible) ++visibleCount;
+        visibleCountLabel->setText(QString("%1 visible").arg(visibleCount));
+    }
+
     void syncRowControls(size_t index)
     {
         if (index >= rows.size()) return;
@@ -472,12 +565,14 @@ ChannelMixerPanel::~ChannelMixerPanel() = default;
 void ChannelMixerPanel::setChannels(const std::vector<core::ChannelInfo>& channels)
 {
     m_impl->channels = channels;
+    m_impl->preToggleVisibility.reset();
     m_impl->rebuildRows();
 }
 
 void ChannelMixerPanel::clearChannels()
 {
     m_impl->channels.clear();
+    m_impl->preToggleVisibility.reset();
     m_impl->clearRows();
 }
 
