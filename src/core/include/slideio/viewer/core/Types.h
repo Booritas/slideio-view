@@ -28,6 +28,10 @@ enum class DataType
     None
 };
 
+/// Number of bins used for per-channel histograms. Byte data gets exactly
+/// one bin per code; higher-precision data is quantized.
+constexpr int kNumBins = 256;
+
 inline size_t dataTypeSize(DataType dt)
 {
     switch (dt) {
@@ -55,6 +59,15 @@ struct DisplayRange
     bool autoDetected = false;
 };
 
+struct ChannelHistogram
+{
+    std::vector<uint32_t> bins;    // size == kNumBins when valid; empty otherwise
+    double rangeMin = 0.0;         // pixel value mapped to bins[0]
+    double rangeMax = 0.0;         // pixel value mapped to bins.back()
+    uint64_t totalSamples = 0;     // sum of bins[]; used to guard log-axis scaling
+    bool valid = false;            // false if computation failed or was skipped
+};
+
 struct ChannelInfo
 {
     std::string name;
@@ -65,6 +78,9 @@ struct ChannelInfo
     float intensity = 1.0f; // 0.0–4.0 brightness multiplier (1.0 = unity gain)
     bool visible = true;
     DisplayRange displayRange;
+    DisplayRange autoDisplayRange;   // frozen snapshot of autodetect result; "Auto" button restores from this
+    ChannelHistogram histogram;      // populated once at slide open
+    bool userOverrideRange = false;  // true when user has edited min/max or clicked Reset
 };
 
 /// Map a visible-spectrum wavelength (nm) to an sRGB color via Bruton's
