@@ -3,6 +3,7 @@ add_library(slideio-viewer-core STATIC
     src/TilePyramid.cpp
     src/Viewport.cpp
     src/CoordinateSystem.cpp
+    src/Histogram.cpp
 )
 
 target_include_directories(slideio-viewer-core PUBLIC
