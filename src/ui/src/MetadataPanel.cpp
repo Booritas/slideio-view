@@ -8,12 +8,15 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QLineEdit>
 #include <QMenu>
 #include <QPoint>
 #include <QString>
 #include <QStringList>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
+#include <QVBoxLayout>
+#include <QWidget>
 
 namespace
 {
@@ -81,6 +84,25 @@ void appendItemAsText(const QTreeWidgetItem* item, int depth, QStringList& out)
     }
 }
 
+// Hide rows whose Property and Value columns do not contain `needle`,
+// keeping ancestor rows of any matching descendant visible. Returns true
+// if the item or any descendant should remain visible.
+bool applyFilterToItem(QTreeWidgetItem* item, const QString& needle)
+{
+    bool descendantVisible = false;
+    for (int i = 0; i < item->childCount(); ++i) {
+        if (applyFilterToItem(item->child(i), needle)) {
+            descendantVisible = true;
+        }
+    }
+    const bool selfMatches = needle.isEmpty()
+        || item->text(0).contains(needle, Qt::CaseInsensitive)
+        || item->text(1).contains(needle, Qt::CaseInsensitive);
+    const bool visible = selfMatches || descendantVisible;
+    item->setHidden(!visible);
+    return visible;
+}
+
 QJsonValue metadataNodeToJson(const slideio::viewer::core::MetadataNode& node)
 {
     using Type = slideio::viewer::core::MetadataNode::Type;
@@ -130,6 +152,7 @@ namespace slideio::viewer::ui
 
 struct MetadataPanel::Impl
 {
+    QLineEdit* filterEdit = nullptr;
     QTreeWidget* tree = nullptr;
     // Retained from the last setSlideInfo() so "Copy metadata as JSON" can
     // serialize the original typed tree instead of the display-string view
@@ -138,7 +161,27 @@ struct MetadataPanel::Impl
     core::MetadataNode sceneMetadata;
     core::MetadataNode channelMetadata;
     bool hasInfo = false;
+
+    void applyFilter();
 };
+
+void MetadataPanel::Impl::applyFilter()
+{
+    const QString needle = filterEdit->text().trimmed();
+    const int topCount = tree->topLevelItemCount();
+    for (int i = 0; i < topCount; ++i) {
+        applyFilterToItem(tree->topLevelItem(i), needle);
+    }
+    if (needle.isEmpty()) {
+        // Restore default state: top-level roots expanded, descendants collapsed.
+        tree->collapseAll();
+        for (int i = 0; i < topCount; ++i) {
+            tree->topLevelItem(i)->setExpanded(true);
+        }
+    } else {
+        tree->expandAll();
+    }
+}
 
 MetadataPanel::MetadataPanel(QWidget* parent)
     : QDockWidget("Metadata", parent)
@@ -147,7 +190,17 @@ MetadataPanel::MetadataPanel(QWidget* parent)
     setObjectName(QStringLiteral("MetadataPanel"));
     setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
 
-    m_impl->tree = new QTreeWidget(this);
+    auto* container = new QWidget(this);
+    auto* layout = new QVBoxLayout(container);
+    layout->setContentsMargins(4, 4, 4, 4);
+    layout->setSpacing(4);
+
+    m_impl->filterEdit = new QLineEdit(container);
+    m_impl->filterEdit->setPlaceholderText(QStringLiteral("Filter…"));
+    m_impl->filterEdit->setClearButtonEnabled(true);
+    layout->addWidget(m_impl->filterEdit);
+
+    m_impl->tree = new QTreeWidget(container);
     m_impl->tree->setColumnCount(2);
     m_impl->tree->setHeaderLabels(QStringList() << "Property" << "Value");
     m_impl->tree->setRootIsDecorated(true);
@@ -158,7 +211,12 @@ MetadataPanel::MetadataPanel(QWidget* parent)
     m_impl->tree->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_impl->tree->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     m_impl->tree->header()->setStretchLastSection(true);
-    setWidget(m_impl->tree);
+    layout->addWidget(m_impl->tree);
+
+    setWidget(container);
+
+    connect(m_impl->filterEdit, &QLineEdit::textChanged, this,
+        [this](const QString&) { m_impl->applyFilter(); });
 
     m_impl->tree->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_impl->tree, &QWidget::customContextMenuRequested, this,
@@ -197,6 +255,7 @@ void MetadataPanel::clear()
     m_impl->sceneMetadata = {};
     m_impl->channelMetadata = {};
     m_impl->hasInfo = false;
+    m_impl->filterEdit->clear();
 }
 
 void MetadataPanel::setSlideInfo(const core::SlideInfo& info)
@@ -209,6 +268,7 @@ void MetadataPanel::setSlideInfo(const core::SlideInfo& info)
     addRootNode(m_impl->tree, QStringLiteral("Slide"), m_impl->slideMetadata);
     addRootNode(m_impl->tree, QStringLiteral("Scene"), m_impl->sceneMetadata);
     addRootNode(m_impl->tree, QStringLiteral("Channels"), m_impl->channelMetadata);
+    m_impl->applyFilter();
 }
 
 } // namespace slideio::viewer::ui
