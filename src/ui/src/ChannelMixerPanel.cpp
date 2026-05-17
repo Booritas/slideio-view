@@ -541,6 +541,13 @@ struct ChannelMixerPanel::Impl
                               channels[index].colorG,
                               channels[index].colorB);
 
+        if (rows[index].histogramView) {
+            rows[index].histogramView->setChannelColor(
+                channels[index].colorR,
+                channels[index].colorG,
+                channels[index].colorB);
+        }
+
         emit owner->channelSettingsChanged(channels);
     }
 };
