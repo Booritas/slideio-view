@@ -7,6 +7,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSlider>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <cmath>
@@ -18,10 +19,13 @@ struct ChannelMixerPanel::Impl
 {
     struct ChannelRow
     {
-        QCheckBox* checkBox = nullptr;
-        QLabel* nameLabel = nullptr;
+        QToolButton* disclosure = nullptr;
+        QCheckBox*   checkBox = nullptr;
+        QLabel*      nameLabel = nullptr;
         QPushButton* colorButton = nullptr;
-        QSlider* intensitySlider = nullptr;
+        QSlider*     intensitySlider = nullptr;
+        QWidget*     expandedContainer = nullptr;  // null until first expanded
+        bool         expanded = false;
     };
 
     ChannelMixerPanel* owner = nullptr;
@@ -65,6 +69,9 @@ struct ChannelMixerPanel::Impl
 
     void rebuildRows()
     {
+        std::vector<bool> previousExpanded(rows.size());
+        for (size_t i = 0; i < rows.size(); ++i) previousExpanded[i] = rows[i].expanded;
+
         clearRows();
         rows.reserve(channels.size());
 
@@ -72,9 +79,21 @@ struct ChannelMixerPanel::Impl
             const auto& ch = channels[i];
             ChannelRow row;
 
+            // Disclosure triangle button
+            row.disclosure = new QToolButton(contentWidget);
+            row.disclosure->setArrowType(Qt::RightArrow);
+            row.disclosure->setAutoRaise(true);
+            row.disclosure->setFixedSize(12, 12);
+            row.disclosure->setStyleSheet("QToolButton { border: none; }");
+            QObject::connect(row.disclosure, &QToolButton::clicked, owner, [this, i]() {
+                toggleRowExpanded(i);
+            });
+
             auto* hLayout = new QHBoxLayout();
             hLayout->setContentsMargins(0, 0, 0, 0);
             hLayout->setSpacing(4);
+
+            hLayout->addWidget(row.disclosure);
 
             // Visibility checkbox
             row.checkBox = new QCheckBox(contentWidget);
@@ -120,10 +139,28 @@ struct ChannelMixerPanel::Impl
             hLayout->addWidget(row.intensitySlider);
 
             contentLayout->addLayout(hLayout);
+
+            if (i < previousExpanded.size() && previousExpanded[i]) {
+                row.expanded = true;
+                row.disclosure->setArrowType(Qt::DownArrow);
+                // Placeholder — Task 9 fills this in with the histogram view.
+                auto* placeholder = new QLabel("(expanded)", contentWidget);
+                placeholder->setStyleSheet("color:#666; margin-left: 24px;");
+                row.expandedContainer = placeholder;
+                contentLayout->addWidget(placeholder);
+            }
+
             rows.push_back(row);
         }
 
         contentLayout->addStretch();
+    }
+
+    void toggleRowExpanded(size_t index)
+    {
+        if (index >= rows.size()) return;
+        rows[index].expanded = !rows[index].expanded;
+        rebuildRows();
     }
 
     void applyColorButtonStyle(QPushButton* button, float r, float g, float b)
