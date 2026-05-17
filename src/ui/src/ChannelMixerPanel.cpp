@@ -1,9 +1,13 @@
 #include "slideio/viewer/ui/ChannelMixerPanel.h"
+#include "slideio/viewer/ui/ChannelHistogramView.h"
 
 #include <QCheckBox>
 #include <QColorDialog>
+#include <QDoubleValidator>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSlider>
@@ -19,13 +23,17 @@ struct ChannelMixerPanel::Impl
 {
     struct ChannelRow
     {
-        QToolButton* disclosure = nullptr;
-        QCheckBox*   checkBox = nullptr;
-        QLabel*      nameLabel = nullptr;
-        QPushButton* colorButton = nullptr;
-        QSlider*     intensitySlider = nullptr;
-        QWidget*     expandedContainer = nullptr;  // null until first expanded
-        bool         expanded = false;
+        QToolButton*         disclosure = nullptr;
+        QCheckBox*           checkBox = nullptr;
+        QLabel*              nameLabel = nullptr;
+        QPushButton*         colorButton = nullptr;
+        QSlider*             intensitySlider = nullptr;
+        QWidget*             expandedContainer = nullptr;  // null until first expanded
+        bool                 expanded = false;
+        ChannelHistogramView* histogramView = nullptr;
+        QLineEdit*            minEdit = nullptr;
+        QLineEdit*            maxEdit = nullptr;
+        bool                  logScale = true;
     };
 
     ChannelMixerPanel* owner = nullptr;
@@ -143,11 +151,8 @@ struct ChannelMixerPanel::Impl
             if (i < previousExpanded.size() && previousExpanded[i]) {
                 row.expanded = true;
                 row.disclosure->setArrowType(Qt::DownArrow);
-                // Placeholder — Task 9 fills this in with the histogram view.
-                auto* placeholder = new QLabel("(expanded)", contentWidget);
-                placeholder->setStyleSheet("color:#666; margin-left: 24px;");
-                row.expandedContainer = placeholder;
-                contentLayout->addWidget(placeholder);
+                row.expandedContainer = buildExpandedContainer(i, row);
+                contentLayout->addWidget(row.expandedContainer);
             }
 
             rows.push_back(row);
@@ -161,6 +166,150 @@ struct ChannelMixerPanel::Impl
         if (index >= rows.size()) return;
         rows[index].expanded = !rows[index].expanded;
         rebuildRows();
+    }
+
+    QWidget* buildExpandedContainer(size_t index, ChannelRow& row)
+    {
+        if (index >= channels.size()) return nullptr;
+        const auto& ch = channels[index];
+
+        auto* frame = new QFrame(contentWidget);
+        frame->setStyleSheet(
+            "QFrame { background-color: #252525; margin-left: 24px; padding: 6px; }");
+        auto* vLayout = new QVBoxLayout(frame);
+        vLayout->setContentsMargins(6, 6, 6, 6);
+        vLayout->setSpacing(4);
+
+        // --- Histogram view ---
+        row.histogramView = new ChannelHistogramView(frame);
+        row.histogramView->setHistogram(ch.histogram);
+        row.histogramView->setChannelColor(ch.colorR, ch.colorG, ch.colorB);
+        row.histogramView->setDisplayRange(ch.displayRange.displayMin,
+                                           ch.displayRange.displayMax);
+        row.histogramView->setLogScale(row.logScale);
+        vLayout->addWidget(row.histogramView);
+
+        // --- Min/Max textbox row ---
+        auto* editRow = new QHBoxLayout();
+        editRow->setSpacing(4);
+
+        auto* minLabel = new QLabel("Min", frame);
+        minLabel->setStyleSheet("color: #CCC; font-size: 11px;");
+        editRow->addWidget(minLabel);
+
+        row.minEdit = new QLineEdit(frame);
+        row.minEdit->setValidator(new QDoubleValidator(row.minEdit));
+        row.minEdit->setText(QString::number(ch.displayRange.displayMin));
+        row.minEdit->setFixedWidth(64);
+        row.minEdit->setStyleSheet(
+            "QLineEdit { background:#333; color:#CCC; border:1px solid #555; padding:1px 4px; }");
+        editRow->addWidget(row.minEdit);
+
+        editRow->addStretch();
+
+        auto* maxLabel = new QLabel("Max", frame);
+        maxLabel->setStyleSheet("color: #CCC; font-size: 11px;");
+        editRow->addWidget(maxLabel);
+
+        row.maxEdit = new QLineEdit(frame);
+        row.maxEdit->setValidator(new QDoubleValidator(row.maxEdit));
+        row.maxEdit->setText(QString::number(ch.displayRange.displayMax));
+        row.maxEdit->setFixedWidth(64);
+        row.maxEdit->setStyleSheet(
+            "QLineEdit { background:#333; color:#CCC; border:1px solid #555; padding:1px 4px; }");
+        editRow->addWidget(row.maxEdit);
+
+        vLayout->addLayout(editRow);
+
+        // --- Wire histogram drag -> textboxes (live) ---
+        QObject::connect(row.histogramView, &ChannelHistogramView::displayRangeChanged,
+                         owner, [this, index](double minV, double maxV) {
+            if (index >= rows.size()) return;
+            if (rows[index].minEdit) rows[index].minEdit->setText(QString::number(minV));
+            if (rows[index].maxEdit) rows[index].maxEdit->setText(QString::number(maxV));
+        });
+
+        // --- Wire histogram release -> commit (emits channelSettingsChanged) ---
+        QObject::connect(row.histogramView, &ChannelHistogramView::displayRangeCommitted,
+                         owner, [this, index](double minV, double maxV) {
+            commitDisplayRange(index, minV, maxV);
+        });
+
+        // --- Wire textbox edits ---
+        QObject::connect(row.minEdit, &QLineEdit::editingFinished, owner, [this, index]() {
+            commitMinFromEdit(index);
+        });
+        QObject::connect(row.maxEdit, &QLineEdit::editingFinished, owner, [this, index]() {
+            commitMaxFromEdit(index);
+        });
+
+        return frame;
+    }
+
+    void commitDisplayRange(size_t index, double minV, double maxV)
+    {
+        if (index >= channels.size()) return;
+        channels[index].displayRange.displayMin = minV;
+        channels[index].displayRange.displayMax = maxV;
+        channels[index].userOverrideRange = true;
+        if (rows[index].minEdit) rows[index].minEdit->setText(QString::number(minV));
+        if (rows[index].maxEdit) rows[index].maxEdit->setText(QString::number(maxV));
+        emit owner->channelSettingsChanged(channels);
+    }
+
+    void commitMinFromEdit(size_t index)
+    {
+        if (index >= channels.size() || !rows[index].minEdit) return;
+        bool ok = false;
+        double v = rows[index].minEdit->text().toDouble(&ok);
+        if (!ok) {
+            rows[index].minEdit->setText(QString::number(channels[index].displayRange.displayMin));
+            return;
+        }
+        const double eps = epsilonFor(channels[index].dataType);
+        if (v >= channels[index].displayRange.displayMax) {
+            v = channels[index].displayRange.displayMax - eps;
+        }
+        channels[index].displayRange.displayMin = v;
+        channels[index].userOverrideRange = true;
+        rows[index].minEdit->setText(QString::number(v));
+        if (rows[index].histogramView) {
+            rows[index].histogramView->setDisplayRange(v, channels[index].displayRange.displayMax);
+        }
+        emit owner->channelSettingsChanged(channels);
+    }
+
+    void commitMaxFromEdit(size_t index)
+    {
+        if (index >= channels.size() || !rows[index].maxEdit) return;
+        bool ok = false;
+        double v = rows[index].maxEdit->text().toDouble(&ok);
+        if (!ok) {
+            rows[index].maxEdit->setText(QString::number(channels[index].displayRange.displayMax));
+            return;
+        }
+        const double eps = epsilonFor(channels[index].dataType);
+        if (v <= channels[index].displayRange.displayMin) {
+            v = channels[index].displayRange.displayMin + eps;
+        }
+        channels[index].displayRange.displayMax = v;
+        channels[index].userOverrideRange = true;
+        rows[index].maxEdit->setText(QString::number(v));
+        if (rows[index].histogramView) {
+            rows[index].histogramView->setDisplayRange(channels[index].displayRange.displayMin, v);
+        }
+        emit owner->channelSettingsChanged(channels);
+    }
+
+    static double epsilonFor(core::DataType dt)
+    {
+        switch (dt) {
+            case core::DataType::Float32:
+            case core::DataType::Float64:
+                return 1e-6;
+            default:
+                return 1.0;  // integer types snap by 1
+        }
     }
 
     void applyColorButtonStyle(QPushButton* button, float r, float g, float b)
