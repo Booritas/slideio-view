@@ -2,6 +2,7 @@
 #include "slideio/viewer/ui/ViewportController.h"
 
 #include "slideio/viewer/core/CoordinateSystem.h"
+#include "slideio/viewer/core/Histogram.h"
 #include "slideio/viewer/core/ISlideSource.h"
 #include "slideio/viewer/core/ITileCache.h"
 #include "slideio/viewer/core/TileData.h"
@@ -370,6 +371,24 @@ std::pair<double, double> computeMinMax(const uint8_t* data, size_t totalElement
     }
 }
 
+// Full data-type range used for per-channel histogram binning. Matches the
+// fallback ranges in setSlideOpenResult around line 1022 so handle math in
+// the UI lines up with renderer's toSamplerRange normalization.
+std::pair<double, double> dataTypeHistogramRange(DataType dt)
+{
+    switch (dt) {
+        case DataType::Byte:    return {0.0, 255.0};
+        case DataType::Int8:    return {-128.0, 127.0};
+        case DataType::UInt16:  return {0.0, 65535.0};
+        case DataType::Int16:   return {0.0, 32767.0};
+        case DataType::UInt32:  return {0.0, 4294967295.0};
+        case DataType::Int32:   return {0.0, 2147483647.0};
+        case DataType::Float32: return {0.0, 1.0};
+        case DataType::Float64: return {0.0, 1.0};
+        default:                return {0.0, 255.0};
+    }
+}
+
 // Map a pixel element from native type through [min,max] -> [0,1] for thumbnail mixing.
 double mapPixelNormalized(const uint8_t* buffer, size_t elementIndex,
                           DataType dataType, double minVal, double maxVal)
@@ -659,7 +678,7 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
     // coarsest pyramid level), so even when the coarsest level is small (e.g.,
     // ~200x160 in a 9-level pyramid) we still ask SlideIO for a sharp 800x800-
     // ish thumbnail. SlideIO picks the appropriate pyramid level internally.
-    constexpr int kMaxThumbDim = 800;
+    constexpr int kMaxThumbDim = 1000;
     int thumbW = slideInfo.width;
     int thumbH = slideInfo.height;
     if (thumbW > kMaxThumbDim || thumbH > kMaxThumbDim) {
@@ -696,6 +715,8 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
     // which is the usual in-focus slice for fluorescence Z-stacks and far
     // more useful as a startup view than Z=0 (which is often blank).
     const int preferredZ = numZ > 1 ? numZ / 2 : 0;
+    const int numT = std::max(1, slideInfo.numTFrames);
+    const int preferredT = numT > 1 ? numT / 2 : 0;
 
     for (int r = 0; r < coarseLvl.tilesY; ++r) {
         for (int c = 0; c < coarseLvl.tilesX; ++c) {
@@ -765,7 +786,7 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
     // as nearly black.
     auto thumbLoan = pool.acquire();
     auto blockData = thumbLoan->readBlock(0, 0, slideInfo.width, slideInfo.height,
-                                          thumbW, thumbH, preferredZ);
+                                          thumbW, thumbH, preferredZ, preferredT);
     const bool blockUsable = !blockData.isEmpty() && !blockData.isError();
     spdlog::info("autodetect: readBlock usable={} blockSize={}x{} blockCh={} blockDt={}",
                  blockUsable, blockData.width(), blockData.height(),
@@ -803,6 +824,45 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
                 }
             }
         }
+    }
+
+    // Per-channel histograms. Always computed from the readBlock buffer when
+    // usable; uses the data-type's full range so draggable-handle math in the
+    // UI lines up with the renderer's toSamplerRange normalization.
+    if (blockUsable && numCh >= 1) {
+        const int blockCh = blockData.numChannels();
+        const size_t blockPixels = static_cast<size_t>(blockData.width())
+                                 * static_cast<size_t>(blockData.height());
+
+        for (int ch = 0; ch < numCh; ++ch) {
+            const size_t ch_z = static_cast<size_t>(ch);
+            if (ch_z >= slideInfo.channels.size()) break;
+            if (ch >= blockCh) continue;
+
+            auto& chInfo = slideInfo.channels[ch_z];
+            auto [rMin, rMax] = dataTypeHistogramRange(chInfo.dataType);
+
+            chInfo.histogram.bins.assign(core::kNumBins, 0);
+            chInfo.histogram.rangeMin = rMin;
+            chInfo.histogram.rangeMax = rMax;
+
+            core::computeHistogramStrided(blockData.buffer().data(), blockPixels,
+                                          blockCh, ch,
+                                          chInfo.dataType, rMin, rMax,
+                                          chInfo.histogram.bins.data(),
+                                          core::kNumBins);
+
+            uint64_t total = 0;
+            for (uint32_t v : chInfo.histogram.bins) total += v;
+            chInfo.histogram.totalSamples = total;
+            chInfo.histogram.valid = (total > 0);
+        }
+    }
+
+    // Freeze the autodetect result for the "Auto" button. Done after both the
+    // coarse-tile and block-fallback passes so it captures the final values.
+    for (auto& chInfo : slideInfo.channels) {
+        chInfo.autoDisplayRange = chInfo.displayRange;
     }
 
     // Final ranges, after both passes
