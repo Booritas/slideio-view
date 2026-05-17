@@ -387,9 +387,9 @@ struct ChannelMixerPanel::Impl
             case core::DataType::Byte:    return {0.0, 255.0};
             case core::DataType::Int8:    return {-128.0, 127.0};
             case core::DataType::UInt16:  return {0.0, 65535.0};
-            case core::DataType::Int16:   return {-32768.0, 32767.0};
+            case core::DataType::Int16:   return {0.0, 32767.0};
             case core::DataType::UInt32:  return {0.0, 4294967295.0};
-            case core::DataType::Int32:   return {-2147483648.0, 2147483647.0};
+            case core::DataType::Int32:   return {0.0, 2147483647.0};
             case core::DataType::Int64:   return {-9223372036854775808.0, 9223372036854775807.0};
             case core::DataType::UInt64:  return {0.0, 18446744073709551615.0};
             case core::DataType::Float16: return {0.0, 1.0};
