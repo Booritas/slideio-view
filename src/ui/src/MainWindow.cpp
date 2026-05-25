@@ -258,6 +258,7 @@ struct MainWindow::Impl
                 // NOT changed here — those are user-controlled via the View
                 // menu and persisted across runs by save/restoreState().
                 const auto& info = viewportWidget->slideInfo();
+                zoomIndicatorWidget->setResolution(info.resolutionX);
                 if (info.numChannels > 0) {
                     channelMixerPanel->setChannels(info.channels);
                 } else {
@@ -313,7 +314,7 @@ struct MainWindow::Impl
             minimapWidget->clearThumbnail();
             statusBarManager->updateCursorPosition(0.0, 0.0);
             statusBarManager->updateMagnification(1.0, 0.0);
-            statusBarManager->updateScaleBar(0.0);
+            zoomIndicatorWidget->setResolution(0.0);
             channelMixerPanel->clearChannels();
             propertiesPanel->clear();
             metadataPanel->clear();
