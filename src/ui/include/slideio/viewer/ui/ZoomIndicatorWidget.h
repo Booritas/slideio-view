@@ -8,6 +8,8 @@ class QSlider;
 namespace slideio::viewer::ui
 {
 
+class ScaleBarWidget;
+
 class ZoomIndicatorWidget : public QWidget
 {
     Q_OBJECT
@@ -17,6 +19,7 @@ public:
     ~ZoomIndicatorWidget() override;
 
     void setZoomLevel(double scale, double baseMagnification);
+    void setResolution(double metersPerPixel);
 
 signals:
     void zoomChanged(double newScale);
@@ -30,10 +33,12 @@ private:
 
     QLabel* m_magnificationLabel;
     QLabel* m_percentageLabel;
+    ScaleBarWidget* m_scaleBar;
     QSlider* m_slider;
 
     double m_baseMagnification;
     double m_currentScale;
+    double m_metersPerPixel;
     bool m_updatingSlider;
 
     static constexpr int kSliderMinimum = 0;

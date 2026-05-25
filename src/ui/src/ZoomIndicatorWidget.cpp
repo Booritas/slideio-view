@@ -1,5 +1,7 @@
 #include "slideio/viewer/ui/ZoomIndicatorWidget.h"
 
+#include "slideio/viewer/ui/ScaleBarWidget.h"
+
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QSlider>
@@ -14,14 +16,16 @@ ZoomIndicatorWidget::ZoomIndicatorWidget(QWidget* parent)
     : QWidget(parent)
     , m_magnificationLabel(new QLabel("0.0x", this))
     , m_percentageLabel(new QLabel("0%", this))
+    , m_scaleBar(new ScaleBarWidget(this))
     , m_slider(new QSlider(Qt::Horizontal, this))
     , m_baseMagnification(0.0)
     , m_currentScale(1.0)
+    , m_metersPerPixel(0.0)
     , m_updatingSlider(false)
 {
     setAttribute(Qt::WA_TranslucentBackground);
     setFixedWidth(200);
-    setFixedHeight(60);
+    setFixedHeight(88);
 
     m_magnificationLabel->setStyleSheet(
         "QLabel { color: #FFFFFF; font-size: 12px; font-weight: bold; background: transparent; }");
@@ -56,7 +60,10 @@ ZoomIndicatorWidget::ZoomIndicatorWidget(QWidget* parent)
     mainLayout->setContentsMargins(8, 4, 8, 4);
     mainLayout->setSpacing(2);
     mainLayout->addLayout(labelsLayout);
+    mainLayout->addWidget(m_scaleBar);
     mainLayout->addWidget(m_slider);
+
+    m_scaleBar->setVisible(false); // hidden until a slide with resolution opens
 
     connect(m_slider, &QSlider::valueChanged, this, &ZoomIndicatorWidget::onSliderValueChanged);
 }
@@ -81,6 +88,13 @@ void ZoomIndicatorWidget::setZoomLevel(double scale, double baseMagnification)
     m_updatingSlider = true;
     m_slider->setValue(scaleToSliderValue(scale));
     m_updatingSlider = false;
+    m_scaleBar->setScale(m_metersPerPixel, scale);
+}
+
+void ZoomIndicatorWidget::setResolution(double metersPerPixel)
+{
+    m_metersPerPixel = metersPerPixel;
+    m_scaleBar->setScale(m_metersPerPixel, m_currentScale);
 }
 
 void ZoomIndicatorWidget::onSliderValueChanged(int value)
