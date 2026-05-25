@@ -4,6 +4,7 @@ add_library(slideio-viewer-core STATIC
     src/Viewport.cpp
     src/CoordinateSystem.cpp
     src/Histogram.cpp
+    src/ScaleBar.cpp
 )
 
 target_include_directories(slideio-viewer-core PUBLIC
