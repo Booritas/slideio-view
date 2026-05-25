@@ -5,6 +5,7 @@ add_executable(slideio-viewer-core-tests
     core/ViewportTest.cpp
     core/CoordinateSystemTest.cpp
     core/HistogramTest.cpp
+    core/ScaleBarTest.cpp
 )
 
 target_link_libraries(slideio-viewer-core-tests
