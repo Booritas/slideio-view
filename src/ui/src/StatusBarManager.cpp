@@ -14,7 +14,6 @@ StatusBarManager::StatusBarManager(QObject* parent)
     , m_statusBar(nullptr)
     , m_cursorLabel(nullptr)
     , m_magnificationLabel(nullptr)
-    , m_scaleBarLabel(nullptr)
     , m_loadingIndicator(nullptr)
 {
 }
@@ -40,10 +39,6 @@ void StatusBarManager::setup(QStatusBar* statusBar)
     m_magnificationLabel = new QLabel("100%", m_statusBar);
     m_magnificationLabel->setMinimumWidth(100);
     m_statusBar->addPermanentWidget(m_magnificationLabel);
-
-    m_scaleBarLabel = new QLabel("", m_statusBar);
-    m_scaleBarLabel->setMinimumWidth(120);
-    m_statusBar->addPermanentWidget(m_scaleBarLabel);
 
     m_loadingIndicator = new QProgressBar(m_statusBar);
     m_loadingIndicator->setMaximumWidth(100);
@@ -85,50 +80,6 @@ void StatusBarManager::updateMagnification(double scale, double baseMagnificatio
         m_magnificationLabel->setText(
             QString("%1%").arg(percentage, 0, 'f', 1));
     }
-}
-
-void StatusBarManager::updateScaleBar(double resolutionMPP)
-{
-    if (!m_scaleBarLabel) {
-        return;
-    }
-
-    if (resolutionMPP <= 0.0) {
-        m_scaleBarLabel->setText("");
-        return;
-    }
-
-    // Choose a human-friendly scale bar length
-    // resolutionMPP is micrometers per pixel at the current view scale
-    // We want to display a scale bar that represents a round number of micrometers or millimeters
-
-    static const double kScaleBarLengths[] = {
-        1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0,
-        1000.0, 2000.0, 5000.0, 10000.0
-    };
-
-    // Target ~100 pixels for the scale bar
-    double targetMicrons = resolutionMPP * 100.0;
-
-    double bestLength = kScaleBarLengths[0];
-    double bestDiff = std::abs(targetMicrons - bestLength);
-
-    for (double len : kScaleBarLengths) {
-        double diff = std::abs(targetMicrons - len);
-        if (diff < bestDiff) {
-            bestDiff = diff;
-            bestLength = len;
-        }
-    }
-
-    QString text;
-    if (bestLength >= 1000.0) {
-        text = QString("%1 mm").arg(bestLength / 1000.0, 0, 'f', 1);
-    } else {
-        text = QString::fromUtf8("%1 \xC2\xB5m").arg(bestLength, 0, 'f', 0);
-    }
-
-    m_scaleBarLabel->setText(text);
 }
 
 void StatusBarManager::setLoading(bool loading)
