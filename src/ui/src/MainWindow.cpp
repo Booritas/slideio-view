@@ -265,6 +265,11 @@ struct MainWindow::Impl
                 statusBarManager->updateCursorPosition(slideX, slideY);
             });
 
+        QObject::connect(viewportWidget, &ViewportWidget::renderStateChanged, owner,
+            [this](bool fullyLoaded) {
+                statusBarManager->setRenderComplete(fullyLoaded);
+            });
+
         QObject::connect(viewportWidget, &ViewportWidget::slideOpened, owner,
             [this](const std::string& filePath) {
                 const bool sameFile = (filePath == lastOpenedFilePath);
