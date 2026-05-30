@@ -7,7 +7,13 @@
 #include <QFormLayout>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QSettings>
 #include <QVBoxLayout>
+
+namespace
+{
+const QString kGeometryKey = "openS3Dialog/geometry";
+} // anonymous namespace
 
 namespace slideio::viewer::ui
 {
@@ -64,9 +70,22 @@ OpenS3Dialog::OpenS3Dialog(QWidget* parent)
     };
     connect(m_impl->urlEdit, &QLineEdit::textChanged, this, updateOpenEnabled);
     updateOpenEnabled();
+
+    // Restore the dialog's last position/size. A fresh instance is created on
+    // every open, so this is what makes the geometry persist across openings
+    // (and across app sessions, via QSettings).
+    QSettings settings;
+    const QByteArray savedGeometry = settings.value(kGeometryKey).toByteArray();
+    if (!savedGeometry.isEmpty()) {
+        restoreGeometry(savedGeometry);
+    }
 }
 
-OpenS3Dialog::~OpenS3Dialog() = default;
+OpenS3Dialog::~OpenS3Dialog()
+{
+    QSettings settings;
+    settings.setValue(kGeometryKey, saveGeometry());
+}
 
 std::string OpenS3Dialog::presignedUrl() const
 {
