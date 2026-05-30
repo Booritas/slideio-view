@@ -15,6 +15,7 @@ StatusBarManager::StatusBarManager(QObject* parent)
     , m_cursorLabel(nullptr)
     , m_magnificationLabel(nullptr)
     , m_loadingIndicator(nullptr)
+    , m_renderStateIndicator(nullptr)
 {
 }
 
@@ -50,6 +51,14 @@ void StatusBarManager::setup(QStatusBar* statusBar)
         "QProgressBar::chunk { background: #4A90D9; }");
     m_loadingIndicator->setVisible(false);
     m_statusBar->addPermanentWidget(m_loadingIndicator);
+
+    // Render-state bubble — added last so it sits at the right edge of the bar.
+    // A fixed-size QLabel painted as a circle via a rounded stylesheet; its
+    // color is set by setRenderComplete().
+    m_renderStateIndicator = new QLabel(m_statusBar);
+    m_renderStateIndicator->setFixedSize(12, 12);
+    m_statusBar->addPermanentWidget(m_renderStateIndicator);
+    setRenderComplete(true);
 }
 
 void StatusBarManager::updateCursorPosition(double slideX, double slideY)
@@ -87,6 +96,22 @@ void StatusBarManager::setLoading(bool loading)
     if (m_loadingIndicator) {
         m_loadingIndicator->setVisible(loading);
     }
+}
+
+void StatusBarManager::setRenderComplete(bool complete)
+{
+    if (!m_renderStateIndicator) {
+        return;
+    }
+
+    // Green when fully loaded/shown, red while tiles are still loading/refining.
+    const char* fill = complete ? "#4CAF50" : "#E53935";
+    const char* edge = complete ? "#2E7D32" : "#B71C1C";
+    m_renderStateIndicator->setStyleSheet(
+        QString("background-color: %1; border: 1px solid %2; border-radius: 6px; padding: 0;")
+            .arg(fill, edge));
+    m_renderStateIndicator->setToolTip(
+        complete ? "Viewport fully loaded" : "Loading tiles…");
 }
 
 } // namespace slideio::viewer::ui

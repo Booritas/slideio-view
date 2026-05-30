@@ -73,6 +73,10 @@ signals:
     void loadingStarted(const QString& displayName);
     void loadingStatusChanged(const QString& text);
     void loadingFinished();
+    // Emitted on transitions of the viewport's render-completeness: true when
+    // every visible tile is on screen (the view is fully refined), false while
+    // tiles are still loading and the view is being refined.
+    void renderStateChanged(bool fullyLoaded);
 
 protected:
     void initializeGL() override;
@@ -88,6 +92,9 @@ protected:
 
 private:
     void installSceneOpenResult(uint64_t opId, SceneOpenResult result);
+    // Emit renderStateChanged only when the completeness state actually flips,
+    // so repeated paints during refinement don't spam the signal.
+    void updateRenderState(bool fullyLoaded);
 
     struct Impl;
     std::unique_ptr<Impl> m_impl;

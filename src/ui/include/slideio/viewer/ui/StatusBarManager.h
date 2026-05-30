@@ -23,11 +23,17 @@ public:
     void updateMagnification(double scale, double baseMagnification);
     void setLoading(bool loading);
 
+    // Drives the color bubble at the right edge of the status bar: green when
+    // the viewport is fully loaded and shown, red while tiles are still loading
+    // and the view is being refined.
+    void setRenderComplete(bool complete);
+
 private:
     QStatusBar* m_statusBar;
     QLabel* m_cursorLabel;
     QLabel* m_magnificationLabel;
     QProgressBar* m_loadingIndicator;
+    QLabel* m_renderStateIndicator;
 };
 
 } // namespace slideio::viewer::ui

@@ -1194,6 +1194,9 @@ struct ViewportWidget::Impl
     std::unique_ptr<ViewportController> controller;
     core::SlideInfo slideInfo;
     bool slideOpen = false;
+    // Last render-completeness value emitted via renderStateChanged. Starts
+    // true (idle/no slide is "fully loaded" → green bubble).
+    bool lastRenderComplete = true;
     std::string currentFilePath;
     std::string currentDriverId;  // empty for auto-detect
     int currentZSlice = 0;
@@ -2362,6 +2365,8 @@ void ViewportWidget::paintGL()
     m_impl->gl->glClear(GL_COLOR_BUFFER_BIT);
 
     if (!m_impl->controller || !m_impl->slideOpen) {
+        // No slide shown — nothing pending, so the indicator reads "loaded".
+        updateRenderState(true);
         return;
     }
 
@@ -2423,6 +2428,7 @@ void ViewportWidget::paintGL()
     }
 
     if (visibleKeys.empty()) {
+        updateRenderState(true);
         return;
     }
 
@@ -2740,13 +2746,25 @@ void ViewportWidget::paintGL()
 
     // If tiles were skipped (not yet loaded), schedule repaints until all are rendered
     if (tilesSkipped > 0 || morePending) {
+        // Still refining — drive the status-bar indicator red.
+        updateRenderState(false);
         // Use a short timer to allow tile workers to make progress
         QTimer::singleShot(16, this, [this]() { update(); });
     } else {
+        // Frame fully rendered — indicator goes green.
+        updateRenderState(true);
         // All tiles rendered — deactivate the zoom snapshot and capture a fresh
         // snapshot of this complete frame for the next zoom operation
         m_impl->snapshotActive = false;
         m_impl->captureSnapshotTexture(this, viewport);
+    }
+}
+
+void ViewportWidget::updateRenderState(bool fullyLoaded)
+{
+    if (fullyLoaded != m_impl->lastRenderComplete) {
+        m_impl->lastRenderComplete = fullyLoaded;
+        emit renderStateChanged(fullyLoaded);
     }
 }
 
