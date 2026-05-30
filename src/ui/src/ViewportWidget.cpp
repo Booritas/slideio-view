@@ -1729,17 +1729,18 @@ ViewportWidget::~ViewportWidget()
 
 namespace
 {
-// Short, human-friendly label for the loading overlay. Remote slides (S3
-// presigned URLs, http/https/s3 URIs) carry a long, credential-bearing query
-// string, so they show a generic "Loading from S3" label instead of the raw
-// URL; local paths are reduced to their file name.
+// Short, human-friendly label for the loading overlay, which formats it as
+// "Loading <name>...". Remote slides (S3 presigned URLs, http/https/s3 URIs)
+// carry a long, credential-bearing query string, so they read as "from S3"
+// (→ "Loading from S3...") instead of the raw URL; local paths are reduced to
+// their file name.
 QString slideDisplayName(const std::string& filePath)
 {
     const QString path = QString::fromStdString(filePath);
     if (path.startsWith("http://", Qt::CaseInsensitive)
         || path.startsWith("https://", Qt::CaseInsensitive)
         || path.startsWith("s3://", Qt::CaseInsensitive)) {
-        return QStringLiteral("Loading from S3");
+        return QStringLiteral("from S3");
     }
     const auto slash = std::max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
     return slash >= 0 ? path.mid(slash + 1) : path;
