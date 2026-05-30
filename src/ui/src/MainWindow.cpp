@@ -8,6 +8,7 @@
 #include "slideio/viewer/ui/SlidePropertiesPanel.h"
 #include "slideio/viewer/ui/MetadataPanel.h"
 #include "slideio/viewer/ui/MinimapWidget.h"
+#include "slideio/viewer/ui/OpenS3Dialog.h"
 #include "slideio/viewer/ui/StatusBarManager.h"
 #include "slideio/viewer/ui/ViewportController.h"
 #include "slideio/viewer/ui/ViewportWidget.h"
@@ -42,6 +43,17 @@ namespace
 {
 constexpr int kMaxRecentFiles = 10;
 const QString kRecentFilesKey = "recentFiles";
+
+// Remote slide paths (S3 presigned URLs, plain http(s), s3:// URIs) must not be
+// written to the persistent Recent Files list: presigned URLs embed temporary
+// credentials and expire, so storing them is both useless and a credential leak.
+bool isRemoteSlidePath(const std::string& path)
+{
+    const QString p = QString::fromStdString(path);
+    return p.startsWith("http://", Qt::CaseInsensitive)
+        || p.startsWith("https://", Qt::CaseInsensitive)
+        || p.startsWith("s3://", Qt::CaseInsensitive);
+}
 } // anonymous namespace
 
 namespace slideio::viewer::ui
@@ -73,6 +85,7 @@ struct MainWindow::Impl
 
     // Actions
     QAction* openAction = nullptr;
+    QAction* openFromS3Action = nullptr;
     QAction* closeAction = nullptr;
     QAction* openLogAction = nullptr;
     QAction* exitAction = nullptr;
@@ -93,6 +106,9 @@ struct MainWindow::Impl
         openAction = new QAction("&Open Slide...", owner);
         openAction->setShortcut(QKeySequence("Ctrl+O"));
         openAction->setStatusTip("Open a whole-slide image file");
+
+        openFromS3Action = new QAction("Open Slide from &S3...", owner);
+        openFromS3Action->setStatusTip("Open a whole-slide image from an S3 presigned URL");
 
         closeAction = new QAction("&Close", owner);
         closeAction->setShortcut(QKeySequence("Ctrl+W"));
@@ -138,6 +154,7 @@ struct MainWindow::Impl
     {
         QMenu* fileMenu = owner->menuBar()->addMenu("&File");
         fileMenu->addAction(openAction);
+        fileMenu->addAction(openFromS3Action);
 
         recentFilesMenu = fileMenu->addMenu("Recent &Files");
         updateRecentFilesMenu();
@@ -177,6 +194,13 @@ struct MainWindow::Impl
             if (!filePath.isEmpty()) {
                 QString driverId = driverIdForFilter(selectedFilter, filters);
                 owner->openSlide(filePath.toStdString(), driverId.toStdString());
+            }
+        });
+
+        QObject::connect(openFromS3Action, &QAction::triggered, owner, [this]() {
+            OpenS3Dialog dialog(owner);
+            if (dialog.exec() == QDialog::Accepted) {
+                owner->openSlide(dialog.presignedUrl(), dialog.driverId());
             }
         });
 
@@ -670,7 +694,9 @@ void MainWindow::openSlide(const std::string& path, const std::string& driverId)
     // rebuild them when (and only when) the file actually changes. Clearing
     // eagerly would flash empty panels for the duration of the load.
     setWindowTitle(QString("SlideIO Viewer - %1").arg(QString::fromStdString(path)));
-    m_impl->addToRecentFiles(path);
+    if (!isRemoteSlidePath(path)) {
+        m_impl->addToRecentFiles(path);
+    }
 
     // openSlide is async: it kicks off background work and returns immediately.
     // The scene panel is populated, the loading overlay is hidden, and other
