@@ -698,8 +698,13 @@ void MainWindow::openSlide(const std::string& path, const std::string& driverId)
     // Don't clear the scene/aux panels here — the slideOpened handler will
     // rebuild them when (and only when) the file actually changes. Clearing
     // eagerly would flash empty panels for the duration of the load.
-    setWindowTitle(QString("SlideIO Viewer - %1").arg(QString::fromStdString(path)));
-    if (!isRemoteSlidePath(path)) {
+    // Remote slides (S3 presigned URLs) have long, credential-bearing paths, so
+    // show a generic label in the title bar instead of the raw URL.
+    const bool remote = isRemoteSlidePath(path);
+    setWindowTitle(remote
+        ? QStringLiteral("SlideIO Viewer - Loading from S3")
+        : QString("SlideIO Viewer - %1").arg(QString::fromStdString(path)));
+    if (!remote) {
         m_impl->addToRecentFiles(path);
     }
 

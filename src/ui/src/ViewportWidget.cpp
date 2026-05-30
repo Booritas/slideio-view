@@ -1727,6 +1727,25 @@ ViewportWidget::~ViewportWidget()
     doneCurrent();
 }
 
+namespace
+{
+// Short, human-friendly label for the loading overlay. Remote slides (S3
+// presigned URLs, http/https/s3 URIs) carry a long, credential-bearing query
+// string, so they show a generic "Loading from S3" label instead of the raw
+// URL; local paths are reduced to their file name.
+QString slideDisplayName(const std::string& filePath)
+{
+    const QString path = QString::fromStdString(filePath);
+    if (path.startsWith("http://", Qt::CaseInsensitive)
+        || path.startsWith("https://", Qt::CaseInsensitive)
+        || path.startsWith("s3://", Qt::CaseInsensitive)) {
+        return QStringLiteral("Loading from S3");
+    }
+    const auto slash = std::max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+    return slash >= 0 ? path.mid(slash + 1) : path;
+}
+} // namespace
+
 void ViewportWidget::openSlide(const std::string& filePath, const std::string& driverId)
 {
     closeSlide();
@@ -1734,9 +1753,7 @@ void ViewportWidget::openSlide(const std::string& filePath, const std::string& d
     m_impl->currentDriverId = driverId;
     const uint64_t opId = ++m_impl->openOpId;
 
-    QString displayName = QString::fromStdString(filePath);
-    const auto slash = std::max(displayName.lastIndexOf('/'), displayName.lastIndexOf('\\'));
-    if (slash >= 0) displayName = displayName.mid(slash + 1);
+    QString displayName = slideDisplayName(filePath);
     emit loadingStarted(displayName);
 
     auto statusCallback = [this](QString msg) {
@@ -1943,9 +1960,7 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
     m_impl->currentDriverId = driverId;
     const uint64_t opId = ++m_impl->openOpId;
 
-    QString displayName = QString::fromStdString(filePath);
-    const auto slash = std::max(displayName.lastIndexOf('/'), displayName.lastIndexOf('\\'));
-    if (slash >= 0) displayName = displayName.mid(slash + 1);
+    QString displayName = slideDisplayName(filePath);
     if (sceneIndex > 0) displayName += QStringLiteral(" (scene %1)").arg(sceneIndex);
     emit loadingStarted(displayName);
 
@@ -2002,9 +2017,7 @@ void ViewportWidget::openAuxImage(const std::string& filePath, const std::string
     m_impl->currentDriverId = driverId;
     const uint64_t opId = ++m_impl->openOpId;
 
-    QString displayName = QString::fromStdString(filePath);
-    const auto slash = std::max(displayName.lastIndexOf('/'), displayName.lastIndexOf('\\'));
-    if (slash >= 0) displayName = displayName.mid(slash + 1);
+    QString displayName = slideDisplayName(filePath);
     displayName += QStringLiteral(" (%1)").arg(QString::fromStdString(auxImageName));
     emit loadingStarted(displayName);
 
