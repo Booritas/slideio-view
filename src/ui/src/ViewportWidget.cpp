@@ -14,6 +14,10 @@
 #include "slideio/viewer/infra/SlideIOAdapterPool.h"
 #include "slideio/viewer/infra/TileLoadScheduler.h"
 
+#include "slideio/viewer/infra/PerfLog.h"
+
+#include <chrono>
+
 #include <QImage>
 #include <QMetaObject>
 #include <QMouseEvent>
@@ -1197,6 +1201,16 @@ struct ViewportWidget::Impl
     // Last render-completeness value emitted via renderStateChanged. Starts
     // true (idle/no slide is "fully loaded" → green bubble).
     bool lastRenderComplete = true;
+
+    // --- Perf: per-refinement-cycle tile-load stats (worker thread writes,
+    // GUI thread reads on render-complete) ---
+    std::mutex perfStatsMutex;
+    int perfLoadedCount = 0;
+    double perfSumMs = 0.0;
+    double perfMaxMs = 0.0;
+    size_t perfBytes = 0;
+    std::chrono::steady_clock::time_point perfCycleStart{};
+    bool perfCycleActive = false;
     std::string currentFilePath;
     std::string currentDriverId;  // empty for auto-detect
     int currentZSlice = 0;
@@ -2085,7 +2099,15 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
 
     m_impl->scheduler = std::make_shared<infra::TileLoadScheduler>(
         m_impl->adapterPool, m_impl->tileCache);
-    m_impl->scheduler->setOnTileLoaded([this](const core::TileKey& key) {
+    m_impl->scheduler->setOnTileLoaded(
+        [this](const core::TileKey& key, double loadMs, size_t bytes, bool /*isError*/) {
+        {
+            std::lock_guard<std::mutex> stats(m_impl->perfStatsMutex);
+            m_impl->perfLoadedCount += 1;
+            m_impl->perfSumMs += loadMs;
+            m_impl->perfMaxMs = std::max(m_impl->perfMaxMs, loadMs);
+            m_impl->perfBytes += bytes;
+        }
         {
             std::lock_guard<std::mutex> lock(m_impl->pendingUploadsMutex);
             m_impl->pendingUploads.push_back(key);
@@ -2364,6 +2386,7 @@ void ViewportWidget::resizeGL(int /*w*/, int /*h*/)
 
 void ViewportWidget::paintGL()
 {
+    auto paintStart = std::chrono::steady_clock::now();
     if (!m_impl->gl || !m_impl->glInitialized) {
         return;
     }
@@ -2755,7 +2778,13 @@ void ViewportWidget::paintGL()
     }
 
     if (paintCount <= 5 || paintCount % 100 == 0) {
+        double paintMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - paintStart).count();
         spdlog::info("paintGL[{}]: rendered={} skipped={}", paintCount, tilesRendered, tilesSkipped);
+        if (infra::perfLogEnabled()) {
+            infra::perfLog().trace("paintGL[{}] cpu={:.2f}ms rendered={} skipped={}",
+                                   paintCount, paintMs, tilesRendered, tilesSkipped);
+        }
     }
 
     // If tiles were skipped (not yet loaded), schedule repaints until all are rendered
@@ -2778,6 +2807,43 @@ void ViewportWidget::updateRenderState(bool fullyLoaded)
 {
     if (fullyLoaded != m_impl->lastRenderComplete) {
         m_impl->lastRenderComplete = fullyLoaded;
+
+        if (!fullyLoaded) {
+            // Refinement begins: start the end-to-end clock and reset per-cycle
+            // load stats.
+            std::lock_guard<std::mutex> stats(m_impl->perfStatsMutex);
+            m_impl->perfCycleStart = std::chrono::steady_clock::now();
+            m_impl->perfLoadedCount = 0;
+            m_impl->perfSumMs = 0.0;
+            m_impl->perfMaxMs = 0.0;
+            m_impl->perfBytes = 0;
+            m_impl->perfCycleActive = true;
+        } else if (m_impl->perfCycleActive) {
+            // View fully refined: log end-to-end time + per-cycle load summary.
+            double endToEndMs = 0.0;
+            int loaded = 0;
+            double sumMs = 0.0, maxMs = 0.0;
+            size_t bytes = 0;
+            {
+                std::lock_guard<std::mutex> stats(m_impl->perfStatsMutex);
+                endToEndMs = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - m_impl->perfCycleStart).count();
+                loaded = m_impl->perfLoadedCount;
+                sumMs = m_impl->perfSumMs;
+                maxMs = m_impl->perfMaxMs;
+                bytes = m_impl->perfBytes;
+                m_impl->perfCycleActive = false;
+            }
+            if (infra::perfLogEnabled()) {
+                double avgMs = loaded > 0 ? sumMs / loaded : 0.0;
+                infra::perfLog().trace(
+                    "viewport refined in {:.1f}ms: loaded={} avgLoad={:.2f}ms maxLoad={:.2f}ms "
+                    "totalRead={:.2f}MB",
+                    endToEndMs, loaded, avgMs, maxMs,
+                    static_cast<double>(bytes) / (1024.0 * 1024.0));
+            }
+        }
+
         emit renderStateChanged(fullyLoaded);
     }
 }
