@@ -9,11 +9,11 @@
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 
-#include <cstdlib>
-#include <string>
-
 #include "slideio/viewer/ui/AppPaths.h"
 #include "slideio/viewer/ui/MainWindow.h"
+
+#include <cstdlib>
+#include <string>
 
 int main(int argc, char* argv[])
 {
@@ -46,10 +46,9 @@ int main(int argc, char* argv[])
     const char* perfEnv = std::getenv("SLIDEIO_PERF_LOG");
     const bool perfOn = perfEnv && perfEnv[0] != '\0' && std::string(perfEnv) != "0";
     perfLogger->set_level(perfOn ? spdlog::level::trace : spdlog::level::off);
-    perfLogger->flush_on(spdlog::level::trace);
     spdlog::register_logger(perfLogger);
-    if (perfOn)
-    {
+    if (perfOn) {
+        perfLogger->flush_on(spdlog::level::trace);
         spdlog::info("Performance logging ENABLED (SLIDEIO_PERF_LOG set)");
     }
 
