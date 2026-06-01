@@ -9,6 +9,9 @@
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 
+#include <cstdlib>
+#include <string>
+
 #include "slideio/viewer/ui/AppPaths.h"
 #include "slideio/viewer/ui/MainWindow.h"
 
@@ -33,6 +36,22 @@ int main(int argc, char* argv[])
     logger->set_level(spdlog::level::debug);
     logger->flush_on(spdlog::level::info);
     spdlog::set_default_logger(logger);
+
+    // Dedicated perf logger for tile-loading / rendering timing. Shares the
+    // same sinks as the main logger but is OFF by default — only emits when
+    // SLIDEIO_PERF_LOG is set to a non-empty, non-"0" value. Keeps normal runs
+    // free of the verbose per-tile/per-frame timing output.
+    auto perfLogger = std::make_shared<spdlog::logger>("perf",
+        spdlog::sinks_init_list{fileSink, consoleSink});
+    const char* perfEnv = std::getenv("SLIDEIO_PERF_LOG");
+    const bool perfOn = perfEnv && perfEnv[0] != '\0' && std::string(perfEnv) != "0";
+    perfLogger->set_level(perfOn ? spdlog::level::trace : spdlog::level::off);
+    perfLogger->flush_on(spdlog::level::trace);
+    spdlog::register_logger(perfLogger);
+    if (perfOn)
+    {
+        spdlog::info("Performance logging ENABLED (SLIDEIO_PERF_LOG set)");
+    }
 
     spdlog::info("SlideIO Viewer starting, log file: {}", logPath.toStdString());
 
