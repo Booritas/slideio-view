@@ -46,7 +46,8 @@ public:
     void cancelLevel(int level);
     void stop();
 
-    void setOnTileLoaded(std::function<void(const core::TileKey&)> callback);
+    void setOnTileLoaded(
+        std::function<void(const core::TileKey&, double loadMs, size_t bytes, bool isError)> callback);
 
 private:
     struct PriorityCompare
@@ -61,7 +62,7 @@ private:
 
     std::shared_ptr<SlideIOAdapterPool> m_adapterPool;
     std::shared_ptr<core::ITileCache> m_tileCache;
-    std::function<void(const core::TileKey&)> m_onTileLoaded;
+    std::function<void(const core::TileKey&, double loadMs, size_t bytes, bool isError)> m_onTileLoaded;
 
     std::priority_queue<TileRequest, std::vector<TileRequest>, PriorityCompare> m_queue;
     mutable std::mutex m_queueMutex;

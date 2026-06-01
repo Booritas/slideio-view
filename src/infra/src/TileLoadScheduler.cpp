@@ -3,6 +3,10 @@
 
 #include <spdlog/spdlog.h>
 
+#include "slideio/viewer/infra/PerfLog.h"
+
+#include <chrono>
+
 #include <algorithm>
 
 namespace slideio::viewer::infra
@@ -121,7 +125,8 @@ void TileLoadScheduler::stop()
     spdlog::info("TileLoadScheduler: all worker threads stopped");
 }
 
-void TileLoadScheduler::setOnTileLoaded(std::function<void(const core::TileKey&)> callback)
+void TileLoadScheduler::setOnTileLoaded(
+    std::function<void(const core::TileKey&, double loadMs, size_t bytes, bool isError)> callback)
 {
     m_onTileLoaded = std::move(callback);
 }
@@ -170,9 +175,21 @@ void TileLoadScheduler::workerLoop()
             break;
         }
 
-        // Read the tile
+        // Read the tile, timing the read for perf logging.
         spdlog::trace("TileLoadScheduler: reading tile {}", request.key.toString());
+        auto readStart = std::chrono::steady_clock::now();
         core::TileData tileData = loan->readTile(request.key);
+        double loadMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - readStart).count();
+
+        size_t bytes = tileData.byteSize();
+        bool isError = tileData.isError();
+
+        if (perfLogEnabled())
+        {
+            perfLog().trace("readTile {}: {:.2f}ms {}B err={}",
+                            request.key.toString(), loadMs, bytes, isError ? 1 : 0);
+        }
 
         // Insert into cache (even error tiles, so we don't retry endlessly)
         auto tilePtr = std::make_shared<core::TileData>(std::move(tileData));
@@ -181,7 +198,7 @@ void TileLoadScheduler::workerLoop()
         // Notify callback
         if (m_onTileLoaded) {
             try {
-                m_onTileLoaded(request.key);
+                m_onTileLoaded(request.key, loadMs, bytes, isError);
             }
             catch (const std::exception& ex) {
                 spdlog::warn("TileLoadScheduler: onTileLoaded callback threw: {}", ex.what());
