@@ -1,7 +1,12 @@
 #include "slideio/viewer/ui/ViewportController.h"
 
+#include "slideio/viewer/infra/PerfLog.h"
+
+#include <spdlog/spdlog.h>
+
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace slideio::viewer::ui
 {
@@ -123,6 +128,45 @@ void ViewportController::requestVisibleTiles()
             visibleRequests.push_back({key, infra::TilePriority::Visible});
         }
     }
+
+    if (infra::perfLogEnabled() && !visibleKeys.empty()) {
+        // Slide-coordinate bounding box of the current viewport (clamped to the
+        // slide) = the image region that must be loaded to paint the view.
+        double cx[4], cy[4];
+        m_viewport.screenToSlide(0.0, 0.0, cx[0], cy[0]);
+        m_viewport.screenToSlide(static_cast<double>(m_viewport.screenWidth()), 0.0, cx[1], cy[1]);
+        m_viewport.screenToSlide(0.0, static_cast<double>(m_viewport.screenHeight()), cx[2], cy[2]);
+        m_viewport.screenToSlide(static_cast<double>(m_viewport.screenWidth()),
+                                 static_cast<double>(m_viewport.screenHeight()), cx[3], cy[3]);
+        double minX = cx[0], maxX = cx[0], minY = cy[0], maxY = cy[0];
+        for (int i = 1; i < 4; ++i) {
+            minX = std::min(minX, cx[i]); maxX = std::max(maxX, cx[i]);
+            minY = std::min(minY, cy[i]); maxY = std::max(maxY, cy[i]);
+        }
+        minX = std::max(0.0, minX);
+        minY = std::max(0.0, minY);
+        maxX = std::min(static_cast<double>(m_slideWidth), maxX);
+        maxY = std::min(static_cast<double>(m_slideHeight), maxY);
+
+        int level = visibleKeys.front().level();
+        double scale = m_pyramid ? m_pyramid->levelInfo(level).scale : 0.0;
+
+        int minCol = std::numeric_limits<int>::max(), maxCol = std::numeric_limits<int>::min();
+        int minRow = std::numeric_limits<int>::max(), maxRow = std::numeric_limits<int>::min();
+        for (const auto& key : visibleKeys) {
+            minCol = std::min(minCol, key.column()); maxCol = std::max(maxCol, key.column());
+            minRow = std::min(minRow, key.row()); maxRow = std::max(maxRow, key.row());
+        }
+
+        const size_t toLoad = visibleRequests.size();
+        const size_t cached = visibleKeys.size() - toLoad;
+        infra::perfLog().trace(
+            "requestVisibleTiles: slideRect=({:.0f},{:.0f} {:.0f}x{:.0f}) level={} scale={:.4f} "
+            "tiles=cols[{}..{}]xrows[{}..{}] visible={} cached={} toLoad={}",
+            minX, minY, maxX - minX, maxY - minY, level, scale,
+            minCol, maxCol, minRow, maxRow, visibleKeys.size(), cached, toLoad);
+    }
+
     if (!visibleRequests.empty()) {
         m_scheduler->requestTiles(visibleRequests);
     }
