@@ -99,6 +99,8 @@ After computing `visibleKeys` and partitioning cached vs. need-loading, emit one
 - Pyramid level chosen for this viewport and its scale.
 - Tile column/row range: `[minCol..maxCol] x [minRow..maxRow]`.
 - Counts: total visible tiles, already-cached, need-loading.
+- This is also where the cache-hit figure for the cycle is reported (the summary
+  in §5 does not repeat it).
 
 Example:
 ```
@@ -106,7 +108,8 @@ Example:
        tiles=cols[3..6]xrows[2..4] visible=12 cached=5 toLoad=7
 ```
 
-The cached count seeds the per-cycle summary's "cache hits" figure.
+The cached count is the cycle's cache-hit figure; the per-cycle summary (§5) does not
+repeat it.
 
 ### 3. Per-tile load lines — `TileLoadScheduler::workerLoop()`
 
@@ -164,11 +167,15 @@ moves again mid-refine) reset the clock automatically.
 
 Summary example:
 ```
-[perf] viewport refined in 142.7ms: loaded=7 cacheHits=5 avg=11.3ms max=28.1ms
-       totalRead=5.4MB
+[perf] viewport refined in 142.7ms: loaded=7 avgLoad=11.30ms maxLoad=28.10ms
+       totalRead=5.40MB
 ```
 
-(`cacheHits` carried from the most recent `requestVisibleTiles` partition.)
+The cache-hit count is **not** repeated here: it would require plumbing the cached
+figure from `requestVisibleTiles` (a different component, on a different call) into the
+widget purely for this one field. Instead it is logged in the region line (§2,
+`cached=…`), which immediately precedes each refinement cycle — read the two lines
+together to correlate cache hits with the refine time.
 
 ### 6. Per-`paintGL` CPU time — `ViewportWidget::paintGL()`
 
