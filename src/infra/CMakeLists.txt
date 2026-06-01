@@ -4,6 +4,7 @@ add_library(slideio-viewer-infra STATIC
     src/LruTileCache.cpp
     src/TileLoadScheduler.cpp
     src/Prefetcher.cpp
+    src/PerfLog.cpp
 )
 
 target_include_directories(slideio-viewer-infra PUBLIC
