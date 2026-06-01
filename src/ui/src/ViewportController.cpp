@@ -140,8 +140,10 @@ void ViewportController::requestVisibleTiles()
                                  static_cast<double>(m_viewport.screenHeight()), cx[3], cy[3]);
         double minX = cx[0], maxX = cx[0], minY = cy[0], maxY = cy[0];
         for (int i = 1; i < 4; ++i) {
-            minX = std::min(minX, cx[i]); maxX = std::max(maxX, cx[i]);
-            minY = std::min(minY, cy[i]); maxY = std::max(maxY, cy[i]);
+            minX = std::min(minX, cx[i]);
+            maxX = std::max(maxX, cx[i]);
+            minY = std::min(minY, cy[i]);
+            maxY = std::max(maxY, cy[i]);
         }
         minX = std::max(0.0, minX);
         minY = std::max(0.0, minY);
@@ -154,8 +156,10 @@ void ViewportController::requestVisibleTiles()
         int minCol = std::numeric_limits<int>::max(), maxCol = std::numeric_limits<int>::min();
         int minRow = std::numeric_limits<int>::max(), maxRow = std::numeric_limits<int>::min();
         for (const auto& key : visibleKeys) {
-            minCol = std::min(minCol, key.column()); maxCol = std::max(maxCol, key.column());
-            minRow = std::min(minRow, key.row()); maxRow = std::max(maxRow, key.row());
+            minCol = std::min(minCol, key.column());
+            maxCol = std::max(maxCol, key.column());
+            minRow = std::min(minRow, key.row());
+            maxRow = std::max(maxRow, key.row());
         }
 
         const size_t toLoad = visibleRequests.size();
