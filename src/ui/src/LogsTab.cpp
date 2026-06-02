@@ -3,6 +3,8 @@
 #include "slideio/viewer/ui/AppPaths.h"
 #include "slideio/viewer/ui/LogSettings.h"
 
+#include <spdlog/common.h> // spdlog::level::level_enum
+
 #include <QComboBox>
 #include <QDesktopServices>
 #include <QFile>
@@ -59,8 +61,8 @@ LogsTab::LogsTab(QWidget* parent)
     m_impl->appLevelCombo->addItem("Off", "off");
 
     m_impl->perfCombo = new QComboBox(this);
-    m_impl->perfCombo->addItem("Do not log", false);
-    m_impl->perfCombo->addItem("Log performance data", true);
+    m_impl->perfCombo->addItem("Do not log", QVariant(false));
+    m_impl->perfCombo->addItem("Log performance data", QVariant(true));
 
     auto* levelsForm = new QFormLayout;
     levelsForm->addRow("Application log level:", m_impl->appLevelCombo);
@@ -75,11 +77,15 @@ LogsTab::LogsTab(QWidget* parent)
     layout->addStretch();
 
     // --- Load current selections from QSettings ---
-    const std::string appLevel = readAppLevelSetting();
-    const QString appLevelData =
-        QString::fromStdString(appLevel.empty() ? std::string("debug") : appLevel);
+    // Select the persisted level; if none is saved (findData returns -1),
+    // fall back to "debug" looked up by data so this does not depend on
+    // the combo's item order.
+    const QString appLevelData = QString::fromStdString(readAppLevelSetting());
     int appIdx = m_impl->appLevelCombo->findData(appLevelData);
-    m_impl->appLevelCombo->setCurrentIndex(appIdx >= 0 ? appIdx : 1 /* Debug */);
+    if (appIdx < 0) {
+        appIdx = m_impl->appLevelCombo->findData(QString("debug"));
+    }
+    m_impl->appLevelCombo->setCurrentIndex(appIdx >= 0 ? appIdx : 0);
 
     int perfIdx = m_impl->perfCombo->findData(readPerfEnabledSetting());
     m_impl->perfCombo->setCurrentIndex(perfIdx >= 0 ? perfIdx : 0 /* Do not log */);
