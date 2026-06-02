@@ -11,8 +11,10 @@
 
 #include "slideio/viewer/ui/AppPaths.h"
 #include "slideio/viewer/ui/MainWindow.h"
+#include "slideio/viewer/ui/LogSettings.h"
 
 #include <cstdlib>
+#include <optional>
 #include <string>
 
 int main(int argc, char* argv[])
@@ -38,19 +40,13 @@ int main(int argc, char* argv[])
     spdlog::set_default_logger(logger);
 
     // Dedicated perf logger for tile-loading / rendering timing. Shares the
-    // same sinks as the main logger but is OFF by default — only emits when
-    // SLIDEIO_PERF_LOG is set to a non-empty, non-"0" value. Keeps normal runs
-    // free of the verbose per-tile/per-frame timing output.
+    // main logger's sinks but is OFF by default. Its level is decided below,
+    // once QApplication exists, from SLIDEIO_PERF_LOG (env wins) or the
+    // persisted setting (Tools -> Settings -> Logs).
     auto perfLogger = std::make_shared<spdlog::logger>("perf",
         spdlog::sinks_init_list{fileSink, consoleSink});
-    const char* perfEnv = std::getenv("SLIDEIO_PERF_LOG");
-    const bool perfOn = perfEnv && perfEnv[0] != '\0' && std::string(perfEnv) != "0";
-    perfLogger->set_level(perfOn ? spdlog::level::trace : spdlog::level::off);
+    perfLogger->set_level(spdlog::level::off);
     spdlog::register_logger(perfLogger);
-    if (perfOn) {
-        perfLogger->flush_on(spdlog::level::trace);
-        spdlog::info("Performance logging ENABLED (SLIDEIO_PERF_LOG set)");
-    }
 
     spdlog::info("SlideIO Viewer starting, log file: {}", logPath.toStdString());
 
@@ -62,6 +58,26 @@ int main(int argc, char* argv[])
     QSurfaceFormat::setDefaultFormat(fmt);
 
     QApplication app(argc, argv);
+
+    // Apply persisted log settings now that QSettings (org/app identity set
+    // above) is safe to use. App level: persisted value, else the debug default.
+    // Perf level: SLIDEIO_PERF_LOG wins when set; otherwise the persisted flag.
+    {
+        using namespace slideio::viewer::ui;
+        applyAppLevel(levelFromString(readAppLevelSetting()));
+
+        const char* perfEnv = std::getenv("SLIDEIO_PERF_LOG");
+        std::optional<std::string> perfEnvOpt;
+        if (perfEnv) {
+            perfEnvOpt = std::string(perfEnv);
+        }
+        const bool perfEnabled = resolveStartupPerfEnabled(perfEnvOpt, readPerfEnabledSetting());
+        applyPerfEnabled(perfEnabled);
+        if (perfEnabled) {
+            spdlog::info("Performance logging ENABLED");
+        }
+    }
+
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/app.png")));
 
     slideio::viewer::ui::MainWindow mainWindow;
