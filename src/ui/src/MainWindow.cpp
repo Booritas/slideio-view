@@ -9,6 +9,7 @@
 #include "slideio/viewer/ui/MetadataPanel.h"
 #include "slideio/viewer/ui/MinimapWidget.h"
 #include "slideio/viewer/ui/OpenS3Dialog.h"
+#include "slideio/viewer/ui/SettingsDialog.h"
 #include "slideio/viewer/ui/StatusBarManager.h"
 #include "slideio/viewer/ui/ViewportController.h"
 #include "slideio/viewer/ui/ViewportWidget.h"
@@ -100,6 +101,7 @@ struct MainWindow::Impl
     QAction* associatedImagesToggleAction = nullptr;
     QAction* propertiesToggleAction = nullptr;
     QAction* metadataToggleAction = nullptr;
+    QAction* settingsAction = nullptr;
 
     void createActions()
     {
@@ -121,6 +123,9 @@ struct MainWindow::Impl
         exitAction = new QAction("E&xit", owner);
         exitAction->setShortcut(QKeySequence("Alt+F4"));
         exitAction->setStatusTip("Exit the application");
+
+        settingsAction = new QAction("&Settings...", owner);
+        settingsAction->setStatusTip("Configure application settings");
 
         zoomInAction = new QAction("Zoom &In", owner);
         zoomInAction->setShortcut(QKeySequence("Ctrl++"));
@@ -179,6 +184,9 @@ struct MainWindow::Impl
         viewMenu->addAction(associatedImagesToggleAction);
         viewMenu->addAction(propertiesToggleAction);
         viewMenu->addAction(metadataToggleAction);
+
+        QMenu* toolsMenu = owner->menuBar()->addMenu("&Tools");
+        toolsMenu->addAction(settingsAction);
     }
 
     void connectSignals()
@@ -229,6 +237,11 @@ struct MainWindow::Impl
         });
 
         QObject::connect(exitAction, &QAction::triggered, owner, &QMainWindow::close);
+
+        QObject::connect(settingsAction, &QAction::triggered, owner, [this]() {
+            SettingsDialog dialog(owner);
+            dialog.exec();
+        });
 
         // View actions
         QObject::connect(zoomInAction, &QAction::triggered, viewportWidget, &ViewportWidget::zoomIn);
