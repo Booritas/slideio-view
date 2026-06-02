@@ -87,6 +87,11 @@ LogsTab::LogsTab(QWidget* parent)
     }
     m_impl->appLevelCombo->setCurrentIndex(appIdx >= 0 ? appIdx : 0);
 
+    // This reflects the *persisted* perf setting. When SLIDEIO_PERF_LOG is set,
+    // it overrides the persisted value at startup only (see main.cpp) — so the
+    // live logger state can differ from what is shown here during such a run.
+    // The dialog intentionally edits the persisted setting, not the session
+    // override; do not "fix" this to read the live logger level.
     int perfIdx = m_impl->perfCombo->findData(readPerfEnabledSetting());
     m_impl->perfCombo->setCurrentIndex(perfIdx >= 0 ? perfIdx : 0 /* Do not log */);
 
