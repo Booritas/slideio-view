@@ -17,6 +17,8 @@ add_library(slideio-viewer-ui STATIC
     src/SlidePropertiesPanel.cpp
     src/MetadataPanel.cpp
     src/OpenS3Dialog.cpp
+    src/SettingsDialog.cpp
+    src/LogsTab.cpp
     src/MainWindow.cpp
 )
 
