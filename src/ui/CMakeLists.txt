@@ -20,6 +20,7 @@ add_library(slideio-viewer-ui STATIC
     src/OpenS3Dialog.cpp
     src/SettingsDialog.cpp
     src/LogsTab.cpp
+    src/PerformanceTab.cpp
     src/MainWindow.cpp
 )
 
