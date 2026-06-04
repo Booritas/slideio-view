@@ -1763,6 +1763,8 @@ QString slideDisplayName(const std::string& filePath)
 
 void ViewportWidget::openSlide(const std::string& filePath, const std::string& driverId)
 {
+    const auto openStart = std::chrono::steady_clock::now();
+
     closeSlide();
     m_impl->currentFilePath = filePath;
     m_impl->currentDriverId = driverId;
@@ -1777,7 +1779,7 @@ void ViewportWidget::openSlide(const std::string& filePath, const std::string& d
         }, Qt::QueuedConnection);
     };
 
-    std::thread([this, opId, filePath, driverId, statusCallback]() {
+    std::thread([this, opId, openStart, filePath, driverId, statusCallback]() {
         SceneOpenResult result = openSceneSync(filePath, 0, driverId, statusCallback);
         // Always enumerate scenes so the scene panel can populate, even if scene 0 worked.
         try {
@@ -1788,8 +1790,13 @@ void ViewportWidget::openSlide(const std::string& filePath, const std::string& d
             spdlog::warn("openSlide: failed to enumerate scenes: {}", ex.what());
         }
         QMetaObject::invokeMethod(this,
-            [this, opId, r = std::move(result)]() mutable {
+            [this, opId, openStart, filePath, r = std::move(result)]() mutable {
                 installSceneOpenResult(opId, std::move(r));
+                if (infra::perfLogEnabled()) {
+                    double ms = std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - openStart).count();
+                    infra::perfLog().trace("openSlide '{}' end-to-end: {:.1f}ms", filePath, ms);
+                }
             }, Qt::QueuedConnection);
     }).detach();
 }
