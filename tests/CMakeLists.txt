@@ -30,7 +30,9 @@ add_test(NAME infra-tests COMMAND slideio-viewer-infra-tests)
 # so the unit test does not pull in OpenGL/Widgets.
 add_executable(slideio-viewer-ui-tests
     ui/LogSettingsTest.cpp
+    ui/ReadingSettingsTest.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/src/LogSettings.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/src/ReadingSettings.cpp
 )
 
 target_include_directories(slideio-viewer-ui-tests
