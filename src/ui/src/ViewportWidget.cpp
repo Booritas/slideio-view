@@ -1,5 +1,6 @@
 #include "slideio/viewer/ui/ViewportWidget.h"
 #include "slideio/viewer/ui/ViewportController.h"
+#include "slideio/viewer/ui/ReadingSettings.h"
 
 #include "slideio/viewer/core/CoordinateSystem.h"
 #include "slideio/viewer/core/Histogram.h"
@@ -1064,7 +1065,8 @@ SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
     SceneOpenResult r;
     r.filePath = filePath;
     try {
-        r.adapterPool = std::make_shared<infra::SlideIOAdapterPool>(filePath, sceneIndex, 4, driverId);
+        r.adapterPool = std::make_shared<infra::SlideIOAdapterPool>(
+            filePath, sceneIndex, slideio::viewer::ui::readThreadPoolSize(), driverId);
         {
             auto loan = r.adapterPool->acquire();
             r.slideInfo = loan->slideInfo();
@@ -1117,7 +1119,8 @@ SceneOpenResult openAuxImageSync(const std::string& filePath, const std::string&
     r.filePath = filePath;
     r.isAuxImage = true;
     try {
-        r.adapterPool = std::make_shared<infra::SlideIOAdapterPool>(filePath, auxImageName, 4, driverId);
+        r.adapterPool = std::make_shared<infra::SlideIOAdapterPool>(
+            filePath, auxImageName, slideio::viewer::ui::readThreadPoolSize(), driverId);
         {
             auto loan = r.adapterPool->acquire();
             r.slideInfo = loan->slideInfo();
@@ -2105,7 +2108,7 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
     }
 
     m_impl->scheduler = std::make_shared<infra::TileLoadScheduler>(
-        m_impl->adapterPool, m_impl->tileCache);
+        m_impl->adapterPool, m_impl->tileCache, m_impl->adapterPool->poolSize());
     m_impl->scheduler->setOnTileLoaded(
         [this](const core::TileKey& key, double loadMs, size_t bytes, bool /*isError*/) {
         {
