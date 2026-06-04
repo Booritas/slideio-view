@@ -9,7 +9,10 @@
 
 #include <spdlog/spdlog.h>
 
+#include "slideio/viewer/infra/PerfLog.h"
+
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <limits>
@@ -428,6 +431,25 @@ bool downsampleByDataType(const uint8_t* src, int srcW, int srcH,
 namespace slideio::viewer::infra
 {
 
+// Times a ::slideio::openSlide() call and, when perf logging is enabled, emits
+// one trace line tagged with the call context (which open path triggered it).
+// File-local: lives in the infra namespace so perfLog()/perfLogEnabled() resolve
+// unqualified.
+static std::shared_ptr<::slideio::Slide> openSlideTimed(const std::string& filePath,
+                                                        const std::string& driverId,
+                                                        const std::string& context)
+{
+    auto start = std::chrono::steady_clock::now();
+    auto slide = ::slideio::openSlide(filePath, driverId);
+    if (perfLogEnabled()) {
+        double ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count();
+        perfLog().trace("slideio::openSlide '{}' [{}] driver='{}': {:.1f}ms",
+                        filePath, context, driverId, ms);
+    }
+    return slide;
+}
+
 SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
                                const std::string& driverId)
     : m_filePath(filePath)
@@ -435,7 +457,7 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
     spdlog::info("SlideIOAdapter: opening slide '{}', scene {}, driver '{}'",
                  filePath, sceneIndex, driverId);
 
-    m_slide = ::slideio::openSlide(filePath, driverId);
+    m_slide = openSlideTimed(filePath, driverId, "scene " + std::to_string(sceneIndex));
     if (!m_slide) {
         throw std::runtime_error("SlideIOAdapter: failed to open slide '" + filePath + "'");
     }
@@ -636,7 +658,7 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
     spdlog::info("SlideIOAdapter: opening slide '{}', aux image '{}', driver '{}'",
                  filePath, auxImageName, driverId);
 
-    m_slide = ::slideio::openSlide(filePath, driverId);
+    m_slide = openSlideTimed(filePath, driverId, "aux '" + auxImageName + "'");
     if (!m_slide) {
         throw std::runtime_error("SlideIOAdapter: failed to open slide '" + filePath + "'");
     }
@@ -812,7 +834,7 @@ std::pair<std::vector<core::SceneInfo>, std::vector<core::SceneInfo>> SlideIOAda
     std::vector<core::SceneInfo> auxImages;
 
     try {
-        auto slide = ::slideio::openSlide(filePath, driverId);
+        auto slide = openSlideTimed(filePath, driverId, "enumerate");
         if (!slide) {
             spdlog::error("SlideIOAdapter::enumerateScenes: failed to open slide '{}'", filePath);
             return {scenes, auxImages};
