@@ -450,6 +450,33 @@ static std::shared_ptr<::slideio::Slide> openSlideTimed(const std::string& fileP
     return slide;
 }
 
+// Times any slideio call and, when perf logging is enabled, emits one trace line
+// tagged with the method name. Returns fn()'s result unchanged; supports void.
+// File-local: lives in the infra namespace so perfLog()/perfLogEnabled() resolve
+// unqualified.
+template <typename F>
+static auto timeSlideio(const char* method, F&& fn) -> decltype(fn())
+{
+    using Ret = decltype(fn());
+    auto start = std::chrono::steady_clock::now();
+    if constexpr (std::is_void_v<Ret>) {
+        fn();
+        if (perfLogEnabled()) {
+            double ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - start).count();
+            perfLog().trace("slideio::{}: {:.1f}ms", method, ms);
+        }
+    } else {
+        Ret result = fn();
+        if (perfLogEnabled()) {
+            double ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - start).count();
+            perfLog().trace("slideio::{}: {:.1f}ms", method, ms);
+        }
+        return result;
+    }
+}
+
 SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
                                const std::string& driverId)
     : m_filePath(filePath)
@@ -472,7 +499,7 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
             + " out of range [0, " + std::to_string(numScenes) + ") for slide '" + filePath + "'");
     }
 
-    m_scene = m_slide->getScene(sceneIndex);
+    m_scene = timeSlideio("Slide::getScene", [&]{ return m_slide->getScene(sceneIndex); });
     if (!m_scene) {
         throw std::runtime_error("SlideIOAdapter: failed to get scene " + std::to_string(sceneIndex)
             + " from slide '" + filePath + "'");
@@ -638,8 +665,10 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
     m_slideInfo.levels = m_levels;
 
     try {
-        m_slideInfo.slideMetadata = convertMetadata(m_slide->getMetadata());
-        m_slideInfo.sceneMetadata = convertMetadata(m_scene->getMetadata());
+        m_slideInfo.slideMetadata = convertMetadata(
+            timeSlideio("Slide::getMetadata", [&]{ return m_slide->getMetadata(); }));
+        m_slideInfo.sceneMetadata = convertMetadata(
+            timeSlideio("Scene::getMetadata", [&]{ return m_scene->getMetadata(); }));
     } catch (const std::exception& ex) {
         spdlog::warn("SlideIOAdapter: getMetadata failed: {}", ex.what());
     }
@@ -663,7 +692,7 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
         throw std::runtime_error("SlideIOAdapter: failed to open slide '" + filePath + "'");
     }
 
-    m_scene = m_slide->getAuxImage(auxImageName);
+    m_scene = timeSlideio("Slide::getAuxImage", [&]{ return m_slide->getAuxImage(auxImageName); });
     if (!m_scene) {
         throw std::runtime_error("SlideIOAdapter: failed to get aux image '" + auxImageName
             + "' from slide '" + filePath + "'");
@@ -815,8 +844,10 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
     m_slideInfo.levels = m_levels;
 
     try {
-        m_slideInfo.slideMetadata = convertMetadata(m_slide->getMetadata());
-        m_slideInfo.sceneMetadata = convertMetadata(m_scene->getMetadata());
+        m_slideInfo.slideMetadata = convertMetadata(
+            timeSlideio("Slide::getMetadata", [&]{ return m_slide->getMetadata(); }));
+        m_slideInfo.sceneMetadata = convertMetadata(
+            timeSlideio("Scene::getMetadata", [&]{ return m_scene->getMetadata(); }));
     } catch (const std::exception& ex) {
         spdlog::warn("SlideIOAdapter: getMetadata failed: {}", ex.what());
     }
@@ -844,7 +875,7 @@ std::pair<std::vector<core::SceneInfo>, std::vector<core::SceneInfo>> SlideIOAda
         int numScenes = slide->getNumScenes();
         for (int i = 0; i < numScenes; ++i) {
             try {
-                auto scene = slide->getScene(i);
+                auto scene = timeSlideio("Slide::getScene", [&]{ return slide->getScene(i); });
                 if (!scene) {
                     continue;
                 }
@@ -865,10 +896,10 @@ std::pair<std::vector<core::SceneInfo>, std::vector<core::SceneInfo>> SlideIOAda
         }
 
         // Enumerate auxiliary images
-        auto auxNames = slide->getAuxImageNames();
+        auto auxNames = timeSlideio("Slide::getAuxImageNames", [&]{ return slide->getAuxImageNames(); });
         for (const auto& auxName : auxNames) {
             try {
-                auto auxScene = slide->getAuxImage(auxName);
+                auto auxScene = timeSlideio("Slide::getAuxImage", [&]{ return slide->getAuxImage(auxName); });
                 if (!auxScene) {
                     continue;
                 }
@@ -1122,7 +1153,7 @@ core::TileData SlideIOAdapter::readTile(const core::TileKey& key)
 std::vector<std::string> SlideIOAdapter::availableDriverIds()
 {
     try {
-        return ::slideio::getDriverIDs();
+        return timeSlideio("getDriverIDs", []{ return ::slideio::getDriverIDs(); });
     } catch (const std::exception& ex) {
         spdlog::warn("SlideIOAdapter::availableDriverIds: {}", ex.what());
         return {};
