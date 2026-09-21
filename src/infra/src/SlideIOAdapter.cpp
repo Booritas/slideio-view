@@ -893,42 +893,30 @@ std::vector<core::LevelInfo> SlideIOAdapter::levels() const
 
 bool SlideIOAdapter::isLevelUnreliable(int level) const
 {
-    std::lock_guard<std::mutex> lock(m_unreliableLevelsMutex);
-    return m_unreliableLevels.count(level) > 0;
+    return m_unreliableLevels.isUnreliable(level);
 }
 
 bool SlideIOAdapter::markLevelUnreliable(int level)
 {
-    bool firstTime = false;
-    std::function<void(int)> callback;
-    {
-        std::lock_guard<std::mutex> lock(m_unreliableLevelsMutex);
-        firstTime = m_unreliableLevels.insert(level).second;
-        // Copy the callback under the lock, then invoke it outside: one adapter
-        // is now shared across every reader thread, so the member is live data.
-        // Calling it while holding the lock would run caller code (cache
-        // eviction, a Qt status update) inside our critical section.
-        if (firstTime) {
-            callback = m_onLevelMarkedUnreliable;
-        }
-    }
+    const bool firstTime = m_unreliableLevels.mark(level);
     if (firstTime) {
         spdlog::warn("SlideIOAdapter: level {} marked unreliable; will route reads through finer levels", level);
-        if (callback) {
-            try {
-                callback(level);
-            } catch (const std::exception& ex) {
-                spdlog::warn("SlideIOAdapter: onLevelMarkedUnreliable callback threw: {}", ex.what());
-            }
-        }
     }
     return firstTime;
 }
 
-void SlideIOAdapter::setOnLevelMarkedUnreliable(std::function<void(int)> callback)
+void SlideIOAdapter::addOnLevelMarkedUnreliable(std::function<void(int)> listener)
 {
-    std::lock_guard<std::mutex> lock(m_unreliableLevelsMutex);
-    m_onLevelMarkedUnreliable = std::move(callback);
+    // Wrap rather than register the caller's listener directly: a throwing
+    // listener must not take down the reader thread that happened to find the
+    // bad level, nor abort the notification of the listeners after it.
+    m_unreliableLevels.addListener([listener = std::move(listener)](int level) {
+        try {
+            listener(level);
+        } catch (const std::exception& ex) {
+            spdlog::warn("SlideIOAdapter: onLevelMarkedUnreliable listener threw: {}", ex.what());
+        }
+    });
 }
 
 core::TileData SlideIOAdapter::readTile(const core::TileKey& key)

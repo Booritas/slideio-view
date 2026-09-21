@@ -1066,7 +1066,7 @@ SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
                 r.slideInfo.width, r.slideInfo.height, levels);
         }
         if (statusCallback) {
-            r.slideSource->setOnLevelMarkedUnreliable([statusCallback](int level) {
+            r.slideSource->addOnLevelMarkedUnreliable([statusCallback](int level) {
                 statusCallback(QStringLiteral("Working around corrupted tiles (level %1)…").arg(level));
             });
         }
@@ -1118,7 +1118,7 @@ SceneOpenResult openAuxImageSync(const std::string& filePath, const std::string&
                 r.slideInfo.width, r.slideInfo.height, levels);
         }
         if (statusCallback) {
-            r.slideSource->setOnLevelMarkedUnreliable([statusCallback](int level) {
+            r.slideSource->addOnLevelMarkedUnreliable([statusCallback](int level) {
                 statusCallback(QStringLiteral("Working around corrupted tiles (level %1)…").arg(level));
             });
         }

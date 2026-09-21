@@ -32,8 +32,14 @@ TileLoadScheduler::TileLoadScheduler(std::shared_ptr<core::ISlideSource> slideSo
     // broken level and can be off by a tile (data shifted from a wrong file
     // offset). The renderer will re-request them, and the source's fallback
     // path now reads from a finer level.
+    //
+    // This registers well after the slide opened, and the coarse-level pass
+    // that runs during open both reads every coarse tile and caches it -- so
+    // the levels most likely to be found unreliable are found before we exist.
+    // addOnLevelMarkedUnreliable replays those, which is what gets their tiles
+    // out of the cache.
     auto cacheWeak = std::weak_ptr<core::ITileCache>(m_tileCache);
-    m_slideSource->setOnLevelMarkedUnreliable([cacheWeak](int level) {
+    m_slideSource->addOnLevelMarkedUnreliable([cacheWeak](int level) {
         if (auto cache = cacheWeak.lock()) {
             cache->evictLevel(level);
         }

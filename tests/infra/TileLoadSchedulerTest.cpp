@@ -11,6 +11,7 @@
 #include "slideio/viewer/infra/TileLoadScheduler.h"
 #include "slideio/viewer/infra/LruTileCache.h"
 #include "slideio/viewer/core/ISlideSource.h"
+#include "slideio/viewer/core/LevelUnreliableRegistry.h"
 #include "slideio/viewer/core/TileData.h"
 #include "slideio/viewer/core/TileKey.h"
 
@@ -70,6 +71,14 @@ public:
         return TileData(std::move(buffer), targetWidth, targetHeight, 3, DataType::Byte);
     }
 
+    void addOnLevelMarkedUnreliable(std::function<void(int)> listener) override
+    {
+        m_unreliableLevels.addListener(std::move(listener));
+    }
+
+    // Stands in for the adapter discovering a corrupt level mid-read.
+    void markUnreliable(int level) { m_unreliableLevels.mark(level); }
+
     // Returns false on timeout rather than blocking the suite forever.
     bool waitForCompleted(int count, std::chrono::milliseconds timeout)
     {
@@ -87,6 +96,7 @@ public:
     }
 
 private:
+    LevelUnreliableRegistry m_unreliableLevels;
     std::atomic<int> m_inFlight{0};
     std::atomic<int> m_peakInFlight{0};
     mutable std::mutex m_mutex;
@@ -185,4 +195,32 @@ TEST_CASE("TileLoadScheduler rejects a null slide source", "[infra][TileLoadSche
 {
     auto cache = std::make_shared<LruTileCache>(1024 * 1024);
     REQUIRE_THROWS_AS(TileLoadScheduler(nullptr, cache, 2), std::invalid_argument);
+}
+
+TEST_CASE("TileLoadScheduler evicts levels found unreliable before it existed",
+          "[infra][TileLoadScheduler]")
+{
+    // The regression this guards: the coarse-level pass during slide open reads
+    // every tile of the coarsest level and caches them, and it is the most
+    // likely moment for a corrupt level to be found -- all before the scheduler
+    // is constructed. If the scheduler only heard about levels marked after it
+    // registered, those already-cached bad tiles would never be evicted, and
+    // the level is already marked so no later notification would come either.
+    auto source = std::make_shared<RecordingSlideSource>();
+    auto cache = std::make_shared<LruTileCache>(4 * 1024 * 1024);
+
+    std::vector<uint8_t> buffer(static_cast<size_t>(kTileSize) * kTileSize * 3, 0);
+    auto staleTile = std::make_shared<TileData>(std::move(buffer), kTileSize, kTileSize, 3,
+                                                DataType::Byte);
+    cache->insert(TileKey{1, 0, 0}, staleTile);
+    cache->insert(TileKey{0, 0, 0}, staleTile);
+
+    source->markUnreliable(1);
+
+    // Constructing the scheduler is what registers the eviction listener.
+    TileLoadScheduler scheduler(source, cache, 2);
+
+    REQUIRE(cache->lookup(TileKey{1, 0, 0}) == nullptr);
+    // A level nobody complained about keeps its tiles.
+    REQUIRE(cache->lookup(TileKey{0, 0, 0}) != nullptr);
 }

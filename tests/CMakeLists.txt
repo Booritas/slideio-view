@@ -5,6 +5,7 @@ add_executable(slideio-viewer-core-tests
     core/ViewportTest.cpp
     core/CoordinateSystemTest.cpp
     core/HistogramTest.cpp
+    core/LevelUnreliableRegistryTest.cpp
     core/ScaleBarTest.cpp
 )
 
