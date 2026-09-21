@@ -13,6 +13,22 @@ endif()
 set(_slideio_release_prefix "${SLIDEIO_ROOT}/release")
 set(_slideio_debug_prefix   "${SLIDEIO_ROOT}/debug")
 
+# find_path and find_library below write their results to the cache, so without
+# these unsets a *re*configure short-circuits on whatever was found last time.
+# That is not hypothetical: reinstalling SlideIO to a different tree, or dropping
+# a debug install that used to exist, would leave the cached path naming a
+# directory that is gone -- CMake then fails at generate time with
+# "Imported target SlideIO::slideio includes non-existent path", or worse, links
+# silently against a stale library. Re-detect on every configure instead.
+# NO_CACHE would say this more directly but needs CMake 3.21; this project
+# requires 3.20.
+unset(SlideIO_INCLUDE_DIR_RELEASE CACHE)
+unset(SlideIO_INCLUDE_DIR_DEBUG CACHE)
+unset(SlideIO_LIBRARY_RELEASE CACHE)
+unset(SlideIO_LIBRARY_DEBUG CACHE)
+unset(SlideIO_CORE_LIBRARY_RELEASE CACHE)
+unset(SlideIO_CORE_LIBRARY_DEBUG CACHE)
+
 find_path(SlideIO_INCLUDE_DIR_RELEASE
     NAMES slideio/slideio/slideio.hpp
     PATHS "${_slideio_release_prefix}/include"
@@ -55,7 +71,10 @@ find_package_handle_standard_args(SlideIO
 )
 
 # If a debug install isn't present, transparently fall back to the release
-# headers so debug builds against this find module still configure.
+# headers and libraries so debug builds against this find module still
+# configure. Release-only is the normal state of a local SlideIO tree: install.py
+# writes release/ and debug/ prefixes independently, and `-c release` populates
+# only the first.
 if(NOT SlideIO_INCLUDE_DIR_DEBUG)
     set(SlideIO_INCLUDE_DIR_DEBUG "${SlideIO_INCLUDE_DIR_RELEASE}")
 endif()
