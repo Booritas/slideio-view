@@ -25,10 +25,13 @@ public:
                                 int targetWidth, int targetHeight,
                                 int zIndex = 0, int tFrame = 0) = 0;
 
-    // Called the first time the implementation decides a pyramid level is
-    // unreliable (e.g., a corrupt tile-offset table) and starts routing reads
-    // around it. Default no-op for backends that don't track this.
-    virtual void setOnLevelMarkedUnreliable(std::function<void(int)> /*callback*/) {}
+    // Registers a listener told when the implementation decides a pyramid level
+    // is unreliable (e.g., a corrupt tile-offset table) and starts routing reads
+    // around it. The listener is invoked once per unreliable level, including
+    // any found before it registered -- a caller built late in slide open, such
+    // as the tile scheduler, still learns which levels to distrust. Default
+    // no-op for backends that don't track this.
+    virtual void addOnLevelMarkedUnreliable(std::function<void(int)> /*listener*/) {}
 };
 
 } // namespace slideio::viewer::core

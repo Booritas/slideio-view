@@ -1,13 +1,12 @@
 #pragma once
 
 #include "slideio/viewer/core/ISlideSource.h"
+#include "slideio/viewer/core/LevelUnreliableRegistry.h"
 #include "slideio/viewer/core/Types.h"
 
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <string>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -23,7 +22,7 @@ namespace slideio::viewer::infra
 // One adapter opens the slide once and serves every reader thread. Since SlideIO
 // 2.10 a scene's block reads are safe to call concurrently, so readTile/readBlock
 // need no external serialisation; all other state is set in the constructor or
-// guarded by m_unreliableLevelsMutex.
+// guarded by m_unreliableLevels, which does its own locking.
 class SlideIOAdapter : public core::ISlideSource
 {
 public:
@@ -53,7 +52,7 @@ public:
                               int targetWidth, int targetHeight,
                               int zIndex = 0, int tFrame = 0) override;
 
-    void setOnLevelMarkedUnreliable(std::function<void(int)> callback) override;
+    void addOnLevelMarkedUnreliable(std::function<void(int)> listener) override;
 
 private:
     bool isLevelUnreliable(int level) const;
@@ -66,11 +65,7 @@ private:
     std::vector<core::LevelInfo> m_levels;
     core::SlideInfo m_slideInfo;
 
-    // Guards both members below. m_onLevelMarkedUnreliable is written by the
-    // owner thread and read by reader threads, so it needs the lock too.
-    mutable std::mutex m_unreliableLevelsMutex;
-    std::unordered_set<int> m_unreliableLevels;
-    std::function<void(int)> m_onLevelMarkedUnreliable;
+    core::LevelUnreliableRegistry m_unreliableLevels;
 };
 
 } // namespace slideio::viewer::infra
