@@ -1,22 +1,22 @@
 #include "slideio/viewer/infra/TileLoadScheduler.h"
-#include "slideio/viewer/infra/SlideIOAdapterPool.h"
 
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <stdexcept>
 
 namespace slideio::viewer::infra
 {
 
-TileLoadScheduler::TileLoadScheduler(std::shared_ptr<SlideIOAdapterPool> adapterPool,
+TileLoadScheduler::TileLoadScheduler(std::shared_ptr<core::ISlideSource> slideSource,
                                      std::shared_ptr<core::ITileCache> tileCache,
                                      int numWorkers)
-    : m_adapterPool(std::move(adapterPool))
+    : m_slideSource(std::move(slideSource))
     , m_tileCache(std::move(tileCache))
     , m_stopping(false)
 {
-    if (!m_adapterPool) {
-        throw std::invalid_argument("TileLoadScheduler: adapterPool must not be null");
+    if (!m_slideSource) {
+        throw std::invalid_argument("TileLoadScheduler: slideSource must not be null");
     }
     if (!m_tileCache) {
         throw std::invalid_argument("TileLoadScheduler: tileCache must not be null");
@@ -27,13 +27,13 @@ TileLoadScheduler::TileLoadScheduler(std::shared_ptr<SlideIOAdapterPool> adapter
         numWorkers = std::max(2, hw - 2);
     }
 
-    // Once an adapter detects a pyramid level is unreliable, drop any cached
+    // Once the source detects a pyramid level is unreliable, drop any cached
     // tiles from that level. They came from earlier "successful" reads at the
     // broken level and can be off by a tile (data shifted from a wrong file
-    // offset). The renderer will re-request them, and the adapter's fallback
+    // offset). The renderer will re-request them, and the source's fallback
     // path now reads from a finer level.
     auto cacheWeak = std::weak_ptr<core::ITileCache>(m_tileCache);
-    m_adapterPool->setOnLevelMarkedUnreliable([cacheWeak](int level) {
+    m_slideSource->setOnLevelMarkedUnreliable([cacheWeak](int level) {
         if (auto cache = cacheWeak.lock()) {
             cache->evictLevel(level);
         }
@@ -162,17 +162,11 @@ void TileLoadScheduler::workerLoop()
             continue;
         }
 
-        // Acquire adapter from pool (blocking)
-        auto loan = m_adapterPool->acquire();
-
-        // Check stopping flag again after potentially long wait
-        if (m_stopping.load()) {
-            break;
-        }
-
-        // Read the tile
+        // Read the tile. Every worker calls into the same source concurrently --
+        // SlideIO parallelises the read where the driver allows it and serialises
+        // internally where it does not.
         spdlog::trace("TileLoadScheduler: reading tile {}", request.key.toString());
-        core::TileData tileData = loan->readTile(request.key);
+        core::TileData tileData = m_slideSource->readTile(request.key);
 
         // Insert into cache (even error tiles, so we don't retry endlessly)
         auto tilePtr = std::make_shared<core::TileData>(std::move(tileData));

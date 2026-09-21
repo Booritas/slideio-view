@@ -1,5 +1,6 @@
 #pragma once
 
+#include "slideio/viewer/core/ISlideSource.h"
 #include "slideio/viewer/core/ITileCache.h"
 #include "slideio/viewer/core/TileKey.h"
 
@@ -14,8 +15,6 @@
 
 namespace slideio::viewer::infra
 {
-
-class SlideIOAdapterPool;
 
 enum class TilePriority
 {
@@ -33,7 +32,11 @@ struct TileRequest
 class TileLoadScheduler
 {
 public:
-    TileLoadScheduler(std::shared_ptr<SlideIOAdapterPool> adapterPool,
+    // The slide source is shared, not owned exclusively: since SlideIO 2.10 a
+    // scene's block reads are safe to call from several threads at once, so every
+    // worker reads through this one source. Keep it alive until stop() returns --
+    // SlideIO does not make a close wait for in-flight reads.
+    TileLoadScheduler(std::shared_ptr<core::ISlideSource> slideSource,
                       std::shared_ptr<core::ITileCache> tileCache,
                       int numWorkers = 0);
     ~TileLoadScheduler();
@@ -59,7 +62,7 @@ private:
 
     void workerLoop();
 
-    std::shared_ptr<SlideIOAdapterPool> m_adapterPool;
+    std::shared_ptr<core::ISlideSource> m_slideSource;
     std::shared_ptr<core::ITileCache> m_tileCache;
     std::function<void(const core::TileKey&)> m_onTileLoaded;
 

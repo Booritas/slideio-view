@@ -1,6 +1,5 @@
 add_library(slideio-viewer-infra STATIC
     src/SlideIOAdapter.cpp
-    src/SlideIOAdapterPool.cpp
     src/LruTileCache.cpp
     src/TileLoadScheduler.cpp
     src/Prefetcher.cpp

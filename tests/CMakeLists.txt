@@ -17,6 +17,7 @@ add_test(NAME core-tests COMMAND slideio-viewer-core-tests)
 # Infrastructure layer tests
 add_executable(slideio-viewer-infra-tests
     infra/LruTileCacheTest.cpp
+    infra/TileLoadSchedulerTest.cpp
 )
 
 target_link_libraries(slideio-viewer-infra-tests

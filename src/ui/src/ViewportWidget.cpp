@@ -11,7 +11,7 @@
 #include "slideio/viewer/core/Types.h"
 #include "slideio/viewer/infra/LruTileCache.h"
 #include "slideio/viewer/infra/SlideIOAdapter.h"
-#include "slideio/viewer/infra/SlideIOAdapterPool.h"
+#include "slideio/viewer/infra/SlideIOAdapter.h"
 #include "slideio/viewer/infra/TileLoadScheduler.h"
 
 #include <QImage>
@@ -52,7 +52,7 @@ struct SceneOpenResult
     std::vector<core::SceneInfo> auxImages;
 
     // Core data structures built off the UI thread
-    std::shared_ptr<infra::SlideIOAdapterPool> adapterPool;
+    std::shared_ptr<core::ISlideSource> slideSource;
     core::SlideInfo slideInfo;
     std::shared_ptr<core::TilePyramid> pyramid;
     std::shared_ptr<infra::LruTileCache> tileCache;
@@ -663,7 +663,7 @@ QImage buildCoarseLevelThumbnailFallback(slideio::viewer::core::ISlideSource& so
 // display ranges, build a thumbnail QImage, and insert the tiles into the
 // cache so the very first paint has a base layer to show. Throws on errors;
 // caller wraps in try/catch.
-void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool& pool,
+void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slideSource,
                                       slideio::viewer::core::SlideInfo& slideInfo,
                                       const slideio::viewer::core::TilePyramid& pyramid,
                                       slideio::viewer::core::ITileCache& tileCache,
@@ -688,7 +688,6 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
         thumbH = std::max(1, static_cast<int>(thumbH * ratio));
     }
 
-    auto loan = pool.acquire();
     int numCh = slideInfo.numChannels;
     DataType dt = slideInfo.channelDataType;
 
@@ -725,7 +724,7 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
         for (int c = 0; c < coarseLvl.tilesX; ++c) {
             for (int z = 0; z < numZ; ++z) {
                 core::TileKey tileKey(coarsestLevel, c, r, z);
-                auto tileData = loan->readTile(tileKey);
+                auto tileData = slideSource.readTile(tileKey);
                 const bool valid = !tileData.isEmpty() && !tileData.isError();
                 if (valid) {
                     size_t pixelCount = static_cast<size_t>(tileData.width())
@@ -787,9 +786,8 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::infra::SlideIOAdapterPool
     // populates a small fraction of the type range (e.g., UInt16 with peak
     // ~2k) inherit the {0, 65535} fallback from openSceneSync and render
     // as nearly black.
-    auto thumbLoan = pool.acquire();
-    auto blockData = thumbLoan->readBlock(0, 0, slideInfo.width, slideInfo.height,
-                                          thumbW, thumbH, preferredZ, preferredT);
+    auto blockData = slideSource.readBlock(0, 0, slideInfo.width, slideInfo.height,
+                                           thumbW, thumbH, preferredZ, preferredT);
     const bool blockUsable = !blockData.isEmpty() && !blockData.isError();
     spdlog::info("autodetect: readBlock usable={} blockSize={}x{} blockCh={} blockDt={}",
                  blockUsable, blockData.width(), blockData.height(),
@@ -1060,22 +1058,21 @@ SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
     SceneOpenResult r;
     r.filePath = filePath;
     try {
-        r.adapterPool = std::make_shared<infra::SlideIOAdapterPool>(filePath, sceneIndex, 4, driverId);
+        r.slideSource = std::make_shared<infra::SlideIOAdapter>(filePath, sceneIndex, driverId);
         {
-            auto loan = r.adapterPool->acquire();
-            r.slideInfo = loan->slideInfo();
-            auto levels = loan->levels();
+            r.slideInfo = r.slideSource->slideInfo();
+            auto levels = r.slideSource->levels();
             r.pyramid = std::make_shared<core::TilePyramid>(
                 r.slideInfo.width, r.slideInfo.height, levels);
         }
         if (statusCallback) {
-            r.adapterPool->setOnLevelMarkedUnreliable([statusCallback](int level) {
+            r.slideSource->setOnLevelMarkedUnreliable([statusCallback](int level) {
                 statusCallback(QStringLiteral("Working around corrupted tiles (level %1)…").arg(level));
             });
         }
         r.tileCache = std::make_shared<infra::LruTileCache>();
         try {
-            readCoarseLevelAndBuildThumbnail(*r.adapterPool, r.slideInfo, *r.pyramid,
+            readCoarseLevelAndBuildThumbnail(*r.slideSource, r.slideInfo, *r.pyramid,
                                              *r.tileCache, r.thumbnail);
         } catch (const std::exception& ex) {
             spdlog::warn("openSceneSync: thumbnail/coarse-cache pass failed: {}", ex.what());
@@ -1113,22 +1110,21 @@ SceneOpenResult openAuxImageSync(const std::string& filePath, const std::string&
     r.filePath = filePath;
     r.isAuxImage = true;
     try {
-        r.adapterPool = std::make_shared<infra::SlideIOAdapterPool>(filePath, auxImageName, 4, driverId);
+        r.slideSource = std::make_shared<infra::SlideIOAdapter>(filePath, auxImageName, driverId);
         {
-            auto loan = r.adapterPool->acquire();
-            r.slideInfo = loan->slideInfo();
-            auto levels = loan->levels();
+            r.slideInfo = r.slideSource->slideInfo();
+            auto levels = r.slideSource->levels();
             r.pyramid = std::make_shared<core::TilePyramid>(
                 r.slideInfo.width, r.slideInfo.height, levels);
         }
         if (statusCallback) {
-            r.adapterPool->setOnLevelMarkedUnreliable([statusCallback](int level) {
+            r.slideSource->setOnLevelMarkedUnreliable([statusCallback](int level) {
                 statusCallback(QStringLiteral("Working around corrupted tiles (level %1)…").arg(level));
             });
         }
         r.tileCache = std::make_shared<infra::LruTileCache>();
         try {
-            readCoarseLevelAndBuildThumbnail(*r.adapterPool, r.slideInfo, *r.pyramid,
+            readCoarseLevelAndBuildThumbnail(*r.slideSource, r.slideInfo, *r.pyramid,
                                              *r.tileCache, r.thumbnail);
         } catch (const std::exception& ex) {
             spdlog::warn("openAuxImageSync: thumbnail/coarse-cache pass failed: {}", ex.what());
@@ -1187,7 +1183,7 @@ struct ViewportWidget::Impl
     std::unordered_map<core::TileKey, TileTextures> fluorescenceTextures;
 
     // Slide management
-    std::shared_ptr<infra::SlideIOAdapterPool> adapterPool;
+    std::shared_ptr<core::ISlideSource> slideSource;
     std::shared_ptr<core::ITileCache> tileCache;
     std::shared_ptr<infra::TileLoadScheduler> scheduler;
     std::shared_ptr<core::TilePyramid> pyramid;
@@ -1976,7 +1972,7 @@ void ViewportWidget::closeSlide()
     m_impl->scheduler.reset();
     m_impl->pyramid.reset();
     m_impl->tileCache.reset();
-    m_impl->adapterPool.reset();
+    m_impl->slideSource.reset();
 
     if (m_impl->glInitialized) {
         makeCurrent();
@@ -2051,7 +2047,7 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
         carriedAuxImages = m_impl->slideInfo.auxImages;
     }
 
-    m_impl->adapterPool = std::move(result.adapterPool);
+    m_impl->slideSource = std::move(result.slideSource);
     m_impl->tileCache = std::move(result.tileCache);
     m_impl->pyramid = std::move(result.pyramid);
     m_impl->slideInfo = std::move(result.slideInfo);
@@ -2067,7 +2063,7 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
     }
 
     m_impl->scheduler = std::make_shared<infra::TileLoadScheduler>(
-        m_impl->adapterPool, m_impl->tileCache);
+        m_impl->slideSource, m_impl->tileCache);
     m_impl->scheduler->setOnTileLoaded([this](const core::TileKey& key) {
         {
             std::lock_guard<std::mutex> lock(m_impl->pendingUploadsMutex);
