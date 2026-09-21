@@ -5,7 +5,7 @@
 #include <slideio/slideio/scene.hpp>
 #include <slideio/core/levelinfo.hpp>
 #include <slideio/core/metadata.hpp>
-#include <slideio/base/slideio_enums.hpp>
+#include <slideio/core/slideio_enums.hpp>
 
 #include <spdlog/spdlog.h>
 
