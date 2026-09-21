@@ -900,15 +900,23 @@ bool SlideIOAdapter::isLevelUnreliable(int level) const
 bool SlideIOAdapter::markLevelUnreliable(int level)
 {
     bool firstTime = false;
+    std::function<void(int)> callback;
     {
         std::lock_guard<std::mutex> lock(m_unreliableLevelsMutex);
         firstTime = m_unreliableLevels.insert(level).second;
+        // Copy the callback under the lock, then invoke it outside: one adapter
+        // is now shared across every reader thread, so the member is live data.
+        // Calling it while holding the lock would run caller code (cache
+        // eviction, a Qt status update) inside our critical section.
+        if (firstTime) {
+            callback = m_onLevelMarkedUnreliable;
+        }
     }
     if (firstTime) {
         spdlog::warn("SlideIOAdapter: level {} marked unreliable; will route reads through finer levels", level);
-        if (m_onLevelMarkedUnreliable) {
+        if (callback) {
             try {
-                m_onLevelMarkedUnreliable(level);
+                callback(level);
             } catch (const std::exception& ex) {
                 spdlog::warn("SlideIOAdapter: onLevelMarkedUnreliable callback threw: {}", ex.what());
             }
@@ -919,6 +927,7 @@ bool SlideIOAdapter::markLevelUnreliable(int level)
 
 void SlideIOAdapter::setOnLevelMarkedUnreliable(std::function<void(int)> callback)
 {
+    std::lock_guard<std::mutex> lock(m_unreliableLevelsMutex);
     m_onLevelMarkedUnreliable = std::move(callback);
 }
 

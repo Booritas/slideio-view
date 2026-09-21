@@ -20,6 +20,10 @@ class Scene;
 namespace slideio::viewer::infra
 {
 
+// One adapter opens the slide once and serves every reader thread. Since SlideIO
+// 2.10 a scene's block reads are safe to call concurrently, so readTile/readBlock
+// need no external serialisation; all other state is set in the constructor or
+// guarded by m_unreliableLevelsMutex.
 class SlideIOAdapter : public core::ISlideSource
 {
 public:
@@ -62,6 +66,8 @@ private:
     std::vector<core::LevelInfo> m_levels;
     core::SlideInfo m_slideInfo;
 
+    // Guards both members below. m_onLevelMarkedUnreliable is written by the
+    // owner thread and read by reader threads, so it needs the lock too.
     mutable std::mutex m_unreliableLevelsMutex;
     std::unordered_set<int> m_unreliableLevels;
     std::function<void(int)> m_onLevelMarkedUnreliable;
