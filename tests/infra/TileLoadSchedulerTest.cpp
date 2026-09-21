@@ -50,7 +50,14 @@ public:
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
         --m_inFlight;
-        m_completed.fetch_add(1);
+        // Increment under the same mutex the waiter holds. Bumping a lone
+        // atomic and notifying outside the lock loses the wakeup whenever the
+        // waiter is between evaluating its predicate and blocking, and the
+        // wait then only returns on the timeout.
+        {
+            std::lock_guard<std::mutex> lock(m_completedMutex);
+            ++m_completed;
+        }
         m_completedCondition.notify_all();
 
         std::vector<uint8_t> buffer(static_cast<size_t>(kTileSize) * kTileSize * 3, 0);
@@ -68,7 +75,7 @@ public:
     {
         std::unique_lock<std::mutex> lock(m_completedMutex);
         return m_completedCondition.wait_for(lock, timeout,
-                                             [this, count] { return m_completed.load() >= count; });
+                                             [this, count] { return m_completed >= count; });
     }
 
     int peakInFlight() const { return m_peakInFlight.load(); }
@@ -82,10 +89,10 @@ public:
 private:
     std::atomic<int> m_inFlight{0};
     std::atomic<int> m_peakInFlight{0};
-    std::atomic<int> m_completed{0};
     mutable std::mutex m_mutex;
     std::unordered_set<TileKey> m_seen;
     std::mutex m_completedMutex;
+    int m_completed = 0; // guarded by m_completedMutex
     std::condition_variable m_completedCondition;
 };
 
