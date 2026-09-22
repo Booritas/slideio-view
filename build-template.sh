@@ -24,18 +24,69 @@ if [ "$OS_NAME" = "Windows" ]; then
     BUILD_DIR="build/build"
     TOOLCHAIN="build/build/generators/conan_toolchain.cmake"
     CONFIG_FLAG=("--config" "$BUILD_TYPE")
-    DEFAULT_SLIDEIO_ROOT="D:/Projects/slideio/slideio/build/install"
+    : "${PYTHON:=python}"
 else
     GENERATOR="Unix Makefiles"
     BUILD_DIR="build/build/$BUILD_TYPE"
     TOOLCHAIN="$BUILD_DIR/generators/conan_toolchain.cmake"
     CONFIG_FLAG=()
-    DEFAULT_SLIDEIO_ROOT="$HOME/projects/slideio/slideio/build/install"
+    : "${PYTHON:=python3}"
 fi
 
-# SlideIO install root (override via SLIDEIO_ROOT env var).
-# FindSlideIO.cmake appends release/ and debug/ subdirs itself.
-: "${SLIDEIO_ROOT:=$DEFAULT_SLIDEIO_ROOT}"
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+SLIDEIO_DIR="$REPO_ROOT/extern/slideio"
+
+# SlideIO ships as a git submodule (extern/slideio) and is built from source
+# into extern/slideio/build/install, whose release/ and debug/ subdirectories
+# are the layout FindSlideIO.cmake expects. Setting SLIDEIO_ROOT in the
+# environment points the build at an install tree maintained elsewhere and
+# skips the submodule build entirely.
+if [ -n "${SLIDEIO_ROOT:-}" ]; then
+    echo "Using external SlideIO install: $SLIDEIO_ROOT"
+else
+    SLIDEIO_ROOT="$SLIDEIO_DIR/build/install"
+
+    # Initialise the submodule only when it has never been checked out. An
+    # existing checkout is deliberately left alone: "submodule update" resets it
+    # to the pinned revision, which would detach work in progress inside
+    # extern/slideio out from under whoever is doing it, and build sources other
+    # than the ones they are looking at. Report the drift instead.
+    if [ ! -f "$SLIDEIO_DIR/CMakeLists.txt" ]; then
+        git -C "$REPO_ROOT" submodule update --init --recursive
+    else
+        _pinned=$(git -C "$REPO_ROOT" ls-tree HEAD -- extern/slideio | awk '{print $3}')
+        _actual=$(git -C "$SLIDEIO_DIR" rev-parse HEAD 2>/dev/null || true)
+        if [ -n "$_pinned" ] && [ -n "$_actual" ] && [ "$_pinned" != "$_actual" ]; then
+            echo "WARNING: extern/slideio is checked out at $_actual," >&2
+            echo "         but this commit pins $_pinned." >&2
+            echo "         Run 'git submodule update --init --recursive' and rebuild with" >&2
+            echo "         SLIDEIO_REBUILD=1 to build the pinned revision." >&2
+        fi
+    fi
+
+    # FindSlideIO.cmake names the release library in its REQUIRED_VARS, so a
+    # release install has to exist even for a debug build; a debug build needs
+    # the debug install on top of it. install.py knows only these two names --
+    # every other CMake config links against the release install.
+    SLIDEIO_CONFIGS=(release)
+    if [ "$BUILD_TYPE" = "Debug" ]; then
+        SLIDEIO_CONFIGS+=(debug)
+    fi
+
+    # Building SlideIO is slow, so each configuration is built only when its
+    # install tree is missing. Set SLIDEIO_REBUILD=1 to force a rebuild, e.g.
+    # after moving the submodule to a new revision.
+    for _config in "${SLIDEIO_CONFIGS[@]}"; do
+        if [ -f "$SLIDEIO_ROOT/$_config/include/slideio/slideio/slideio.hpp" ] \
+           && [ "${SLIDEIO_REBUILD:-0}" = "0" ]; then
+            echo "SlideIO ($_config) already installed in $SLIDEIO_ROOT/$_config"
+            continue
+        fi
+        echo "Building SlideIO ($_config) from extern/slideio..."
+        (cd "$SLIDEIO_DIR" && "$PYTHON" install.py -a install -c "$_config" \
+            -bd build/build -pr build/install)
+    done
+fi
 
 conan install . --output-folder=build --build=missing \
     -s build_type="$BUILD_TYPE" -s compiler.cppstd=17 \

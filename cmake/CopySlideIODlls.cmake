@@ -25,7 +25,9 @@ endforeach()
 
 # PDB search dirs: explicit override first, then the per-config install bin
 # (where the user installed PDBs alongside DLLs), then the SlideIO build tree
-# bin/<Config>/ (for builds that didn't install PDBs).
+# bin/<Config>/ (for builds that didn't install PDBs), in both the layout where
+# that tree sits beside the install prefix and the extern/slideio submodule
+# layout where install.py puts it one level deeper.
 set(_pdb_search_dirs "")
 if(DEFINED SLIDEIO_PDB_DIR AND NOT SLIDEIO_PDB_DIR STREQUAL "")
     list(APPEND _pdb_search_dirs "${SLIDEIO_PDB_DIR}")
@@ -33,6 +35,7 @@ endif()
 list(APPEND _pdb_search_dirs "${_dll_src_dir}")
 get_filename_component(_slideio_build_dir "${SLIDEIO_ROOT}" DIRECTORY)
 list(APPEND _pdb_search_dirs "${_slideio_build_dir}/bin/${CONFIG}")
+list(APPEND _pdb_search_dirs "${_slideio_build_dir}/build/bin/${CONFIG}")
 
 set(_pdbs_copied 0)
 foreach(_pdb_dir ${_pdb_search_dirs})

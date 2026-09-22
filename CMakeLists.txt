@@ -12,12 +12,33 @@ option(SLIDEIO_VIEWER_BUILD_BENCHMARKS "Build performance benchmarks" OFF)
 # Module path for custom find modules and compiler warnings
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-# SlideIO from pre-built install
+# SlideIO is built from source out of the extern/slideio submodule; build.sh
+# and build-debug.sh drive that build and leave the result in the install tree
+# below. Setting SLIDEIO_ROOT links against an install maintained elsewhere
+# instead, and the submodule is then neither built nor needed.
 if(NOT SLIDEIO_ROOT)
-    set(SLIDEIO_ROOT "D:/Projects/slideio/slideio/build/install" CACHE PATH "SlideIO install directory")
+    set(SLIDEIO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/extern/slideio/build/install"
+        CACHE PATH "SlideIO install directory")
 endif()
 # Normalize path to forward slashes to avoid CMake escape issues
 file(TO_CMAKE_PATH "${SLIDEIO_ROOT}" SLIDEIO_ROOT)
+
+# Without this, an unbuilt submodule reaches FindSlideIO.cmake and comes back
+# as "Could NOT find SlideIO", which names neither the submodule nor the script
+# that populates it. The two ways the tree can be missing need different
+# answers, so say which one this is.
+if(NOT EXISTS "${SLIDEIO_ROOT}/release")
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/slideio/CMakeLists.txt")
+        message(FATAL_ERROR
+            "The extern/slideio submodule is not initialised. Run:\n"
+            "  git submodule update --init --recursive")
+    endif()
+    message(FATAL_ERROR
+        "No SlideIO install found at '${SLIDEIO_ROOT}'.\n"
+        "Run ./build.sh (or ./build-debug.sh) to build the extern/slideio "
+        "submodule, or set SLIDEIO_ROOT to an existing install directory.")
+endif()
+
 find_package(SlideIO REQUIRED)
 
 # Conan-provided dependencies
