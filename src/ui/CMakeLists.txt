@@ -7,6 +7,7 @@ configure_file(
     @ONLY)
 
 add_library(slideio-viewer-ui STATIC
+    src/AboutInfo.cpp
     src/AppPaths.cpp
     src/AssociatedImageWindow.cpp
     src/DriverFilters.cpp
