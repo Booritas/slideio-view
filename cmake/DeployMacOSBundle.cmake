@@ -57,13 +57,24 @@ foreach(_required
     endif()
 endforeach()
 
-# Step 2: SlideIO + transitive dylibs (libglog, etc.) from SlideIO install bin/.
-set(_slideio_src_dir "${SLIDEIO_ROOT}/${_cfg}/bin")
+# Step 2: SlideIO + transitive dylibs (libglog, etc.) from the SlideIO install.
+#
+# lib/, not bin/. SlideIO installs RUNTIME to bin/ and LIBRARY to lib/, so on
+# Unix the dylibs are in lib/ and bin/ holds only slideio-converter and
+# slideio-tiffinspector. The bin/ glob therefore matched nothing -- and because
+# the directory does exist, the EXISTS guard passed and file(COPY) with an empty
+# list succeeds silently. The bundle shipped with no SlideIO library at all, and
+# the first sign of it was the application failing to launch.
+set(_slideio_src_dir "${SLIDEIO_ROOT}/${_cfg}/lib")
 if(NOT EXISTS "${_slideio_src_dir}")
     message(FATAL_ERROR "SlideIO dylib source not found: ${_slideio_src_dir}")
 endif()
 
 file(GLOB _slideio_dylibs LIST_DIRECTORIES false "${_slideio_src_dir}/*.dylib")
+if(NOT _slideio_dylibs)
+    # An empty copy is the failure above. Say so here rather than at launch.
+    message(FATAL_ERROR "No SlideIO dylibs found in '${_slideio_src_dir}'")
+endif()
 file(COPY ${_slideio_dylibs}
     DESTINATION "${_bundle}/Contents/Frameworks"
     FOLLOW_SYMLINK_CHAIN)

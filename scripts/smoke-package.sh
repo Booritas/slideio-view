@@ -39,15 +39,33 @@ Linux)
     [ -f "$prefix/plugins/platforms/libqxcb.so" ] || fail "xcb platform plugin not packaged"
     [ -f "$prefix/plugins/platforms/libqoffscreen.so" ] || fail "offscreen platform plugin not packaged"
 
-    # An unresolved library here is what the hand-written dependency list gets
-    # wrong, and it is invisible until someone installs the package.
-    for lib in "$prefix/bin/slideio-viewer" "$prefix/plugins/platforms/libqxcb.so"; do
-        if ldd "$lib" | grep -q 'not found'; then
+    # Every shared object in the package, not just the executable and the xcb
+    # plugin. A GLX-integration plugin that cannot load is what breaks a real
+    # desktop launch, and the offscreen probe below is structurally blind to it.
+    while IFS= read -r lib; do
+        if ldd "$lib" 2>/dev/null | grep -q 'not found'; then
             ldd "$lib" | grep 'not found' >&2
             fail "unresolved libraries in $lib"
         fi
+    done < <(find "$prefix" -name '*.so*' -type f; echo "$prefix/bin/slideio-viewer")
+    echo "OK: no unresolved libraries anywhere in the package"
+
+    # The package bundles Qt so it runs against the Qt it was tested with. On a
+    # machine that also has a system Qt, "no unresolved libraries" is satisfied
+    # just as well by resolving against /usr/lib -- which is the failure this
+    # test exists to catch, and cannot see by absence alone. Assert where the Qt
+    # libraries actually come from.
+    for lib in "$prefix/bin/slideio-viewer" \
+               "$prefix/plugins/platforms/libqxcb.so" \
+               "$prefix/plugins/xcbglintegrations/libqxcb-glx-integration.so"; do
+        [ -f "$lib" ] || continue
+        outside=$(ldd "$lib" | grep -E 'libQt6' | grep -v "$prefix/" || true)
+        if [ -n "$outside" ]; then
+            echo "$outside" >&2
+            fail "$lib resolves Qt from outside the bundle"
+        fi
     done
-    echo "OK: no unresolved libraries"
+    echo "OK: every Qt library resolves from inside the bundle"
 
     stays_up /usr/bin/slideio-viewer
     ;;

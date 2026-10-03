@@ -87,11 +87,18 @@ jobs:
 
       # build-template.sh skips the (long) SlideIO build when this tree is
       # present, so restoring it is what keeps SlideIO off the critical path.
-      - name: Cache the SlideIO install tree
-        uses: actions/cache@v4
+      #
+      # restore + save rather than the combined action, so a poisoned entry can
+      # heal. actions/cache records a HIT even when the restored tree turns out
+      # to be incomplete and the next step deletes it, and then never saves
+      # against that key again -- so every later run would rebuild SlideIO from
+      # source until the submodule pin moved.
+      - name: Restore the SlideIO install tree
+        id: slideio_cache
+        uses: actions/cache/restore@v4
         with:
           path: extern/slideio/build/install
-          key: slideio-${{ matrix.os }}-${{ steps.slideio_rev.outputs.sha }}
+          key: slideio-v2-${{ matrix.os }}-${{ steps.slideio_rev.outputs.sha }}
 
       # A restored cache is trusted by build-template.sh on the strength of one
       # header. Check it carries libraries too before letting the build rely on it.
@@ -110,6 +117,27 @@ jobs:
           if [ -z "${CONAN_PROFIlE}" ]; then unset CONAN_PROFIlE; fi
           ./build.sh
 
+      # Only now, with a tree that built something. Saving before the build
+      # would be how an incomplete tree got into the cache in the first place.
+      - name: Save the SlideIO install tree
+        if: steps.slideio_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: extern/slideio/build/install
+          key: slideio-v2-${{ matrix.os }}-${{ steps.slideio_rev.outputs.sha }}
+
       - name: Test
         shell: bash
         run: ctest --test-dir ${{ matrix.test_dir }} ${{ matrix.ctest_config }} --output-on-failure
+
+      # The checks written alongside this work, which would otherwise have run
+      # once during implementation and never again. check-no-hardcoded-paths is
+      # the lint that exists to stop the absolute conan-cache path from coming
+      # back; a test that never runs cannot do that.
+      - name: Repository checks
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/check-no-hardcoded-paths.sh
+          ./tests/scripts/check-version-test.sh

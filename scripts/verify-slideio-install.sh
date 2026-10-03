@@ -15,9 +15,14 @@ fi
 
 ok=1
 [ -f "$root/release/include/slideio/slideio/slideio.hpp" ] || ok=0
-# One of the two library naming conventions must be present.
-ls "$root"/release/lib/libslideio.* >/dev/null 2>&1 || \
-  ls "$root"/release/lib/slideio.lib >/dev/null 2>&1 || ok=0
+# Both libraries FindSlideIO.cmake lists in its REQUIRED_VARS, under either
+# naming convention. A tree carrying the top-level library but not the core
+# component passes a looser check and then fails at find_package(SlideIO),
+# attributed to the wrong thing.
+for _lib in slideio slideio-core; do
+    ls "$root"/release/lib/lib${_lib}.* >/dev/null 2>&1 || \
+      ls "$root"/release/lib/${_lib}.lib >/dev/null 2>&1 || ok=0
+done
 
 if [ "$ok" -eq 0 ]; then
     echo "SlideIO install at $root is incomplete; discarding it so it is rebuilt"
