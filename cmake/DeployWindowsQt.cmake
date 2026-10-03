@@ -27,12 +27,6 @@ execute_process(
             --dir "${SLIDEIO_VIEWER_BIN_DIR}"
             --plugindir "${SLIDEIO_VIEWER_PLUGIN_DIR}"
             --no-translations
-            # The MSVC runtime is deliberately NOT excluded. Without it the
-            # installed application fails on a clean machine with a missing
-            # VCRUNTIME140.dll dialog, and no CI runner can notice because every
-            # Windows runner has MSVC installed. windeployqt copies the
-            # redistributable when VCINSTALLDIR is set, which msvc-dev-cmd does
-            # in CI and a Developer Command Prompt does locally.
             "${_exe}"
     RESULT_VARIABLE _rc)
 if(NOT _rc EQUAL 0)
@@ -66,4 +60,25 @@ foreach(_required
         message(FATAL_ERROR "windeployqt did not produce '${_required}'")
     endif()
 endforeach()
+
+# The MSVC runtime, installed by InstallRequiredSystemLibraries in CMakeLists.txt
+# rather than by windeployqt. Asserted here because its absence is invisible on
+# any machine that has Visual Studio -- which is every Windows CI runner and
+# every developer box, so no test run anywhere can catch it by behaviour.
+#
+# Only when packaging. A developer installing into build/install has Visual
+# Studio by definition, and failing their ordinary `./build.sh` would be a poor
+# trade for a check that only matters to an artifact someone else downloads.
+if(SLIDEIO_VIEWER_PACKAGING)
+    foreach(_runtime vcruntime140.dll msvcp140.dll)
+        if(NOT EXISTS "${SLIDEIO_VIEWER_BIN_DIR}/${_runtime}")
+            message(FATAL_ERROR
+                "${_runtime} was not installed beside the executable. The package "
+                "would fail on a machine without Visual Studio. Check that "
+                "InstallRequiredSystemLibraries resolved CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS.")
+        endif()
+    endforeach()
+else()
+    message(STATUS "Not packaging; MSVC runtime deployment not required")
+endif()
 message(STATUS "Qt runtime deployed to ${SLIDEIO_VIEWER_BIN_DIR}")

@@ -18,3 +18,14 @@ compiler.cppstd=17
 compiler.libcxx=libstdc++11
 compiler.version=11
 os=Linux
+
+[conf]
+# Let conan install the system packages its own recipes ask for. xorg/system
+# alone requires two dozen -dev packages, and that list belongs to the recipe:
+# enumerating it in the workflow means tracking someone else's dependency list
+# by hand and finding out it moved only when a run fails.
+#
+# CI only, which is why this lives in the -ci profile rather than the shared
+# one. A developer's machine should not have its packages changed by a build.
+tools.system.package_manager:mode=install
+tools.system.package_manager:sudo=True

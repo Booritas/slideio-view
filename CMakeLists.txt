@@ -229,11 +229,26 @@ if(WIN32)
             "windeployqt was not found in '${_qt_bin_dir}'. The Windows package "
             "cannot be built without it.")
     endif()
+    # The MSVC runtime. windeployqt's --compiler-runtime is driven by heuristics
+    # over VCINSTALLDIR that fired on neither the CI runner nor a developer box
+    # with the redistributable plainly installed, so use CMake's own mechanism:
+    # it resolves the DLLs from the toolchain that actually compiled the binary.
+    # Without them the application fails on a machine without Visual Studio, and
+    # nothing in CI can notice because every Windows runner has it.
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP ON)
+    include(InstallRequiredSystemLibraries)
+    install(FILES ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION ${_install_bin})
+
     install(CODE "set(WINDEPLOYQT_EXECUTABLE \"${WINDEPLOYQT_EXECUTABLE}\")")
     install(CODE "set(SLIDEIO_VIEWER_BIN_DIR \"\${CMAKE_INSTALL_PREFIX}/${_install_bin}\")")
     install(CODE "set(SLIDEIO_VIEWER_PLUGIN_DIR \"\${CMAKE_INSTALL_PREFIX}/${_install_plugins}\")")
     get_filename_component(_qt_root "${_qt_bin_dir}" DIRECTORY)
     install(CODE "set(SLIDEIO_VIEWER_QT_PLUGIN_SRC_DIR \"${_qt_root}/plugins\")")
+    # The flat layout is the packaging layout: package.sh is what sets it. Some
+    # checks matter only for an artifact someone else will download.
+    if(SLIDEIO_VIEWER_INSTALL_LAYOUT STREQUAL "flat")
+        install(CODE "set(SLIDEIO_VIEWER_PACKAGING ON)")
+    endif()
     install(SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/DeployWindowsQt.cmake")
 endif()
 
