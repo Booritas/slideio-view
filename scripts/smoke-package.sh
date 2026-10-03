@@ -7,6 +7,15 @@ pkg_dir="${1:-build/packages}"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+# `find … | head -1` is wrong under `set -o pipefail`: head exits after the first
+# line, find takes SIGPIPE, and the assignment fails -- so the script dies before
+# printing anything and the CI step shows an empty failure. It is a race, so it
+# passes on one platform and not another; it passed on Git Bash and killed the
+# macOS run. `-print -quit` has no pipe to break.
+#
+# Every `find` below uses it. Say so here because the next person to add one
+# will reach for the pipe.
+
 # A GUI process that stays up has resolved every library it needs to reach the
 # event loop. timeout reports 124 when it has to kill the process, which is the
 # success case here -- so never assert on a zero exit.
@@ -25,7 +34,7 @@ stays_up() {
 
 case "$(uname -s)" in
 Linux)
-    deb=$(find "$pkg_dir" -maxdepth 1 -name '*.deb' | head -1)
+    deb=$(find "$pkg_dir" -maxdepth 1 -name '*.deb' -print -quit)
     [ -n "$deb" ] || fail "no .deb in $pkg_dir"
     # Runs as root inside the clean container CI uses, and under sudo on a
     # developer machine.
@@ -70,7 +79,7 @@ Linux)
     stays_up /usr/bin/slideio-viewer
     ;;
 Darwin)
-    dmg=$(find "$pkg_dir" -maxdepth 1 -name '*.dmg' | head -1)
+    dmg=$(find "$pkg_dir" -maxdepth 1 -name '*.dmg' -print -quit)
     [ -n "$dmg" ] || fail "no .dmg in $pkg_dir"
     mount_point=$(mktemp -d)
     hdiutil attach "$dmg" -mountpoint "$mount_point" -nobrowse -quiet
@@ -78,7 +87,7 @@ Darwin)
     cp -R "$mount_point"/*.app /tmp/smoke-app/
     hdiutil detach "$mount_point" -quiet
 
-    app=$(find /tmp/smoke-app -maxdepth 1 -name '*.app' | head -1)
+    app=$(find /tmp/smoke-app -maxdepth 1 -name '*.app' -print -quit)
     [ -n "$app" ] || fail "no .app in the disk image"
     [ -f "$app/Contents/PlugIns/platforms/libqcocoa.dylib" ] || fail "cocoa platform plugin not bundled"
     [ -f "$app/Contents/PlugIns/platforms/libqoffscreen.dylib" ] || fail "offscreen platform plugin not bundled"
