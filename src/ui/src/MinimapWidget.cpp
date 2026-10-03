@@ -61,6 +61,16 @@ void MinimapWidget::setThumbnail(const QImage& thumbnail)
 void MinimapWidget::clearThumbnail()
 {
     m_thumbnail = QImage();
+    m_overviewAvailable = true;
+    update();
+}
+
+void MinimapWidget::setOverviewAvailable(bool available)
+{
+    if (m_overviewAvailable == available) {
+        return;
+    }
+    m_overviewAvailable = available;
     update();
 }
 
@@ -88,6 +98,18 @@ void MinimapWidget::paintEvent(QPaintEvent* /*event*/)
                          width() - 2.0 * m_displayOffset.x(),
                          height() - 2.0 * m_displayOffset.y());
         painter.fillRect(slideRect, QColor(80, 80, 80));
+
+        if (!m_overviewAvailable) {
+            // Say why the overview is missing rather than leaving a blank
+            // rectangle the user would read as "still loading".
+            painter.setPen(QColor(220, 220, 220));
+            QFont noticeFont = painter.font();
+            noticeFont.setPointSizeF(std::max(6.0, noticeFont.pointSizeF() - 1.0));
+            painter.setFont(noticeFont);
+            painter.drawText(slideRect.adjusted(4, 4, -4, -4),
+                             Qt::AlignCenter | Qt::TextWordWrap,
+                             QStringLiteral("Overview unavailable\n(slide has no downsampled level)"));
+        }
     }
 
     // Draw viewport rectangle
