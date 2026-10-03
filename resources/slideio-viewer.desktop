@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=SlideIO Viewer
+GenericName=Whole-Slide Image Viewer
+Comment=View and navigate digital pathology whole-slide images
+Exec=/opt/slideio-viewer/bin/slideio-viewer %f
+Icon=slideio-viewer
+Terminal=false
+Categories=Graphics;Science;Viewer;
+MimeType=image/tiff;

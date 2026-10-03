@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+for link in /usr/bin/slideio-viewer \
+            /usr/share/applications/slideio-viewer.desktop \
+            /usr/share/icons/hicolor/256x256/apps/slideio-viewer.png; do
+    if [ -L "$link" ]; then
+        rm -f "$link"
+    fi
+done
+exit 0
