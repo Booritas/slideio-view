@@ -1,6 +1,7 @@
 #pragma once
 
 #include "slideio/viewer/core/Types.h"
+#include "slideio/viewer/ui/GpuInfo.h"
 
 #include <QImage>
 #include <QOpenGLWidget>
@@ -47,6 +48,11 @@ public:
     const std::string& currentFilePath() const;
 
     ViewportController* controller() const;
+
+    // OpenGL strings captured when the context came up. Every field is empty
+    // until initializeGL() has run, and stays empty if it could not get a 3.3
+    // core profile.
+    GpuInfo glInfo() const;
 
     void fitToSlide();
     void setActualPixels();
