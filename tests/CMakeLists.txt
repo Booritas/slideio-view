@@ -49,7 +49,10 @@ add_test(NAME ui-tests COMMAND slideio-viewer-ui-tests)
 # install directories instead.
 if(WIN32)
     if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
-        set(_qt_bin_dir "$<IF:$<CONFIG:Debug>,${_qt_debug_bin_dir},${_qt_release_bin_dir}>")
+        # _qt_bin_dir comes from slideio_viewer_qt_bin_dir() in the top-level
+        # list file. Conan resolves one Qt package per configuration, so this is
+        # already the right one for the configuration being built -- unlike the
+        # pair of per-config directories this used to select between.
         set(_slideio_bin_dir "$<IF:$<CONFIG:Debug>,${SLIDEIO_ROOT}/debug/bin,${SLIDEIO_ROOT}/release/bin>")
         set_tests_properties(ui-tests PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:${_slideio_bin_dir};PATH=path_list_prepend:${_qt_bin_dir}")
