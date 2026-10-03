@@ -142,16 +142,45 @@ include(GNUInstallDirs)
 set(CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/build/install"
     CACHE PATH "Install prefix" FORCE)
 
-# Per-config install layout. Generator expressions are evaluated at install
-# time, so this works for both single-config (Make/Ninja) and multi-config
-# (Visual Studio/Xcode) generators.
-set(_install_bin     "$<LOWER_CASE:$<CONFIG>>/bin")
-set(_install_plugins "$<LOWER_CASE:$<CONFIG>>/plugins")
+# Install tree shape. The developer workflow wants build/install/release/bin and
+# build/install/debug/bin side by side; a package wants bin/ at the prefix root,
+# or the .deb ends up carrying /opt/slideio-viewer/release/bin/slideio-viewer.
+#
+# build.sh and package.sh each pass this explicitly, so a cached value from one
+# can never leak into the other -- an option() default would not, since it only
+# applies when the cache is empty.
+set(SLIDEIO_VIEWER_INSTALL_LAYOUT "per-config" CACHE STRING
+    "Install tree shape: per-config (release/bin, debug/bin) or flat (bin)")
+set_property(CACHE SLIDEIO_VIEWER_INSTALL_LAYOUT PROPERTY STRINGS per-config flat)
+
+if(SLIDEIO_VIEWER_INSTALL_LAYOUT STREQUAL "flat")
+    set(_install_subdir "")
+elseif(SLIDEIO_VIEWER_INSTALL_LAYOUT STREQUAL "per-config")
+    # Generator expressions are evaluated at install time, so this works for both
+    # single-config (Make/Ninja) and multi-config (Visual Studio/Xcode) generators.
+    set(_install_subdir "$<LOWER_CASE:$<CONFIG>>/")
+else()
+    message(FATAL_ERROR
+        "SLIDEIO_VIEWER_INSTALL_LAYOUT must be per-config or flat, "
+        "got '${SLIDEIO_VIEWER_INSTALL_LAYOUT}'")
+endif()
+
+set(_install_bin     "${_install_subdir}bin")
+set(_install_lib     "${_install_subdir}lib")
+set(_install_plugins "${_install_subdir}plugins")
+
+# The DragNDrop generator wants slideio-viewer.app at the root of the disk image,
+# not inside a bin/ directory the user would have to open first.
+if(APPLE AND SLIDEIO_VIEWER_INSTALL_LAYOUT STREQUAL "flat")
+    set(_install_app ".")
+else()
+    set(_install_app "${_install_bin}")
+endif()
 
 # Executable
 install(TARGETS slideio-viewer
     RUNTIME DESTINATION ${_install_bin}
-    BUNDLE DESTINATION ${_install_bin}
+    BUNDLE DESTINATION ${_install_app}
 )
 
 # SlideIO DLLs
@@ -240,11 +269,12 @@ if(_qt_debug_bin_dir)
 endif()
 
 if(_qt_release_bin_dir OR _qt_debug_bin_dir)
-    # qt.conf tells Qt where to find plugins (../plugins is relative to bin/)
+    # qt.conf tells Qt where to find plugins (../plugins is relative to bin/).
+    # The directory is injected rather than recomputed here, so the layout option
+    # stays the single place that decides the tree shape.
+    install(CODE "set(SLIDEIO_VIEWER_BIN_DIR \"\${CMAKE_INSTALL_PREFIX}/${_install_bin}\")")
     install(CODE [[
-        string(TOLOWER "${CMAKE_INSTALL_CONFIG_NAME}" _config_lower)
-        file(WRITE "${CMAKE_INSTALL_PREFIX}/${_config_lower}/bin/qt.conf"
-            "[Paths]\nPlugins=../plugins\n")
+        file(WRITE "${SLIDEIO_VIEWER_BIN_DIR}/qt.conf" "[Paths]\nPlugins=../plugins\n")
     ]])
 endif()
 
@@ -254,6 +284,7 @@ endif()
 if(APPLE)
     install(CODE "set(MACDEPLOYQT_EXECUTABLE \"${MACDEPLOYQT_EXECUTABLE}\")")
     install(CODE "set(SLIDEIO_ROOT \"${SLIDEIO_ROOT}\")")
+    install(CODE "set(SLIDEIO_VIEWER_APP_DIR \"\${CMAKE_INSTALL_PREFIX}/${_install_app}\")")
     install(SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/DeployMacOSBundle.cmake")
 endif()
 

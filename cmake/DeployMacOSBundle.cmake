@@ -11,8 +11,11 @@
 # under Contents/Frameworks/ — the @executable_path/../Frameworks rpath baked
 # into the binary at link time then resolves them at launch.
 
+# _cfg indexes SlideIO's own install tree further down, which has its own
+# per-config layout unrelated to ours. The bundle location comes from
+# SLIDEIO_VIEWER_APP_DIR, which CMakeLists.txt derives from the install layout.
 string(TOLOWER "${CMAKE_INSTALL_CONFIG_NAME}" _cfg)
-set(_bundle "${CMAKE_INSTALL_PREFIX}/${_cfg}/bin/slideio-viewer.app")
+set(_bundle "${SLIDEIO_VIEWER_APP_DIR}/slideio-viewer.app")
 
 if(NOT EXISTS "${_bundle}")
     message(FATAL_ERROR "DeployMacOSBundle: bundle not found at '${_bundle}'")
