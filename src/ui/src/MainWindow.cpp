@@ -325,6 +325,10 @@ struct MainWindow::Impl
 
                 propertiesPanel->setSlideInfo(info);
                 metadataPanel->setSlideInfo(info);
+                // No thumbnail will arrive for a slide with no downsampled
+                // level, so tell the minimap to explain the empty panel
+                // rather than leaving a blank grey rectangle.
+                minimapWidget->setOverviewAvailable(info.overviewAvailable);
             });
 
         QObject::connect(viewportWidget, &ViewportWidget::thumbnailReady, owner,

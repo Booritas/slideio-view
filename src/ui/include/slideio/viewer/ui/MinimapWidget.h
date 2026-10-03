@@ -28,6 +28,10 @@ public:
     void setThumbnail(const QImage& thumbnail);
     void clearThumbnail();
 
+    // False when the slide has no downsampled level to build an overview from.
+    // The widget then says so instead of showing an empty placeholder.
+    void setOverviewAvailable(bool available);
+
 signals:
     void navigationRequested(double slideCenterX, double slideCenterY);
 
@@ -44,6 +48,7 @@ private:
     static constexpr int kBaseSize = 200;
 
     QImage m_thumbnail;
+    bool m_overviewAvailable = true;
     core::Viewport m_viewport;
     int m_slideWidth;
     int m_slideHeight;

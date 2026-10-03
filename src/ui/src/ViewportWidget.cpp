@@ -9,6 +9,7 @@
 #include "slideio/viewer/core/TileData.h"
 #include "slideio/viewer/core/TileKey.h"
 #include "slideio/viewer/core/TilePyramid.h"
+#include "slideio/viewer/core/TileSampling.h"
 #include "slideio/viewer/core/Types.h"
 #include "slideio/viewer/infra/LruTileCache.h"
 #include "slideio/viewer/infra/SlideIOAdapter.h"
@@ -523,6 +524,30 @@ QImage tileDataToQImage(const slideio::viewer::core::TileData& block,
 // failures, assembles the survivors at coarse-level dimensions, and scales
 // down to (targetW, targetH). Returns null if the level is unusable or no
 // tile could be read.
+// True when the source's coarsest level is small enough to read in full. This
+// is what separates a real pyramid — whose coarsest level is a handful of
+// tiles — from a slide with no downsampled level, where the only level is full
+// resolution and any whole-slide read decodes the entire image. Every
+// whole-slide pass (overview thumbnail, scene thumbnails, the coarse-tile
+// assembly fallback) is gated on it.
+bool hasAffordableOverview(slideio::viewer::core::ISlideSource& source)
+{
+    namespace core = slideio::viewer::core;
+    auto levels = source.levels();
+    if (levels.empty()) return false;
+    const auto& lvl = levels.back();
+    if (lvl.width <= 0 || lvl.height <= 0) return false;
+
+    const int tilesX = lvl.tilesX > 0
+        ? lvl.tilesX
+        : (lvl.tileWidth > 0 ? (lvl.width + lvl.tileWidth - 1) / lvl.tileWidth : 1);
+    const int tilesY = lvl.tilesY > 0
+        ? lvl.tilesY
+        : (lvl.tileHeight > 0 ? (lvl.height + lvl.tileHeight - 1) / lvl.tileHeight : 1);
+
+    return core::planTileSampling(tilesX, tilesY, core::kMaxOverviewTiles).complete;
+}
+
 QImage buildCoarseLevelThumbnailFallback(slideio::viewer::core::ISlideSource& source,
                                           int slideNumChannels,
                                           const std::vector<slideio::viewer::core::ChannelInfo>& channels,
@@ -531,6 +556,10 @@ QImage buildCoarseLevelThumbnailFallback(slideio::viewer::core::ISlideSource& so
                                           int zIndex = 0)
 {
     namespace core = slideio::viewer::core;
+    // Assembling this image means reading every tile of the coarsest level and
+    // allocating a buffer its full size — fine for a real pyramid's top level,
+    // ruinous for a slide whose only level is full resolution.
+    if (!hasAffordableOverview(source)) return {};
     auto levels = source.levels();
     if (levels.empty()) return {};
     const int coarsestLevel = static_cast<int>(levels.size()) - 1;
@@ -675,6 +704,31 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
     if (coarsestLevel < 0) return;
     const auto& coarseLvl = pyramid.levelInfo(coarsestLevel);
 
+    // A pyramid's coarsest level is a handful of tiles, so it gets read whole.
+    // A slide with no downsampled level has only its full-resolution level:
+    // a 82432x103936 WSI is a 322x406 grid of 256px tiles, and reading all
+    // 130732 of them costs ~27 minutes at the ~12ms a full-res tile takes to
+    // decode. Sample such a level instead -- a few hundred tiles spread across
+    // the slide give a display range in a few seconds.
+    const auto samplingPlan = core::planTileSampling(coarseLvl.tilesX, coarseLvl.tilesY,
+                                                     core::kMaxCoarseScanTiles);
+    // Separate, far more generous budget: thinning the scan only costs
+    // precision, but refusing to read the level in full costs the overview
+    // image entirely, so that decision gets its own threshold.
+    const bool overviewAffordable =
+        core::planTileSampling(coarseLvl.tilesX, coarseLvl.tilesY,
+                               core::kMaxOverviewTiles).complete;
+    if (!samplingPlan.complete) {
+        spdlog::info("autodetect: coarsest level is {}x{} tiles -- scanning every {}x{} "
+                     "({} of {} tiles), overviewAffordable={}",
+                     coarseLvl.tilesX, coarseLvl.tilesY,
+                     samplingPlan.strideX, samplingPlan.strideY,
+                     core::sampledTileCount(coarseLvl.tilesX, coarseLvl.tilesY, samplingPlan),
+                     static_cast<long long>(coarseLvl.tilesX) * coarseLvl.tilesY,
+                     overviewAffordable);
+    }
+    slideInfo.overviewAvailable = overviewAffordable;
+
     // Target thumbnail dimensions are derived from the FULL SLIDE dims (not the
     // coarsest pyramid level), so even when the coarsest level is small (e.g.,
     // ~200x160 in a 9-level pyramid) we still ask SlideIO for a sharp 800x800-
@@ -721,8 +775,8 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
     // in the readBlock thumbnail call. If a future T-series slide has an empty
     // T=0, autodetect min/max may be wrong unless the block fallback succeeds.
 
-    for (int r = 0; r < coarseLvl.tilesY; ++r) {
-        for (int c = 0; c < coarseLvl.tilesX; ++c) {
+    for (int r = 0; r < coarseLvl.tilesY; r += samplingPlan.strideY) {
+        for (int c = 0; c < coarseLvl.tilesX; c += samplingPlan.strideX) {
             for (int z = 0; z < numZ; ++z) {
                 core::TileKey tileKey(coarsestLevel, c, r, z);
                 auto tileData = slideSource.readTile(tileKey);
@@ -787,8 +841,15 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
     // populates a small fraction of the type range (e.g., UInt16 with peak
     // ~2k) inherit the {0, 65535} fallback from openSceneSync and render
     // as nearly black.
-    auto blockData = slideSource.readBlock(0, 0, slideInfo.width, slideInfo.height,
-                                           thumbW, thumbH, preferredZ, preferredT);
+    //
+    // Skipped when the level is too large to read in full: SlideIO resamples
+    // this block from the only level it has, so asking for the whole slide
+    // would decode every tile of a full-resolution level.
+    core::TileData blockData;
+    if (overviewAffordable) {
+        blockData = slideSource.readBlock(0, 0, slideInfo.width, slideInfo.height,
+                                          thumbW, thumbH, preferredZ, preferredT);
+    }
     const bool blockUsable = !blockData.isEmpty() && !blockData.isError();
     spdlog::info("autodetect: readBlock usable={} blockSize={}x{} blockCh={} blockDt={}",
                  blockUsable, blockData.width(), blockData.height(),
@@ -828,18 +889,15 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
         }
     }
 
-    // Per-channel histograms. Always computed from the readBlock buffer when
-    // usable; uses the data-type's full range so draggable-handle math in the
-    // UI lines up with the renderer's toSamplerRange normalization.
-    if (blockUsable && numCh >= 1) {
-        const int blockCh = blockData.numChannels();
-        const size_t blockPixels = static_cast<size_t>(blockData.width())
-                                 * static_cast<size_t>(blockData.height());
-
+    // Per-channel histograms. Computed from the readBlock buffer when there is
+    // one, and otherwise accumulated across the sampled coarse tiles so that a
+    // slide with no downsampled level still gets histograms. Uses the data
+    // type's full range so draggable-handle math in the UI lines up with the
+    // renderer's toSamplerRange normalization.
+    if (numCh >= 1) {
         for (int ch = 0; ch < numCh; ++ch) {
             const size_t ch_z = static_cast<size_t>(ch);
             if (ch_z >= slideInfo.channels.size()) break;
-            if (ch >= blockCh) continue;
 
             auto& chInfo = slideInfo.channels[ch_z];
             auto [rMin, rMax] = dataTypeHistogramRange(chInfo.dataType);
@@ -848,11 +906,33 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
             chInfo.histogram.rangeMin = rMin;
             chInfo.histogram.rangeMax = rMax;
 
-            core::computeHistogramStrided(blockData.buffer().data(), blockPixels,
-                                          blockCh, ch,
-                                          chInfo.dataType, rMin, rMax,
-                                          chInfo.histogram.bins.data(),
-                                          core::kNumBins);
+            // computeHistogramStrided increments in place, so several sources
+            // accumulate into the same bins.
+            if (blockUsable) {
+                const int blockCh = blockData.numChannels();
+                if (ch < blockCh) {
+                    const size_t blockPixels = static_cast<size_t>(blockData.width())
+                                             * static_cast<size_t>(blockData.height());
+                    core::computeHistogramStrided(blockData.buffer().data(), blockPixels,
+                                                  blockCh, ch,
+                                                  chInfo.dataType, rMin, rMax,
+                                                  chInfo.histogram.bins.data(),
+                                                  core::kNumBins);
+                }
+            } else {
+                for (const auto& tileData : coarseTiles) {
+                    if (tileData.isEmpty() || tileData.isError()) continue;
+                    const int tileCh = tileData.numChannels();
+                    if (ch >= tileCh) continue;
+                    const size_t tilePixels = static_cast<size_t>(tileData.width())
+                                            * static_cast<size_t>(tileData.height());
+                    core::computeHistogramStrided(tileData.buffer().data(), tilePixels,
+                                                  tileCh, ch,
+                                                  chInfo.dataType, rMin, rMax,
+                                                  chInfo.histogram.bins.data(),
+                                                  core::kNumBins);
+                }
+            }
 
             uint64_t total = 0;
             for (uint32_t v : chInfo.histogram.bins) total += v;
@@ -881,6 +961,38 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
                      slideInfo.channels[ch].colorB,
                      slideInfo.channels[ch].intensity,
                      slideInfo.channels[ch].visible);
+    }
+
+    // Insert the tiles we read into the cache for an instant base-layer preview
+    // at the preferred Z (middle slice for Z-stacks; otherwise Z=0). Walks the
+    // same strides as the read loop, so it stays in step with coarseTiles.
+    // Consumes coarseTiles, so it must run after every pass that reads them.
+    auto insertCoarseTilesIntoCache = [&]() {
+        size_t idx = 0;
+        for (int r = 0; r < coarseLvl.tilesY; r += samplingPlan.strideY) {
+            for (int c = 0; c < coarseLvl.tilesX; c += samplingPlan.strideX) {
+                if (idx >= coarseTiles.size()) return;
+                auto& td = coarseTiles[idx++];
+                if (td.isEmpty() || td.isError()) continue;
+                core::TileKey tileKey(coarsestLevel, c, r, preferredZ);
+                tileCache.insert(tileKey, std::make_shared<core::TileData>(std::move(td)));
+            }
+        }
+    };
+
+    // The tile-assembly fallback below walks the full tile grid and allocates
+    // an image the size of the whole level, so it is only valid when the scan
+    // read every tile. When neither thumbnail path can run, say so rather than
+    // producing a partial image: slideInfo.overviewAvailable tells the minimap
+    // to explain the empty panel.
+    if (!overviewAffordable || (!blockUsable && !samplingPlan.complete)) {
+        spdlog::info("autodetect: no whole-slide overview "
+                     "(overviewAffordable={}, blockUsable={}, fullScan={})",
+                     overviewAffordable, blockUsable, samplingPlan.complete);
+        slideInfo.overviewAvailable = false;
+        thumbnailOut = QImage();
+        insertCoarseTilesIntoCache();
+        return;
     }
 
     // Thumbnail uses the same per-channel display ranges as the viewport's
@@ -1029,19 +1141,7 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
             Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
     }
 
-    // Insert coarsest tiles into cache for instant base-layer preview at the
-    // preferred Z (middle slice for Z-stacks; otherwise Z=0).
-    {
-        int idx = 0;
-        for (int r = 0; r < coarseLvl.tilesY; ++r) {
-            for (int c = 0; c < coarseLvl.tilesX; ++c) {
-                auto& td = coarseTiles[static_cast<size_t>(idx++)];
-                if (td.isEmpty() || td.isError()) continue;
-                core::TileKey tileKey(coarsestLevel, c, r, preferredZ);
-                tileCache.insert(tileKey, std::make_shared<core::TileData>(std::move(td)));
-            }
-        }
-    }
+    insertCoarseTilesIntoCache();
 }
 
 using slideio::viewer::ui::SceneOpenResult;
@@ -1787,6 +1887,16 @@ void ViewportWidget::generateSceneThumbnails()
                 int numCh = tempInfo.numChannels;
                 if (numCh <= 0) continue;
 
+                // Both thumbnail paths below read the whole scene, so a scene
+                // with no downsampled level would decode every full-resolution
+                // tile — tens of minutes per scene on a background thread,
+                // with nothing to show for it. Skip it instead.
+                if (!hasAffordableOverview(tempAdapter)) {
+                    spdlog::info("generateSceneThumbnails: scene {} has no downsampled level; "
+                                 "skipping thumbnail", sceneInfo.index);
+                    continue;
+                }
+
                 // Target thumbnail dimensions are derived from the FULL SCENE dims so
                 // SlideIO can pick a finer pyramid level and resample down. Without
                 // this, scenes whose coarsest pyramid level is small (e.g., ~200x160)
@@ -1860,6 +1970,14 @@ void ViewportWidget::generateAuxImageThumbnails()
                 if (tempInfo.width <= 0 || tempInfo.height <= 0) continue;
                 int numCh = tempInfo.numChannels;
                 if (numCh <= 0) continue;
+
+                // Same guard as the scene thumbnails: never read a whole image
+                // that has no downsampled level to read it from.
+                if (!hasAffordableOverview(tempAdapter)) {
+                    spdlog::info("generateAuxImageThumbnails: aux '{}' has no downsampled level; "
+                                 "skipping thumbnail", auxName);
+                    continue;
+                }
 
                 constexpr int kThumbSize = 512;
                 int thumbW = tempInfo.width;

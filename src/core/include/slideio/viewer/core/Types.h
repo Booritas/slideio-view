@@ -226,6 +226,10 @@ struct SlideInfo
     DisplayRange displayRange;
     std::vector<ChannelInfo> channels;
     bool isBrightfield = false;
+    // False when the slide has no downsampled level cheap enough to build a
+    // whole-slide overview from. Rendering one would mean decoding every tile
+    // of the full-resolution level, so the minimap says so instead.
+    bool overviewAvailable = true;
     int numZSlices = 1;
     int numTFrames = 1;
     std::vector<SceneInfo> scenes;
