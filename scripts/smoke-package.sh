@@ -5,6 +5,12 @@ set -euo pipefail
 
 pkg_dir="${1:-build/packages}"
 
+# Absolute, because apt-get does not take a relative path to a .deb: an argument
+# with a slash that does not begin with / or ./ is read as package/release, so
+# `apt-get install build/packages/x.deb` fails with "Unable to locate package
+# build/packages" and says nothing about the file it was handed.
+pkg_dir=$(cd "$pkg_dir" 2>/dev/null && pwd) || { echo "FAIL: no such directory: ${1:-build/packages}" >&2; exit 1; }
+
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 # Under `set -e` a failing command exits with whatever it printed, which for a
