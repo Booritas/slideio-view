@@ -1,0 +1,20 @@
+# Linux profile for CI only.
+#
+# conan/profiles/Linux/release pins compiler.version=14, which the ubuntu-22.04
+# runner image does not carry. That runner is not interchangeable: it fixes the
+# glibc floor at 2.35, so the .deb installs on Ubuntu 22.04+ and Debian 12+,
+# where an ubuntu-24.04 build would require 2.39 and refuse Debian 12.
+#
+# 11 is the default gcc on that image. Confirm it against the first run's
+# `gcc --version` output and correct this if the image moves.
+#
+# Using a separate profile means CI and local builds resolve different conan
+# package IDs and therefore different caches. That is expected, not a problem.
+[settings]
+arch=x86_64
+build_type=Release
+compiler=gcc
+compiler.cppstd=17
+compiler.libcxx=libstdc++11
+compiler.version=11
+os=Linux

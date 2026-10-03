@@ -1,0 +1,115 @@
+name: Build Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Pinned, never -latest. ubuntu-22.04 fixes the glibc floor at 2.35 so
+          # the .deb installs on Ubuntu 22.04+ and Debian 12+; macos-14 is the
+          # first arm64 image and naming it keeps the artifact's architecture
+          # from changing under us; windows-2022 matches compiler.version=194 in
+          # conan/profiles/Windows/release.
+          #
+          # The test directory differs by generator: Windows uses the Visual
+          # Studio multi-config generator with a flat build/build, while the
+          # others use Unix Makefiles with a per-config subdirectory.
+          - name: Windows x86_64
+            os: windows-2022
+            test_dir: build/build
+            ctest_config: -C Release
+          - name: Debian x86_64
+            os: ubuntu-22.04
+            test_dir: build/build/Release
+            ctest_config: ''
+          - name: macOS arm64
+            os: macos-14
+            test_dir: build/build/Release
+            ctest_config: ''
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Conan
+        run: pip install conan
+
+      - name: Setup MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
+      # Qt's xcb platform plugin links these, and the SlideIO build needs the
+      # OpenGL headers. Without them the Qt conan package fails to build and the
+      # error names a missing X header rather than the cause.
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libx11-xcb-dev libxcb-cursor-dev libxcb-icccm4-dev libxcb-image0-dev \
+            libxcb-keysyms1-dev libxcb-randr0-dev libxcb-render-util0-dev \
+            libxcb-shape0-dev libxcb-sync-dev libxcb-xfixes0-dev libxcb-xinerama0-dev \
+            libxcb-xkb-dev libfontconfig1-dev libfreetype6-dev libdbus-1-dev
+
+      - name: Read the SlideIO submodule revision
+        id: slideio_rev
+        shell: bash
+        run: echo "sha=$(git -C extern/slideio rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: conan-${{ matrix.os }}-${{ hashFiles('conanfile.py', 'conan/profiles/**') }}
+          restore-keys: conan-${{ matrix.os }}-
+
+      # build-template.sh skips the (long) SlideIO build when this tree is
+      # present, so restoring it is what keeps SlideIO off the critical path.
+      - name: Cache the SlideIO install tree
+        uses: actions/cache@v4
+        with:
+          path: extern/slideio/build/install
+          key: slideio-${{ matrix.os }}-${{ steps.slideio_rev.outputs.sha }}
+
+      # A restored cache is trusted by build-template.sh on the strength of one
+      # header. Check it carries libraries too before letting the build rely on it.
+      - name: Verify the restored SlideIO install
+        shell: bash
+        run: ./scripts/verify-slideio-install.sh extern/slideio/build/install
+
+      - name: Build
+        shell: bash
+        env:
+          # Note the lowercase l: build-template.sh spells it CONAN_PROFIlE, and
+          # correcting that typo is a separate change.
+          CONAN_PROFIlE: ${{ runner.os == 'Linux' && 'conan/profiles/Linux/release-ci' || '' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CONAN_PROFIlE}" ]; then unset CONAN_PROFIlE; fi
+          ./build.sh
+
+      - name: Test
+        shell: bash
+        run: ctest --test-dir ${{ matrix.test_dir }} ${{ matrix.ctest_config }} --output-on-failure
