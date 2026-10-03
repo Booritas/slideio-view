@@ -94,6 +94,16 @@ if(APPLE)
     # BundleUtilities::fixup_bundle handles SlideIO and transitive deps.
     set_target_properties(slideio-viewer PROPERTIES
         INSTALL_RPATH "@executable_path/../Frameworks")
+endif()
+
+if(UNIX AND NOT APPLE)
+    # The package is self-contained under one prefix, so the executable looks for
+    # its Qt and SlideIO libraries beside itself rather than in the system.
+    set_target_properties(slideio-viewer PROPERTIES
+        INSTALL_RPATH "$ORIGIN/../lib")
+endif()
+
+if(APPLE)
 
     slideio_viewer_qt_bin_dir(_qt_bin_dir)
     find_program(MACDEPLOYQT_EXECUTABLE
@@ -227,6 +237,42 @@ if(WIN32)
     install(SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/DeployWindowsQt.cmake")
 endif()
 
+if(UNIX AND NOT APPLE)
+    # No deployment tool ships for Linux, so the module set is named explicitly.
+    # These are the modules slideio-viewer-ui links, plus the DBus and XcbQpa
+    # libraries the xcb platform plugin pulls in.
+    get_filename_component(_qt_root "${_qt_bin_dir}" DIRECTORY)
+    set(_qt_libs Core Gui Widgets OpenGL OpenGLWidgets Network DBus XcbQpa)
+    foreach(_mod ${_qt_libs})
+        file(GLOB _qt_lib_files "${_qt_root}/lib/libQt6${_mod}.so*")
+        if(NOT _qt_lib_files)
+            message(FATAL_ERROR "Qt module libQt6${_mod}.so not found under ${_qt_root}/lib")
+        endif()
+        install(FILES ${_qt_lib_files} DESTINATION ${_install_lib})
+    endforeach()
+    # The whole platforms directory, so libqoffscreen.so travels with libqxcb.so:
+    # the package is smoke-tested headless, and a viewer that cannot start
+    # without a display cannot be checked by anything but a human.
+    foreach(_plugin_dir platforms xcbglintegrations styles imageformats)
+        if(NOT EXISTS "${_qt_root}/plugins/${_plugin_dir}")
+            message(FATAL_ERROR "Qt plugin directory '${_plugin_dir}' not found under ${_qt_root}/plugins")
+        endif()
+        install(DIRECTORY "${_qt_root}/plugins/${_plugin_dir}" DESTINATION ${_install_plugins})
+    endforeach()
+
+    # SlideIO's own shared libraries. There is no Linux equivalent of the
+    # CopySlideIODlls.cmake step the Windows build uses.
+    install(DIRECTORY "${SLIDEIO_ROOT}/release/lib/"
+        DESTINATION ${_install_lib}
+        FILES_MATCHING PATTERN "*.so*")
+
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/slideio-viewer.desktop"
+        DESTINATION "share/applications")
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/app.png"
+        DESTINATION "share/icons/hicolor/256x256/apps"
+        RENAME "slideio-viewer.png")
+endif()
+
 # macOS gets its qt.conf from macdeployqt, which knows where it put the plugins.
 # This must stay after the deploy script above: windeployqt writes a qt.conf of
 # its own when it relocates plugins, and ours has to be the one that survives.
@@ -303,7 +349,8 @@ if(WIN32)
 elseif(APPLE)
     set(CPACK_GENERATOR "DragNDrop")
 else()
-    set(CPACK_GENERATOR "TGZ")
+    set(CPACK_GENERATOR "DEB;TGZ")
+    set(CPACK_PROJECT_CONFIG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CPackLinuxOptions.cmake")
 endif()
 
 include(CPack)
