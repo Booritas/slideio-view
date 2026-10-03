@@ -46,6 +46,10 @@ find_package(Qt6 REQUIRED COMPONENTS Core Widgets OpenGLWidgets)
 find_package(nlohmann_json REQUIRED)
 find_package(spdlog REQUIRED)
 
+# Build stamp for the About dialog. Runs after the find_package calls above so
+# it can read the versions they resolved.
+include(BuildInfo)
+
 # Qt settings. Without AUTORCC, resources/icons.qrc is listed as a source but
 # never compiled, so ":/icons/app.png" resolves to nothing and every lookup of
 # it silently yields a null pixmap.

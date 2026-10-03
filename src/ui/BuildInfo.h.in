@@ -1,0 +1,40 @@
+#pragma once
+
+// Generated from src/ui/BuildInfo.h.in at CMake configure time -- do not edit,
+// and do not add it to the repository.
+//
+// The revision and build date are therefore the values from the last configure,
+// not the last compile. cmake/BuildInfo.cmake lists .git/HEAD and .git/index as
+// configure dependencies so that committing re-runs configure and the hash does
+// not go stale between commits.
+
+namespace slideio::viewer::ui
+{
+
+inline constexpr const char* kAppVersion = "@PROJECT_VERSION@";
+inline constexpr const char* kGitRevision = "@SLIDEIO_VIEWER_GIT_REVISION@";
+inline constexpr const char* kBuildDate = "@SLIDEIO_VIEWER_BUILD_DATE@";
+inline constexpr const char* kCompilerId = "@CMAKE_CXX_COMPILER_ID@";
+inline constexpr const char* kCompilerVersion = "@CMAKE_CXX_COMPILER_VERSION@";
+
+// Versions of the Conan packages this build resolved, taken from the variables
+// their package config files set. Reading them here keeps the About dialog from
+// having to include headers of libraries the UI layer does not otherwise link.
+inline constexpr const char* kJsonVersion = "@SLIDEIO_VIEWER_JSON_VERSION@";
+inline constexpr const char* kSpdlogVersion = "@SLIDEIO_VIEWER_SPDLOG_VERSION@";
+
+// Multi-config generators choose the configuration at build time, so CMake has
+// no single answer for it at configure time. Let the preprocessor decide.
+#if defined(NDEBUG)
+inline constexpr const char* kBuildType = "Release";
+#else
+inline constexpr const char* kBuildType = "Debug";
+#endif
+
+// The LICENSE file at the root of the repository, embedded so that the About
+// dialog shows it from an installed application without the file having to be
+// deployed alongside the executable. Its delimiter is deliberately unusual: a
+// bare )" inside the licence text would otherwise end the literal early.
+inline constexpr const char* kLicenseText = R"SLIDEIO_LICENSE(@SLIDEIO_VIEWER_LICENSE_TEXT@)SLIDEIO_LICENSE";
+
+} // namespace slideio::viewer::ui
