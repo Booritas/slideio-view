@@ -125,6 +125,13 @@ Darwin)
     [ -f "$app/Contents/PlugIns/platforms/libqcocoa.dylib" ] || fail "cocoa platform plugin not bundled"
     [ -f "$app/Contents/PlugIns/platforms/libqoffscreen.dylib" ] || fail "offscreen platform plugin not bundled"
 
+    # A bundle whose signature does not verify launches fine here but is
+    # reported as "damaged" on any machine that downloaded it, because the
+    # quarantine flag makes Gatekeeper check the seal. This run never sees the
+    # quarantine flag, so check the seal directly.
+    codesign --verify --deep --strict --verbose=2 "$app" || fail "bundle signature does not verify"
+    echo "OK: bundle signature verifies"
+
     # An absolute build-machine path here means the bundle works for whoever
     # built it and nobody else -- exactly the breakage the old Windows glob was.
     bad=$(find "$app" -type f \( -name '*.dylib' -o -perm +111 \) -exec otool -L {} + 2>/dev/null \

@@ -79,3 +79,21 @@ file(COPY ${_slideio_dylibs}
     DESTINATION "${_bundle}/Contents/Frameworks"
     FOLLOW_SYMLINK_CHAIN)
 message(STATUS "Bundled SlideIO dylibs from ${_slideio_src_dir}")
+
+# Step 3: seal the bundle with an ad-hoc signature.
+#
+# The executable carries only the linker's ad-hoc signature, which covers the
+# Mach-O and nothing else -- yet the bundle has resources, so the signature does
+# not verify ("code has no resources but signature indicates they must be
+# present"). A quarantined app in that state is reported as "damaged and can't be
+# opened", with no Open button, rather than as being from an unidentified
+# developer. Signing the whole bundle last, after everything above has written
+# into it, gives a seal that verifies. Still not a Developer ID signature, so
+# Gatekeeper warns on first open, but the user can now get past it without admin.
+execute_process(
+    COMMAND codesign --force --deep --sign - "${_bundle}"
+    RESULT_VARIABLE _rc)
+if(NOT _rc EQUAL 0)
+    message(FATAL_ERROR "ad-hoc codesign of '${_bundle}' failed (exit ${_rc})")
+endif()
+message(STATUS "Ad-hoc signed ${_bundle}")
