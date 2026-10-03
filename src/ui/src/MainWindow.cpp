@@ -1,4 +1,5 @@
 #include "slideio/viewer/ui/MainWindow.h"
+#include "slideio/viewer/ui/AboutDialog.h"
 #include "slideio/viewer/ui/AppPaths.h"
 #include "slideio/viewer/ui/AssociatedImageWindow.h"
 #include "slideio/viewer/ui/ChannelMixerPanel.h"
@@ -88,6 +89,7 @@ struct MainWindow::Impl
     QAction* associatedImagesToggleAction = nullptr;
     QAction* propertiesToggleAction = nullptr;
     QAction* metadataToggleAction = nullptr;
+    QAction* aboutAction = nullptr;
 
     void createActions()
     {
@@ -142,6 +144,12 @@ struct MainWindow::Impl
         minimapToggleAction->setCheckable(true);
         minimapToggleAction->setChecked(true);
         minimapToggleAction->setStatusTip("Toggle the minimap overlay");
+
+        aboutAction = new QAction("&About SlideIO Viewer...", owner);
+        // On macOS this moves the entry into the application menu, where the
+        // platform expects it, instead of leaving it under Help.
+        aboutAction->setMenuRole(QAction::AboutRole);
+        aboutAction->setStatusTip("Show version, system and licence information");
     }
 
     void createMenus()
@@ -175,6 +183,9 @@ struct MainWindow::Impl
         viewMenu->addAction(associatedImagesToggleAction);
         viewMenu->addAction(propertiesToggleAction);
         viewMenu->addAction(metadataToggleAction);
+
+        QMenu* helpMenu = owner->menuBar()->addMenu("&Help");
+        helpMenu->addAction(aboutAction);
     }
 
     void connectSignals()
@@ -249,6 +260,14 @@ struct MainWindow::Impl
         });
 
         QObject::connect(minimapToggleAction, &QAction::toggled, minimapWidget, &QWidget::setVisible);
+
+        // Help actions. The dialog is built per invocation so that it picks up
+        // the OpenGL strings once the viewport's context has come up, rather
+        // than caching an empty set from before the first show.
+        QObject::connect(aboutAction, &QAction::triggered, owner, [this]() {
+            AboutDialog dialog(viewportWidget->glInfo(), owner);
+            dialog.exec();
+        });
 
         // Viewport signals
         QObject::connect(viewportWidget, &ViewportWidget::viewportChanged, owner, [this]() {
