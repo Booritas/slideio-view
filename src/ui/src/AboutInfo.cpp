@@ -140,9 +140,12 @@ QString formatThirdPartyNotices(const QList<ThirdPartyComponent>& components)
 
 QString formatAboutReport(const AboutInfo& info)
 {
-    return QStringLiteral("SlideIO Viewer\n==============\n\n%1\n\nSystem\n------\n\n%2\n\n"
-                          "Third-party components\n----------------------\n\n%3\n")
-        .arg(formatVersionInfo(info), formatSystemInfo(info),
+    // The home page goes under the heading rather than into the version section:
+    // the dialog shows it as a link, which a pasted bug report cannot carry, and
+    // the version tab stays diagnostics only.
+    return QStringLiteral("SlideIO Viewer\n==============\n%1\n\n%2\n\nSystem\n------\n\n%3\n\n"
+                          "Third-party components\n----------------------\n\n%4\n")
+        .arg(QString::fromLatin1(kProjectHomePage), formatVersionInfo(info), formatSystemInfo(info),
              formatThirdPartyNotices(thirdPartyComponents(info)));
 }
 

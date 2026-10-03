@@ -8,6 +8,10 @@
 namespace slideio::viewer::ui
 {
 
+// The project's home page. One definition, so the link the dialog shows and the
+// URL the clipboard report carries cannot drift apart.
+inline constexpr const char* kProjectHomePage = "https://www.slideio.com";
+
 // One component shipped with the viewer, listed in the About dialog's
 // third-party tab so the licences of the libraries we redistribute are
 // attributed. Qt is the reason this exists: the LGPL expects the notice.
