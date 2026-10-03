@@ -1,0 +1,256 @@
+name: Release
+
+# Builds the distributable packages for a version tag and attaches them to a
+# draft GitHub Release:
+#
+#   slideio-viewer-<version>-windows-x86_64.exe   NSIS installer
+#   slideio-viewer-<version>-windows-x86_64.zip   the same tree, unpacked
+#   slideio-viewer-<version>-macos-arm64.dmg      Apple Silicon, unsigned
+#   slideio-viewer_<version>_amd64.deb            Ubuntu 22.04+ / Debian 12+
+#
+# Everything is produced by ./package.sh, so the same artifacts can be built on a
+# developer machine -- see docs/superpowers/specs/2026-10-03-ci-distribution-design.md.
+#
+# build-validation.yml remains the per-commit gate and is untouched. A manual run
+# builds and smoke-tests every artifact without publishing anything.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: Which platforms to build
+        required: true
+        default: all
+        type: choice
+        options: [all, windows, debian, macos]
+      skip_tests:
+        description: Skip ctest (packaging changes only)
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check-version:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare the tag with the project version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            version=$(./scripts/check-version.sh "${GITHUB_REF_NAME}")
+          else
+            version=$(./scripts/check-version.sh)
+          fi
+          echo "version: ${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      # Assembled here rather than inline below so a manual run can ask for one
+      # platform. A tag push carries no inputs, so a release always builds three.
+      - name: Select the platforms to build
+        id: matrix
+        shell: bash
+        env:
+          PLATFORMS: ${{ inputs.platforms || 'all' }}
+        run: |
+          set -euo pipefail
+          windows='{"name":"Windows x86_64","os":"windows-2022","artifact":"windows-x86_64","test_dir":"build/build","ctest_config":"-C Release"}'
+          debian='{"name":"Debian x86_64","os":"ubuntu-22.04","artifact":"debian-x86_64","test_dir":"build/build/Release","ctest_config":""}'
+          macos='{"name":"macOS arm64","os":"macos-14","artifact":"macos-arm64","test_dir":"build/build/Release","ctest_config":""}'
+          case "$PLATFORMS" in
+            all)     include="${windows},${debian},${macos}" ;;
+            windows) include="${windows}" ;;
+            debian)  include="${debian}" ;;
+            macos)   include="${macos}" ;;
+            *) echo "Unknown platform selection: ${PLATFORMS}" >&2; exit 1 ;;
+          esac
+          echo "building: ${PLATFORMS}"
+          echo "matrix={\"include\":[${include}]}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.name }}
+    needs: check-version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing should not hide whether the other two package
+      # cleanly; a release short one artifact is worth knowing about in full.
+      fail-fast: false
+      matrix: ${{ fromJson(needs.check-version.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Conan
+        run: pip install conan
+
+      - name: Setup MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libx11-xcb-dev libxcb-cursor-dev libxcb-icccm4-dev libxcb-image0-dev \
+            libxcb-keysyms1-dev libxcb-randr0-dev libxcb-render-util0-dev \
+            libxcb-shape0-dev libxcb-sync-dev libxcb-xfixes0-dev libxcb-xinerama0-dev \
+            libxcb-xkb-dev libfontconfig1-dev libfreetype6-dev libdbus-1-dev
+
+      - name: Read the SlideIO submodule revision
+        id: slideio_rev
+        shell: bash
+        run: echo "sha=$(git -C extern/slideio rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: conan-${{ matrix.os }}-${{ hashFiles('conanfile.py', 'conan/profiles/**') }}
+          restore-keys: conan-${{ matrix.os }}-
+
+      - name: Cache the SlideIO install tree
+        uses: actions/cache@v4
+        with:
+          path: extern/slideio/build/install
+          key: slideio-${{ matrix.os }}-${{ steps.slideio_rev.outputs.sha }}
+
+      - name: Verify the restored SlideIO install
+        shell: bash
+        run: ./scripts/verify-slideio-install.sh extern/slideio/build/install
+
+      - name: Build the packages
+        shell: bash
+        env:
+          # Note the lowercase l: build-template.sh spells it CONAN_PROFIlE.
+          CONAN_PROFIlE: ${{ runner.os == 'Linux' && 'conan/profiles/Linux/release-ci' || '' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CONAN_PROFIlE}" ]; then unset CONAN_PROFIlE; fi
+          ./package.sh
+
+      - name: Test
+        # Skippable only from a manual run, which cannot publish -- see the
+        # publish job's condition. A tag push carries no inputs.
+        if: ${{ !inputs.skip_tests }}
+        shell: bash
+        run: ctest --test-dir ${{ matrix.test_dir }} ${{ matrix.ctest_config }} --output-on-failure
+
+      # In a clean container, not on the runner. The build steps above installed
+      # libxcb-*-dev, libgl1-mesa-dev and the rest, so a smoke test run here would
+      # find every dependency satisfied no matter what the package declares --
+      # which is the one thing this test exists to catch. A system Qt goes in
+      # first, so the bundled plugins have to win rather than merely be the only
+      # ones present.
+      - name: Smoke test the Debian package in a clean container
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/work" -w /work \
+            ubuntu:22.04 \
+            bash -c '
+              set -euo pipefail
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y sudo file binutils qt6-base-dev
+              ./scripts/smoke-package.sh build/packages
+              # What the packaged plugin actually needs. The dependency list in
+              # cmake/CPackLinuxOptions.cmake is corrected from this rather than
+              # carried forward on faith.
+              echo "--- libqxcb.so dependencies ---"
+              ldd /opt/slideio-viewer/plugins/platforms/libqxcb.so || true
+            '
+
+      - name: Smoke test the package
+        if: runner.os == 'macOS'
+        shell: bash
+        run: ./scripts/smoke-package.sh build/packages
+
+      - name: Smoke test the package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/smoke-package.ps1 -PackageDir build/packages
+
+      - name: Upload the packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: slideio-viewer-${{ matrix.artifact }}
+          # Named extensions, not build/packages/* -- cpack's staging directory
+          # is a full second copy of the install tree and would be swept up.
+          path: |
+            build/packages/*.exe
+            build/packages/*.zip
+            build/packages/*.dmg
+            build/packages/*.deb
+            build/packages/*.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish release
+    needs: [check-version, build]
+    # Only a tag push publishes. Both halves are load-bearing: the dispatch API
+    # takes a tag as readily as a branch, so ref_type alone would let a manual
+    # run that built one platform with the tests skipped publish a release.
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download every platform's packages
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List what will be published
+        run: ls -la dist
+
+      - name: Create the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          name: SlideIO Viewer ${{ needs.check-version.outputs.version }}
+          draft: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            Binary distributions of SlideIO Viewer ${{ needs.check-version.outputs.version }}.
+
+            | Platform | File | Notes |
+            |---|---|---|
+            | Windows x86_64 | `slideio-viewer-${{ needs.check-version.outputs.version }}-windows-x86_64.exe` | Installer. Unsigned: SmartScreen will warn on first run. |
+            | Windows x86_64 | `slideio-viewer-${{ needs.check-version.outputs.version }}-windows-x86_64.zip` | The same tree, to unpack anywhere. |
+            | macOS arm64 | `slideio-viewer-${{ needs.check-version.outputs.version }}-macos-arm64.dmg` | Apple Silicon. Unsigned — see below. |
+            | Debian/Ubuntu x86_64 | `slideio-viewer_${{ needs.check-version.outputs.version }}_amd64.deb` | Ubuntu 22.04+ / Debian 12+. Qt is bundled. |
+
+            The macOS disk image is not signed or notarised, so Gatekeeper
+            refuses it on first open. Right-click the application and choose
+            **Open**, or run:
+
+            ```
+            xattr -dr com.apple.quarantine "/Applications/slideio-viewer.app"
+            ```
