@@ -1256,6 +1256,11 @@ struct ViewportWidget::Impl
 {
     // OpenGL resources
     QOpenGLFunctions_3_3_Core* gl = nullptr;
+
+    // Captured in initializeGL(). glGetString can only be called on the thread
+    // holding the context, so the About dialog reads this copy rather than
+    // reaching into GL from wherever it happens to be opened.
+    GpuInfo gpuInfo;
     std::unique_ptr<QOpenGLShaderProgram> tileShader;
     GLuint quadVAO = 0;
     GLuint quadVBO = 0;
@@ -2244,6 +2249,11 @@ ViewportController* ViewportWidget::controller() const
     return m_impl->controller.get();
 }
 
+GpuInfo ViewportWidget::glInfo() const
+{
+    return m_impl->gpuInfo;
+}
+
 void ViewportWidget::fitToSlide()
 {
     if (m_impl->controller) {
@@ -2390,6 +2400,20 @@ void ViewportWidget::initializeGL()
         return;
     }
     m_impl->gl->initializeOpenGLFunctions();
+
+    // Record what we are actually rendering on, for the About dialog and the
+    // log. A driver may return null for any of these, so do not hand null to
+    // QString.
+    const auto glString = [this](GLenum name) {
+        const GLubyte* value = m_impl->gl->glGetString(name);
+        return value ? QString::fromLatin1(reinterpret_cast<const char*>(value)) : QString();
+    };
+    m_impl->gpuInfo.vendor = glString(GL_VENDOR);
+    m_impl->gpuInfo.renderer = glString(GL_RENDERER);
+    m_impl->gpuInfo.version = glString(GL_VERSION);
+    m_impl->gpuInfo.shadingLanguageVersion = glString(GL_SHADING_LANGUAGE_VERSION);
+    spdlog::info("ViewportWidget: OpenGL renderer '{}', version '{}'",
+                 m_impl->gpuInfo.renderer.toStdString(), m_impl->gpuInfo.version.toStdString());
 
     m_impl->gl->glClearColor(0.251f, 0.251f, 0.251f, 1.0f); // #404040
 
