@@ -46,8 +46,11 @@ find_package(Qt6 REQUIRED COMPONENTS Core Widgets OpenGLWidgets)
 find_package(nlohmann_json REQUIRED)
 find_package(spdlog REQUIRED)
 
-# Qt settings
+# Qt settings. Without AUTORCC, resources/icons.qrc is listed as a source but
+# never compiled, so ":/icons/app.png" resolves to nothing and every lookup of
+# it silently yields a null pixmap.
 set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
 
 # Layer libraries (strict dependency order)
 add_subdirectory(src/core)
