@@ -242,28 +242,62 @@ if(UNIX AND NOT APPLE)
     # These are the modules slideio-viewer-ui links, plus the DBus and XcbQpa
     # libraries the xcb platform plugin pulls in.
     get_filename_component(_qt_root "${_qt_bin_dir}" DIRECTORY)
-    set(_qt_libs Core Gui Widgets OpenGL OpenGLWidgets Network DBus XcbQpa)
-    foreach(_mod ${_qt_libs})
+
+    # Required: without any of these the application cannot reach its event loop,
+    # so a missing one is worth stopping the build for.
+    set(_qt_libs_required Core Gui Widgets OpenGL OpenGLWidgets XcbQpa)
+    # Present only in some Qt builds. Conan's qt recipe defaults with_dbus=False
+    # and this project does not override it, so libQt6DBus.so is simply absent --
+    # a FATAL_ERROR on these would stop the Linux configure before a single
+    # object was compiled, over a library nothing here needs.
+    set(_qt_libs_optional Network DBus)
+
+    foreach(_mod ${_qt_libs_required} ${_qt_libs_optional})
         file(GLOB _qt_lib_files "${_qt_root}/lib/libQt6${_mod}.so*")
-        if(NOT _qt_lib_files)
+        if(_qt_lib_files)
+            install(FILES ${_qt_lib_files} DESTINATION ${_install_lib})
+        elseif(_mod IN_LIST _qt_libs_required)
             message(FATAL_ERROR "Qt module libQt6${_mod}.so not found under ${_qt_root}/lib")
+        else()
+            message(STATUS "Qt module libQt6${_mod}.so not present; not packaging it")
         endif()
-        install(FILES ${_qt_lib_files} DESTINATION ${_install_lib})
     endforeach()
+
     # The whole platforms directory, so libqoffscreen.so travels with libqxcb.so:
     # the package is smoke-tested headless, and a viewer that cannot start
     # without a display cannot be checked by anything but a human.
-    foreach(_plugin_dir platforms xcbglintegrations styles imageformats)
-        if(NOT EXISTS "${_qt_root}/plugins/${_plugin_dir}")
+    set(_qt_plugins_required platforms xcbglintegrations)
+    # qtbase builds style plugins only for APPLE and WIN32 -- Fusion is compiled
+    # into QtWidgets on Linux -- so plugins/styles does not exist in a Linux Qt.
+    set(_qt_plugins_optional styles imageformats)
+
+    foreach(_plugin_dir ${_qt_plugins_required} ${_qt_plugins_optional})
+        if(EXISTS "${_qt_root}/plugins/${_plugin_dir}")
+            install(DIRECTORY "${_qt_root}/plugins/${_plugin_dir}" DESTINATION ${_install_plugins})
+        elseif(_plugin_dir IN_LIST _qt_plugins_required)
             message(FATAL_ERROR "Qt plugin directory '${_plugin_dir}' not found under ${_qt_root}/plugins")
+        else()
+            message(STATUS "Qt plugin directory '${_plugin_dir}' not present; not packaging it")
         endif()
-        install(DIRECTORY "${_qt_root}/plugins/${_plugin_dir}" DESTINATION ${_install_plugins})
     endforeach()
 
     # SlideIO's own shared libraries. There is no Linux equivalent of the
     # CopySlideIODlls.cmake step the Windows build uses.
+    #
+    # lib/, not bin/: SlideIO installs RUNTIME to bin/ and LIBRARY to lib/, so on
+    # Unix bin/ holds only its command line tools. Guarded, because an install()
+    # whose source directory is missing copies nothing and says nothing -- the
+    # OPTIONAL failure mode this whole change exists to remove.
+    if(NOT EXISTS "${SLIDEIO_ROOT}/release/lib")
+        message(FATAL_ERROR "SlideIO shared libraries not found at '${SLIDEIO_ROOT}/release/lib'")
+    endif()
     install(DIRECTORY "${SLIDEIO_ROOT}/release/lib/"
         DESTINATION ${_install_lib}
+        CONFIGURATIONS Release RelWithDebInfo MinSizeRel
+        FILES_MATCHING PATTERN "*.so*")
+    install(DIRECTORY "${SLIDEIO_ROOT}/debug/lib/"
+        DESTINATION ${_install_lib}
+        CONFIGURATIONS Debug
         FILES_MATCHING PATTERN "*.so*")
 
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/slideio-viewer.desktop"
@@ -302,6 +336,10 @@ endif()
 
 set(CPACK_PACKAGE_NAME "SlideIO Viewer")
 set(CPACK_PACKAGE_VENDOR "SlideIO")
+# CPackDeb refuses to build without a maintainer, and the failure is a
+# FATAL_ERROR in the DEB generator that also stops the TGZ beside it. Same
+# address the SlideIO library's own packaging uses.
+set(CPACK_PACKAGE_CONTACT "admin@slideio.com")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Cross-platform pathology slide viewer")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "SlideIO Viewer")

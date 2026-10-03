@@ -27,7 +27,12 @@ execute_process(
             --dir "${SLIDEIO_VIEWER_BIN_DIR}"
             --plugindir "${SLIDEIO_VIEWER_PLUGIN_DIR}"
             --no-translations
-            --no-compiler-runtime
+            # The MSVC runtime is deliberately NOT excluded. Without it the
+            # installed application fails on a clean machine with a missing
+            # VCRUNTIME140.dll dialog, and no CI runner can notice because every
+            # Windows runner has MSVC installed. windeployqt copies the
+            # redistributable when VCINSTALLDIR is set, which msvc-dev-cmd does
+            # in CI and a Developer Command Prompt does locally.
             "${_exe}"
     RESULT_VARIABLE _rc)
 if(NOT _rc EQUAL 0)

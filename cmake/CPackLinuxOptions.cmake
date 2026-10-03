@@ -31,6 +31,10 @@ libxcb-sync1, libxcb-xfixes0, libxcb-xinerama0, libxcb-xkb1, libx11-xcb1")
     # maintainer scripts link the three paths that have to appear in /usr.
     set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
         "${CMAKE_CURRENT_LIST_DIR}/debian/postinst;${CMAKE_CURRENT_LIST_DIR}/debian/prerm")
+    # Without this, the control scripts enter the archive with whatever mode the
+    # checkout gave them. That mode was already wrong once, and dpkg only
+    # notices at configure time -- long after the package looks fine.
+    set(CPACK_DEBIAN_PACKAGE_CONTROL_STRICT_PERMISSION ON)
 else()
     # Relocatable: bin/, lib/ and plugins/ at the root of the tarball.
     set(CPACK_PACKAGING_INSTALL_PREFIX "/")

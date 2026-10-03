@@ -38,7 +38,7 @@ concurrency:
 jobs:
   check-version:
     name: Check version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     outputs:
       version: ${{ steps.version.outputs.version }}
       matrix: ${{ steps.matrix.outputs.matrix }}
@@ -131,11 +131,17 @@ jobs:
           key: conan-${{ matrix.os }}-${{ hashFiles('conanfile.py', 'conan/profiles/**') }}
           restore-keys: conan-${{ matrix.os }}-
 
-      - name: Cache the SlideIO install tree
-        uses: actions/cache@v4
+      # restore + save rather than the combined action, so a poisoned entry can
+      # heal. actions/cache records a HIT even when the restored tree turns out
+      # to be incomplete and the next step deletes it, and then never saves
+      # against that key again -- so every later run would rebuild SlideIO from
+      # source until the submodule pin moved.
+      - name: Restore the SlideIO install tree
+        id: slideio_cache
+        uses: actions/cache/restore@v4
         with:
           path: extern/slideio/build/install
-          key: slideio-${{ matrix.os }}-${{ steps.slideio_rev.outputs.sha }}
+          key: slideio-v2-${{ matrix.os }}-${{ steps.slideio_rev.outputs.sha }}
 
       - name: Verify the restored SlideIO install
         shell: bash
@@ -150,6 +156,15 @@ jobs:
           set -euo pipefail
           if [ -z "${CONAN_PROFIlE}" ]; then unset CONAN_PROFIlE; fi
           ./package.sh
+
+      # Only now, with a tree that built something. Saving before the build
+      # would be how an incomplete tree got into the cache in the first place.
+      - name: Save the SlideIO install tree
+        if: steps.slideio_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: extern/slideio/build/install
+          key: slideio-v2-${{ matrix.os }}-${{ steps.slideio_rev.outputs.sha }}
 
       - name: Test
         # Skippable only from a manual run, which cannot publish -- see the
@@ -215,7 +230,7 @@ jobs:
     # takes a tag as readily as a branch, so ref_type alone would let a manual
     # run that built one platform with the tests skipped publish a release.
     if: github.event_name == 'push' && github.ref_type == 'tag'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
 
