@@ -16,15 +16,21 @@ if(CPACK_GENERATOR STREQUAL "DEB")
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
 
     # What Qt still needs from the system even with Qt bundled: the xcb platform
-    # plugin's own dependencies. The authoritative list is derived by running ldd
-    # over the packaged libqxcb.so on the runner -- see the release workflow's
-    # container step, which prints it. This is the starting point, not a guess to
-    # be trusted; the smoke test is what certifies it.
+    # plugin's own dependencies.
+    #
+    # Derived from `ldd` over the packaged libqxcb.so on the runner, which the
+    # release workflow's container step prints, rather than guessed. Entries that
+    # only ever arrive transitively are still named where the depending package
+    # is not itself required -- libice6 and libsm6 in particular are present in
+    # the CI container because qt6-base-dev pulls them in, and need not be on a
+    # minimal Debian 12 box at all.
     set(CPACK_DEBIAN_PACKAGE_DEPENDS
-        "libc6, libstdc++6, libgl1, libglx-mesa0, libxkbcommon0, libxkbcommon-x11-0, \
-libfontconfig1, libfreetype6, libdbus-1-3, libxcb1, libxcb-cursor0, libxcb-icccm4, \
-libxcb-image0, libxcb-keysyms1, libxcb-randr0, libxcb-render-util0, libxcb-shape0, \
-libxcb-sync1, libxcb-xfixes0, libxcb-xinerama0, libxcb-xkb1, libx11-xcb1")
+        "libc6, libstdc++6, libgcc-s1, libgl1, libglx-mesa0, libxkbcommon0, \
+libxkbcommon-x11-0, libfontconfig1, libfreetype6, libdbus-1-3, libbsd0, libuuid1, \
+libice6, libsm6, libx11-6, libx11-xcb1, libxcb1, libxcb-cursor0, libxcb-icccm4, \
+libxcb-image0, libxcb-keysyms1, libxcb-randr0, libxcb-render0, libxcb-render-util0, \
+libxcb-shape0, libxcb-shm0, libxcb-sync1, libxcb-util1, libxcb-xfixes0, \
+libxcb-xinerama0, libxcb-xkb1")
 
     # The /usr/bin symlink, the desktop entry and the icon. The payload itself
     # stays in /opt so the bundled libraries and plugins travel with it; the

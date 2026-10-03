@@ -404,6 +404,17 @@ if(WIN32)
 elseif(APPLE)
     set(CPACK_GENERATOR "DragNDrop")
     set(CPACK_DMG_VOLUME_NAME "SlideIO Viewer ${PROJECT_VERSION}")
+    # Do not turn the licence into a click-through agreement on the disk image.
+    # The DragNDrop generator attaches CPACK_RESOURCE_FILE_LICENSE as a software
+    # licence agreement, and an image carrying one cannot be mounted without
+    # someone to accept it: hdiutil reports "attach canceled" in any
+    # non-interactive context, the smoke test included.
+    #
+    # Nothing is lost. The licence ships inside the bundle and the About dialog
+    # has it on its own tab; a click-through on BSD-3-Clause buys the reader
+    # nothing and costs everyone a dialog. The NSIS installer keeps its licence
+    # page, where one is conventional.
+    set(CPACK_DMG_SLA_USE_RESOURCE_FILE_LICENSE OFF)
 else()
     set(CPACK_GENERATOR "DEB;TGZ")
     set(CPACK_PROJECT_CONFIG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CPackLinuxOptions.cmake")
