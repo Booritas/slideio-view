@@ -136,6 +136,13 @@ TEST_CASE("formatAboutReport gathers every section under a heading", "[ui][About
     REQUIRE(report.contains(formatThirdPartyNotices(thirdPartyComponents(info))));
 }
 
+TEST_CASE("formatAboutReport names the project home page", "[ui][AboutInfo]")
+{
+    // The dialog shows it as a link, which a pasted bug report cannot carry.
+    REQUIRE(formatAboutReport(sampleInfo()).contains(QString::fromLatin1(kProjectHomePage)));
+    REQUIRE(QString::fromLatin1(kProjectHomePage) == QStringLiteral("https://www.slideio.com"));
+}
+
 TEST_CASE("formatAboutReport leaves out the licence body", "[ui][AboutInfo]")
 {
     // The report is for pasting into a bug report. The licence is one tab away

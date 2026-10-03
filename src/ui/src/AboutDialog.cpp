@@ -128,6 +128,13 @@ AboutDialog::AboutDialog(const GpuInfo& gpu, QWidget* parent)
         titleColumn->addWidget(copyrightLabel);
     }
 
+    // Same link colour the third-party notices use, so the two agree.
+    auto* homeLabel = new QLabel(QStringLiteral("<a style='color:#6FA8E0;' href='%1'>%1</a>")
+                                     .arg(QString::fromLatin1(kProjectHomePage)));
+    homeLabel->setOpenExternalLinks(true);
+    homeLabel->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    titleColumn->addWidget(homeLabel);
+
     header->addLayout(titleColumn);
     header->addStretch();
     layout->addLayout(header);
