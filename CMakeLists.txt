@@ -258,6 +258,19 @@ set(CPACK_PACKAGE_INSTALL_DIRECTORY "SlideIO Viewer")
 set(CPACK_PACKAGE_EXECUTABLES "slideio-viewer" "SlideIO Viewer")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 
+# Self-describing artifact names, so three platforms' packages can share one
+# release page without a reader having to open them to tell them apart. The .deb
+# is excluded: CPACK_DEBIAN_FILE_NAME DEB-DEFAULT gives it the Debian-native
+# name, which tooling depends on.
+if(WIN32)
+    set(_package_platform "windows-x86_64")
+elseif(APPLE)
+    set(_package_platform "macos-arm64")
+else()
+    set(_package_platform "linux-x86_64")
+endif()
+set(CPACK_PACKAGE_FILE_NAME "slideio-viewer-${PROJECT_VERSION}-${_package_platform}")
+
 if(WIN32)
     # NSIS installer
     set(CPACK_GENERATOR "NSIS;ZIP")
