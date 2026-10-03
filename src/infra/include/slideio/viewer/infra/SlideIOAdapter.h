@@ -19,6 +19,11 @@ class Scene;
 namespace slideio::viewer::infra
 {
 
+// Version of the SlideIO library this build is linked against. It lives in the
+// infrastructure layer so the SlideIO headers stay confined here: the UI needs
+// the string for the About dialog, not the library.
+std::string slideioLibraryVersion();
+
 // One adapter opens the slide once and serves every reader thread. Since SlideIO
 // 2.10 a scene's block reads are safe to call concurrently, so readTile/readBlock
 // need no external serialisation; all other state is set in the constructor or

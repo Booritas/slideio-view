@@ -428,6 +428,11 @@ bool downsampleByDataType(const uint8_t* src, int srcW, int srcH,
 namespace slideio::viewer::infra
 {
 
+std::string slideioLibraryVersion()
+{
+    return ::slideio::getVersion();
+}
+
 SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
                                const std::string& driverId)
     : m_filePath(filePath)
