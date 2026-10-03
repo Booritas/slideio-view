@@ -46,6 +46,10 @@ find_package(Qt6 REQUIRED COMPONENTS Core Widgets OpenGLWidgets)
 find_package(nlohmann_json REQUIRED)
 find_package(spdlog REQUIRED)
 
+# slideio_viewer_qt_bin_dir(), used by both the macOS and Windows deployment
+# steps below to find Qt's own deployment tools.
+include(DeployQt)
+
 # Build stamp for the About dialog. Runs after the find_package calls above so
 # it can read the versions they resolved.
 include(BuildInfo)
@@ -91,19 +95,20 @@ if(APPLE)
     set_target_properties(slideio-viewer PROPERTIES
         INSTALL_RPATH "@executable_path/../Frameworks")
 
-    if(TARGET Qt6::qmake)
-        get_target_property(_qmake_loc Qt6::qmake IMPORTED_LOCATION)
-        get_filename_component(_qt_bin_dir "${_qmake_loc}" DIRECTORY)
-        find_program(MACDEPLOYQT_EXECUTABLE
-            NAMES macdeployqt
-            PATHS "${_qt_bin_dir}"
-            NO_DEFAULT_PATH)
-    endif()
+    slideio_viewer_qt_bin_dir(_qt_bin_dir)
+    find_program(MACDEPLOYQT_EXECUTABLE
+        NAMES macdeployqt
+        PATHS "${_qt_bin_dir}"
+        NO_DEFAULT_PATH)
     if(NOT MACDEPLOYQT_EXECUTABLE)
         find_program(MACDEPLOYQT_EXECUTABLE NAMES macdeployqt)
     endif()
     if(NOT MACDEPLOYQT_EXECUTABLE)
-        message(WARNING "macdeployqt not found; Qt will not be embedded in the bundle")
+        # Not a warning: without it the bundle carries no Qt and fails on the
+        # first machine that is not this one, which is the whole failure mode
+        # this packaging work exists to remove.
+        message(FATAL_ERROR "macdeployqt not found in '${_qt_bin_dir}' or on PATH; "
+                            "the macOS bundle cannot be built without it.")
     endif()
 endif()
 
@@ -197,78 +202,33 @@ if(WIN32)
     )
 endif()
 
-# Qt runtime deployment — copy DLLs and plugins per config.
-# Conan provides separate Qt packages for Release and Debug builds:
-#   Release: contains Qt6Core.dll (no 'd' suffix)
-#   Debug:   contains Qt6Cored.dll
-# We locate each by its distinctive Core DLL.
-function(_find_qt_bin_dir _dll_name _out_var)
-    file(GLOB_RECURSE _candidates "d:/conan2/p/b/qt*/p/bin/${_dll_name}")
-    foreach(_candidate ${_candidates})
-        get_filename_component(_dir "${_candidate}" DIRECTORY)
-        set(${_out_var} "${_dir}" PARENT_SCOPE)
-        return()
-    endforeach()
-    foreach(_prefix ${CMAKE_PREFIX_PATH})
-        if(EXISTS "${_prefix}/../bin/${_dll_name}")
-            get_filename_component(_dir "${_prefix}/../bin" ABSOLUTE)
-            set(${_out_var} "${_dir}" PARENT_SCOPE)
-            return()
-        endif()
-    endforeach()
-    set(${_out_var} "" PARENT_SCOPE)
-endfunction()
+# Qt runtime deployment. windeployqt resolves the module set, the platform
+# plugin and the style plugins from the binary itself, which does not drift the
+# way a hand-maintained module list does.
+include(DeployQt)
+slideio_viewer_qt_bin_dir(_qt_bin_dir)
+message(STATUS "Qt bin dir: ${_qt_bin_dir}")
 
-_find_qt_bin_dir("Qt6Core.dll"  _qt_release_bin_dir)
-_find_qt_bin_dir("Qt6Cored.dll" _qt_debug_bin_dir)
-
-set(_qt_modules Qt6Core Qt6Gui Qt6Widgets Qt6OpenGL Qt6OpenGLWidgets Qt6Network)
-
-if(_qt_release_bin_dir)
-    get_filename_component(_qt_release_root "${_qt_release_bin_dir}" DIRECTORY)
-    message(STATUS "Qt Release bin dir: ${_qt_release_bin_dir}")
-    foreach(_mod ${_qt_modules})
-        install(FILES "${_qt_release_bin_dir}/${_mod}.dll"
-            DESTINATION ${_install_bin}
-            CONFIGURATIONS Release RelWithDebInfo MinSizeRel
-            OPTIONAL
-        )
-    endforeach()
-    install(FILES "${_qt_release_bin_dir}/D3Dcompiler_47.dll"
-        DESTINATION ${_install_bin}
-        CONFIGURATIONS Release RelWithDebInfo MinSizeRel
-        OPTIONAL)
-    install(DIRECTORY "${_qt_release_root}/plugins/platforms"
-            "${_qt_release_root}/plugins/styles"
-            "${_qt_release_root}/plugins/imageformats"
-        DESTINATION ${_install_plugins}
-        CONFIGURATIONS Release RelWithDebInfo MinSizeRel
-        OPTIONAL)
+if(WIN32)
+    find_program(WINDEPLOYQT_EXECUTABLE
+        NAMES windeployqt
+        PATHS "${_qt_bin_dir}"
+        NO_DEFAULT_PATH)
+    if(NOT WINDEPLOYQT_EXECUTABLE)
+        message(FATAL_ERROR
+            "windeployqt was not found in '${_qt_bin_dir}'. The Windows package "
+            "cannot be built without it.")
+    endif()
+    install(CODE "set(WINDEPLOYQT_EXECUTABLE \"${WINDEPLOYQT_EXECUTABLE}\")")
+    install(CODE "set(SLIDEIO_VIEWER_BIN_DIR \"\${CMAKE_INSTALL_PREFIX}/${_install_bin}\")")
+    install(CODE "set(SLIDEIO_VIEWER_PLUGIN_DIR \"\${CMAKE_INSTALL_PREFIX}/${_install_plugins}\")")
+    install(SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/DeployWindowsQt.cmake")
 endif()
 
-if(_qt_debug_bin_dir)
-    get_filename_component(_qt_debug_root "${_qt_debug_bin_dir}" DIRECTORY)
-    message(STATUS "Qt Debug bin dir: ${_qt_debug_bin_dir}")
-    foreach(_mod ${_qt_modules})
-        install(FILES "${_qt_debug_bin_dir}/${_mod}d.dll"
-            DESTINATION ${_install_bin}
-            CONFIGURATIONS Debug
-            OPTIONAL
-        )
-    endforeach()
-    install(FILES "${_qt_debug_bin_dir}/D3Dcompiler_47.dll"
-        DESTINATION ${_install_bin}
-        CONFIGURATIONS Debug
-        OPTIONAL)
-    install(DIRECTORY "${_qt_debug_root}/plugins/platforms"
-            "${_qt_debug_root}/plugins/styles"
-            "${_qt_debug_root}/plugins/imageformats"
-        DESTINATION ${_install_plugins}
-        CONFIGURATIONS Debug
-        OPTIONAL)
-endif()
-
-if(_qt_release_bin_dir OR _qt_debug_bin_dir)
+# macOS gets its qt.conf from macdeployqt, which knows where it put the plugins.
+# This must stay after the deploy script above: windeployqt writes a qt.conf of
+# its own when it relocates plugins, and ours has to be the one that survives.
+if(WIN32 OR (UNIX AND NOT APPLE))
     # qt.conf tells Qt where to find plugins (../plugins is relative to bin/).
     # The directory is injected rather than recomputed here, so the layout option
     # stays the single place that decides the tree shape.
