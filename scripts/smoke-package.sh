@@ -7,6 +7,11 @@ pkg_dir="${1:-build/packages}"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+# Under `set -e` a failing command exits with whatever it printed, which for a
+# tool run with -quiet is nothing at all: the CI step then shows exit 1 and an
+# empty log, and the only way to find the failing line is to guess. Name it.
+trap 'echo "FAIL: $0:$LINENO: ${BASH_COMMAND}" >&2' ERR
+
 # `find … | head -1` is wrong under `set -o pipefail`: head exits after the first
 # line, find takes SIGPIPE, and the assignment fails -- so the script dies before
 # printing anything and the CI step shows an empty failure. It is a race, so it
@@ -17,19 +22,35 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 # will reach for the pipe.
 
 # A GUI process that stays up has resolved every library it needs to reach the
-# event loop. timeout reports 124 when it has to kill the process, which is the
-# success case here -- so never assert on a zero exit.
+# event loop. One that exits immediately has not, and that is what a missing
+# library or platform plugin actually looks like.
+#
+# Deliberately not `timeout`: that is GNU coreutils and macOS does not ship it,
+# so the macOS branch would die on a missing command. Polling a background pid
+# needs nothing that is not in bash.
 stays_up() {
     local exe="$1"; shift
-    set +e
-    timeout 15 "$exe" -platform offscreen "$@" >/tmp/smoke-run.log 2>&1
-    local rc=$?
-    set -e
-    if [ "$rc" -ne 124 ]; then
-        echo "--- output ---" >&2; cat /tmp/smoke-run.log >&2
-        fail "$exe exited with $rc instead of staying up"
-    fi
-    echo "OK: $(basename "$exe") stayed up for 15s"
+    local limit=15
+
+    "$exe" -platform offscreen "$@" >/tmp/smoke-run.log 2>&1 &
+    local pid=$!
+
+    local waited=0
+    while [ "$waited" -lt "$limit" ]; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            local rc=0
+            wait "$pid" || rc=$?
+            echo "--- output ---" >&2
+            cat /tmp/smoke-run.log >&2 || true
+            fail "$(basename "$exe") exited with $rc after ${waited}s instead of staying up"
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    echo "OK: $(basename "$exe") stayed up for ${limit}s"
 }
 
 case "$(uname -s)" in
@@ -82,10 +103,16 @@ Darwin)
     dmg=$(find "$pkg_dir" -maxdepth 1 -name '*.dmg' -print -quit)
     [ -n "$dmg" ] || fail "no .dmg in $pkg_dir"
     mount_point=$(mktemp -d)
-    hdiutil attach "$dmg" -mountpoint "$mount_point" -nobrowse -quiet
+    # Not -quiet: it suppresses the reason for a failed attach as well as the
+    # chatter, which turns a broken disk image into an empty CI step.
+    # The trap detaches on any failure between here and the detach below, so a
+    # failed run does not leave the image mounted.
+    trap 'hdiutil detach "$mount_point" -force >/dev/null 2>&1 || true' EXIT
+    hdiutil attach "$dmg" -mountpoint "$mount_point" -nobrowse
     rm -rf /tmp/smoke-app && mkdir -p /tmp/smoke-app
     cp -R "$mount_point"/*.app /tmp/smoke-app/
-    hdiutil detach "$mount_point" -quiet
+    hdiutil detach "$mount_point"
+    trap - EXIT
 
     app=$(find /tmp/smoke-app -maxdepth 1 -name '*.app' -print -quit)
     [ -n "$app" ] || fail "no .app in the disk image"
