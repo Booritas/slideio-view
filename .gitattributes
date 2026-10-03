@@ -1,0 +1,14 @@
+# Files that are executed by an interpreter which reads the shebang line, or
+# parsed by a tool that does not tolerate carriage returns, must check out with
+# LF on every platform.
+#
+# A Debian maintainer script checked out as CRLF fails at install time with
+# "bad interpreter: /bin/sh^M", which names neither the file nor the cause. The
+# build and packaging scripts are run through Git Bash on Windows, where CRLF
+# mostly works and fails in ways that are hard to attribute when it does not.
+
+*.sh            text eol=lf
+*.desktop       text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+cmake/debian/*  text eol=lf
