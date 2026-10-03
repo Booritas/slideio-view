@@ -222,6 +222,8 @@ if(WIN32)
     install(CODE "set(WINDEPLOYQT_EXECUTABLE \"${WINDEPLOYQT_EXECUTABLE}\")")
     install(CODE "set(SLIDEIO_VIEWER_BIN_DIR \"\${CMAKE_INSTALL_PREFIX}/${_install_bin}\")")
     install(CODE "set(SLIDEIO_VIEWER_PLUGIN_DIR \"\${CMAKE_INSTALL_PREFIX}/${_install_plugins}\")")
+    get_filename_component(_qt_root "${_qt_bin_dir}" DIRECTORY)
+    install(CODE "set(SLIDEIO_VIEWER_QT_PLUGIN_SRC_DIR \"${_qt_root}/plugins\")")
     install(SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/DeployWindowsQt.cmake")
 endif()
 
