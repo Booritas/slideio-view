@@ -18,6 +18,7 @@
 
 #include <QAction>
 #include <QDesktopServices>
+#include <QDir>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
@@ -31,7 +32,6 @@
 #include <QMimeData>
 #include <QRegion>
 #include <QScreen>
-#include <QSet>
 #include <QSettings>
 #include <QStatusBar>
 #include <QUrl>
@@ -73,6 +73,7 @@ struct MainWindow::Impl
 
     // Actions
     QAction* openAction = nullptr;
+    QAction* openFolderAction = nullptr;  // null when SlideIO has no DICOM driver
     QAction* closeAction = nullptr;
     QAction* openLogAction = nullptr;
     QAction* exitAction = nullptr;
@@ -93,6 +94,15 @@ struct MainWindow::Impl
         openAction = new QAction("&Open Slide...", owner);
         openAction->setShortcut(QKeySequence("Ctrl+O"));
         openAction->setStatusTip("Open a whole-slide image file");
+
+        // A DICOM study is a directory of per-frame files, not a single file,
+        // so it needs a folder picker. DCM is the only SlideIO driver that
+        // takes a directory; without it the action would have nothing to open.
+        if (isDicomDriverAvailable()) {
+            openFolderAction = new QAction("Open DICOM &Folder...", owner);
+            openFolderAction->setShortcut(QKeySequence("Ctrl+Shift+O"));
+            openFolderAction->setStatusTip("Open a folder containing a DICOM study");
+        }
 
         closeAction = new QAction("&Close", owner);
         closeAction->setShortcut(QKeySequence("Ctrl+W"));
@@ -138,6 +148,9 @@ struct MainWindow::Impl
     {
         QMenu* fileMenu = owner->menuBar()->addMenu("&File");
         fileMenu->addAction(openAction);
+        if (openFolderAction) {
+            fileMenu->addAction(openFolderAction);
+        }
 
         recentFilesMenu = fileMenu->addMenu("Recent &Files");
         updateRecentFilesMenu();
@@ -179,6 +192,21 @@ struct MainWindow::Impl
                 owner->openSlide(filePath.toStdString(), driverId.toStdString());
             }
         });
+
+        if (openFolderAction) {
+            QObject::connect(openFolderAction, &QAction::triggered, owner, [this]() {
+                QString dirPath = QFileDialog::getExistingDirectory(
+                    owner, "Open DICOM Folder", QString());
+                if (dirPath.isEmpty()) {
+                    return;
+                }
+                // Forced rather than auto-detected: the user said DICOM, so a
+                // folder holding no DICOM files should fail with the driver's
+                // "no valid DICOM files found" message instead of SlideIO's
+                // generic "cannot find a driver for this path".
+                owner->openSlide(QDir::toNativeSeparators(dirPath).toStdString(), "DCM");
+            });
+        }
 
         QObject::connect(closeAction, &QAction::triggered, owner, [this]() {
             viewportWidget->closeSlide();
@@ -483,7 +511,8 @@ struct MainWindow::Impl
             action->setData(filePath);
             action->setStatusTip(filePath);
             QObject::connect(action, &QAction::triggered, owner, [this, filePath]() {
-                owner->openSlide(filePath.toStdString());
+                owner->openSlide(filePath.toStdString(),
+                                 driverIdForPath(filePath).toStdString());
             });
         }
 
@@ -689,48 +718,27 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 namespace
 {
 
-// Returns the first URL in the mime data that points to a supported slide
-// file, or an empty QUrl if none qualify. "Supported" means the file has a
-// local path AND its extension matches one of the per-driver patterns from
-// availableDriverFilters() (i.e., the same list shown in the Open dialog).
-QUrl firstSupportedSlideUrl(const QMimeData* mime)
+// Returns the local path of the first dragged item the viewer can open, or an
+// empty string if none qualify. Remote URLs are dropped here; which local paths
+// qualify is firstOpenableSlidePath's decision.
+QString firstSupportedSlidePath(const QMimeData* mime)
 {
     if (!mime || !mime->hasUrls()) return {};
 
-    // Build a lower-case set of accepted extensions once. Skip the catch-all
-    // "*" entry from "All Files" — drag/drop should only accept real image
-    // formats so the cursor switches to "forbidden" for everything else.
-    static const QSet<QString> kExtensions = []() {
-        QSet<QString> exts;
-        for (const auto& f : availableDriverFilters()) {
-            for (const QString& e : f.extensions) {
-                if (e != QStringLiteral("*")) {
-                    exts.insert(e.toLower());
-                }
-            }
-        }
-        return exts;
-    }();
-
+    QStringList localPaths;
     for (const QUrl& url : mime->urls()) {
-        if (!url.isLocalFile()) continue;
-        const QString name = QFileInfo(url.toLocalFile()).fileName().toLower();
-        // Match against both single-suffix (".tif") and multi-suffix
-        // (".ome.tif") patterns by checking every known extension.
-        for (const QString& ext : kExtensions) {
-            if (name.endsWith(QChar('.') + ext)) {
-                return url;
-            }
+        if (url.isLocalFile()) {
+            localPaths << url.toLocalFile();
         }
     }
-    return {};
+    return firstOpenableSlidePath(localPaths);
 }
 
 } // namespace
 
 void MainWindow::dragEnterEvent(QDragEnterEvent* event)
 {
-    if (firstSupportedSlideUrl(event->mimeData()).isValid()) {
+    if (!firstSupportedSlidePath(event->mimeData()).isEmpty()) {
         event->acceptProposedAction();
         return;
     }
@@ -743,7 +751,7 @@ void MainWindow::dragMoveEvent(QDragMoveEvent* event)
 {
     // dragMoveEvent fires repeatedly while the cursor moves over the window;
     // re-confirm acceptance so the cursor stays correct on every platform.
-    if (firstSupportedSlideUrl(event->mimeData()).isValid()) {
+    if (!firstSupportedSlidePath(event->mimeData()).isEmpty()) {
         event->acceptProposedAction();
         return;
     }
@@ -752,9 +760,9 @@ void MainWindow::dragMoveEvent(QDragMoveEvent* event)
 
 void MainWindow::dropEvent(QDropEvent* event)
 {
-    QUrl url = firstSupportedSlideUrl(event->mimeData());
-    if (url.isValid()) {
-        openSlide(url.toLocalFile().toStdString());
+    const QString localPath = firstSupportedSlidePath(event->mimeData());
+    if (!localPath.isEmpty()) {
+        openSlide(localPath.toStdString(), driverIdForPath(localPath).toStdString());
         event->acceptProposedAction();
         return;
     }
