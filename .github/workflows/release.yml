@@ -262,10 +262,15 @@ jobs:
             | macOS arm64 | `slideio-viewer-${{ needs.check-version.outputs.version }}-macos-arm64.dmg` | Apple Silicon. Unsigned — see below. |
             | Debian/Ubuntu x86_64 | `slideio-viewer_${{ needs.check-version.outputs.version }}_amd64.deb` | Ubuntu 22.04+ / Debian 12+. Qt is bundled. |
 
-            The macOS disk image is not signed or notarised, so Gatekeeper
-            refuses it on first open. Right-click the application and choose
-            **Open**, or run:
+            The macOS disk image is ad-hoc signed but not notarised, so
+            Gatekeeper refuses it on first open. Either open it once and then
+            choose **Open Anyway** under System Settings → Privacy & Security,
+            or clear the quarantine flag from the download before mounting it:
 
             ```
-            xattr -dr com.apple.quarantine "/Applications/slideio-viewer.app"
+            xattr -d com.apple.quarantine slideio-viewer-${{ needs.check-version.outputs.version }}-macos-arm64.dmg
             ```
+
+            Neither needs admin rights. Without admin, drag the application to
+            `~/Applications` rather than `/Applications`, or run it straight
+            from the mounted image.
