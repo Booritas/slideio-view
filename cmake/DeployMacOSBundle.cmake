@@ -31,8 +31,31 @@ if(MACDEPLOYQT_EXECUTABLE AND EXISTS "${MACDEPLOYQT_EXECUTABLE}")
         message(FATAL_ERROR "macdeployqt failed (exit ${_rc})")
     endif()
 else()
-    message(WARNING "macdeployqt not available; Qt frameworks/plugins NOT embedded")
+    # Not a warning. A bundle with no Qt embedded runs on the machine that built
+    # it and nowhere else, which is precisely the failure that stayed hidden in
+    # the Windows deployment for as long as it did.
+    message(FATAL_ERROR "macdeployqt not available; the bundle cannot be built without it")
 endif()
+
+# macdeployqt embeds only the platform plugin it believes the application needs,
+# which on macOS is libqcocoa. The offscreen plugin is how the package is checked
+# without a window server -- `slideio-viewer -platform offscreen` is the smoke
+# test -- and it is the only way to run the viewer headless at all. Without it
+# the probe aborts instead of reporting a missing plugin, which is what the
+# equivalent gap did on Windows.
+set(_offscreen "${SLIDEIO_VIEWER_QT_PLUGIN_SRC_DIR}/platforms/libqoffscreen.dylib")
+if(NOT EXISTS "${_offscreen}")
+    message(FATAL_ERROR "Qt offscreen platform plugin not found at '${_offscreen}'")
+endif()
+file(COPY "${_offscreen}" DESTINATION "${_bundle}/Contents/PlugIns/platforms")
+
+foreach(_required
+        "${_bundle}/Contents/PlugIns/platforms/libqcocoa.dylib"
+        "${_bundle}/Contents/PlugIns/platforms/libqoffscreen.dylib")
+    if(NOT EXISTS "${_required}")
+        message(FATAL_ERROR "macdeployqt did not produce '${_required}'")
+    endif()
+endforeach()
 
 # Step 2: SlideIO + transitive dylibs (libglog, etc.) from SlideIO install bin/.
 set(_slideio_src_dir "${SLIDEIO_ROOT}/${_cfg}/bin")
