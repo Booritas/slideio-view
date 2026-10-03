@@ -1,3 +1,11 @@
+# Stamps the version, git revision, dependency versions and LICENSE text into
+# a generated header. cmake/BuildInfo.cmake, included from the top-level list
+# file, collects the values.
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/BuildInfo.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/slideio/viewer/ui/BuildInfo.h"
+    @ONLY)
+
 add_library(slideio-viewer-ui STATIC
     src/AppPaths.cpp
     src/AssociatedImageWindow.cpp
@@ -19,8 +27,11 @@ add_library(slideio-viewer-ui STATIC
     src/MainWindow.cpp
 )
 
-target_include_directories(slideio-viewer-ui PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+target_include_directories(slideio-viewer-ui
+    PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    # Only AboutInfo.cpp reads the generated header; keeping it private stops it
+    # leaking into every target that links the UI layer.
+    PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated"
 )
 
 target_link_libraries(slideio-viewer-ui
