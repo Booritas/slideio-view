@@ -26,3 +26,34 @@ target_link_libraries(slideio-viewer-infra-tests
 )
 
 add_test(NAME infra-tests COMMAND slideio-viewer-infra-tests)
+
+# UI layer tests
+add_executable(slideio-viewer-ui-tests
+    ui/DriverFiltersTest.cpp
+    ui/PathDisplayTest.cpp
+    ui/SlideDropTest.cpp
+)
+
+target_link_libraries(slideio-viewer-ui-tests
+    PRIVATE slideio-viewer-ui Catch2::Catch2WithMain
+)
+
+add_test(NAME ui-tests COMMAND slideio-viewer-ui-tests)
+
+# Unlike the core and infra test binaries, this one actually pulls in Qt and
+# SlideIO symbols, and nothing deploys runtime dependencies into the build
+# tree. Copying the DLLs next to the executable is not enough: slideio.dll
+# loads a family of sibling slideio-*.dll drivers, so point the test at the
+# install directories instead.
+if(WIN32)
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
+        set(_qt_bin_dir "$<IF:$<CONFIG:Debug>,${_qt_debug_bin_dir},${_qt_release_bin_dir}>")
+        set(_slideio_bin_dir "$<IF:$<CONFIG:Debug>,${SLIDEIO_ROOT}/debug/bin,${SLIDEIO_ROOT}/release/bin>")
+        set_tests_properties(ui-tests PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${_slideio_bin_dir};PATH=path_list_prepend:${_qt_bin_dir}")
+    else()
+        message(WARNING
+            "CMake < 3.22: the ui-tests target cannot have its PATH set up automatically. "
+            "Run slideio-viewer-ui-tests with the Qt and SlideIO bin directories on PATH.")
+    endif()
+endif()

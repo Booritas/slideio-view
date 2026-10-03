@@ -34,4 +34,22 @@ QString buildOpenFilterString(const QList<DriverFilter>& filters);
 QString driverIdForFilter(const QString& selectedFilter,
                           const QList<DriverFilter>& filters);
 
+// Given local filesystem paths in drop order, returns the first one the viewer
+// can open, or an empty string if none qualify. A path qualifies when it is a
+// directory (readable by the DICOM driver) or a file whose extension appears in
+// availableDriverFilters(), i.e. the same formats the Open dialog lists. Used to
+// decide whether a drag is accepted and what gets opened on drop.
+QString firstOpenableSlidePath(const QStringList& localPaths);
+
+// True when the SlideIO build in use exposes the DICOM driver. Opening a
+// directory depends on it, so the folder-open action and folder drag/drop are
+// gated on this rather than offering something that cannot work.
+bool isDicomDriverAvailable();
+
+// Returns the SlideIO driver id that a given path requires, or an empty string
+// to leave the choice to SlideIO's auto-detection. Only directories need a
+// forced driver: DCM is the one driver that accepts a directory, and no
+// extension-based filter can describe a folder.
+QString driverIdForPath(const QString& path);
+
 } // namespace slideio::viewer::ui

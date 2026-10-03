@@ -2,6 +2,7 @@
 
 #include "slideio/viewer/infra/SlideIOAdapter.h"
 
+#include <QFileInfo>
 #include <QSet>
 
 namespace slideio::viewer::ui
@@ -128,6 +129,54 @@ QString driverIdForFilter(const QString& selectedFilter, const QList<DriverFilte
         if (line == selectedFilter) return f.driverId;
     }
     return QString();
+}
+
+QString firstOpenableSlidePath(const QStringList& localPaths)
+{
+    // Built once: the driver list does not change while the viewer is running.
+    // The catch-all "*" from "All Files" is skipped on purpose, so a drag of
+    // some unrelated file still shows the "no drop" cursor.
+    static const QSet<QString> kExtensions = []() {
+        QSet<QString> exts;
+        for (const auto& f : availableDriverFilters()) {
+            for (const QString& e : f.extensions) {
+                if (e != QLatin1String("*")) {
+                    exts.insert(e.toLower());
+                }
+            }
+        }
+        return exts;
+    }();
+    static const bool kAcceptDirectories = isDicomDriverAvailable();
+
+    for (const QString& path : localPaths) {
+        const QFileInfo info(path);
+        if (kAcceptDirectories && info.isDir()) {
+            return path;
+        }
+        // Checking every known extension rather than QFileInfo::suffix() is
+        // what makes multi-suffix patterns such as "ome.tif" match.
+        const QString name = info.fileName().toLower();
+        for (const QString& ext : kExtensions) {
+            if (name.endsWith(QLatin1Char('.') + ext)) {
+                return path;
+            }
+        }
+    }
+    return QString();
+}
+
+bool isDicomDriverAvailable()
+{
+    for (const auto& id : slideio::viewer::infra::SlideIOAdapter::availableDriverIds()) {
+        if (id == "DCM") return true;
+    }
+    return false;
+}
+
+QString driverIdForPath(const QString& path)
+{
+    return QFileInfo(path).isDir() ? QStringLiteral("DCM") : QString();
 }
 
 } // namespace slideio::viewer::ui

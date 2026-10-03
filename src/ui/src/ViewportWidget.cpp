@@ -1,4 +1,5 @@
 #include "slideio/viewer/ui/ViewportWidget.h"
+#include "slideio/viewer/ui/PathDisplay.h"
 #include "slideio/viewer/ui/ViewportController.h"
 
 #include "slideio/viewer/core/CoordinateSystem.h"
@@ -1727,10 +1728,7 @@ void ViewportWidget::openSlide(const std::string& filePath, const std::string& d
     m_impl->currentDriverId = driverId;
     const uint64_t opId = ++m_impl->openOpId;
 
-    QString displayName = QString::fromStdString(filePath);
-    const auto slash = std::max(displayName.lastIndexOf('/'), displayName.lastIndexOf('\\'));
-    if (slash >= 0) displayName = displayName.mid(slash + 1);
-    emit loadingStarted(displayName);
+    emit loadingStarted(slideDisplayName(QString::fromStdString(filePath)));
 
     auto statusCallback = [this](QString msg) {
         QMetaObject::invokeMethod(this, [this, msg]() {

@@ -10,6 +10,7 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 
 #include "slideio/viewer/ui/AppPaths.h"
+#include "slideio/viewer/ui/DriverFilters.h"
 #include "slideio/viewer/ui/MainWindow.h"
 
 int main(int argc, char* argv[])
@@ -50,7 +51,13 @@ int main(int argc, char* argv[])
     mainWindow.show();
 
     if (argc > 1) {
-        mainWindow.openSlide(argv[1]);
+        // A DICOM study folder is passed through here too (shell "open with",
+        // or a path on the command line), so name its driver explicitly rather
+        // than leaning on auto-detection, which only recognises a directory by
+        // its lack of an extension.
+        const QString path = QString::fromLocal8Bit(argv[1]);
+        mainWindow.openSlide(path.toStdString(),
+                             slideio::viewer::ui::driverIdForPath(path).toStdString());
     }
 
     spdlog::info("Entering event loop");
