@@ -1,10 +1,33 @@
 name: Build Validation
 
+# A documentation-only change cannot break a C++ build, so it does not start
+# one. The filter lists the engineering docs, the phase documents, and markdown
+# anywhere in the tree.
+#
+# This skips a push only when *every* changed file matches: a commit touching
+# src/ alongside a README still runs the full suite, because GitHub starts the
+# workflow as soon as one changed file falls outside the list. Everything that
+# does feed a build -- cmake/, conan/, scripts/, resources/ -- is deliberately
+# absent, resources/ included: the icons there are compiled into the binary.
+#
+# Note for the day main becomes a protected branch: a skipped workflow reports
+# no status at all, so naming these jobs as required status checks would leave
+# a docs-only pull request pending forever. Either keep them out of the
+# required set or convert this to a job that reports success on a
+# documentation-only change.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - 'documents/**'
+      - '**/*.md'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - 'documents/**'
+      - '**/*.md'
   workflow_dispatch:
 
 concurrency:
