@@ -447,7 +447,10 @@ Per-viewport eviction priority: tiles from the currently active viewport are pro
 - On slide open, start with a pool size of 1.
 - Monitor decode throughput and mutex contention for the first 2 seconds of active viewing.
 - If contention exceeds a threshold (>20% wait time), increase pool size by 1, up to max(4, thread_count / 2).
-- For formats known to be problematic with multiple handles (MRXS), cap pool size at 2.
+- For formats known to be problematic with multiple handles, cap pool size at 2. No
+  format SlideIO reads is currently in that category; the rule was written for MRXS,
+  which the library does not support. Keep it unimplemented until a format that needs
+  it appears, and measure before applying it.
 
 **Variable tile sizes (addressing review finding 2.2):**
 - On slide open, query the native tile size from SlideIO.
@@ -564,7 +567,7 @@ private:
 
 ### 6.5 SlideIO Version Pinning
 
-SlideIO is pinned to a specific version in `conanfile.py` or `FetchContent`. A compatibility test suite opens one reference slide in each supported format (SVS, NDPI, MRXS, SCN, BIF, CZI, TIFF, DICOM WSI) and validates:
+SlideIO is pinned to a specific version in `conanfile.py` or `FetchContent`. A compatibility test suite opens one reference slide in each supported format (SVS, AFI, NDPI, SCN, CZI, ZVI, VSI, QPTIFF, OME-TIFF, Philips TIFF, DICOM WSI, TIFF) and validates:
 - Metadata extraction (dimensions, resolution, pyramid levels).
 - Tile decode at level 0 (pixel data matches a stored reference checksum).
 - Thumbnail generation.

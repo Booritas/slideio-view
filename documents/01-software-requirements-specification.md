@@ -32,7 +32,7 @@ SlideIO Viewer is a cross-platform desktop application for viewing, navigating, 
 
 The application provides:
 - High-performance viewing of gigapixel-scale pathology images with smooth pan/zoom (60 fps target).
-- Multi-format slide support via the SlideIO library (SVS, NDPI, SCN, BIF, MRXS, iSyntax, TIFF, DICOM WSI, CZI, OME-TIFF).
+- Multi-format slide support via the SlideIO library (SVS, AFI, NDPI, SCN, CZI, ZVI, VSI, QPTIFF, OME-TIFF, Philips TIFF, DICOM WSI, and ordinary TIFF/BigTIFF, PNG and JPEG images).
 - Comprehensive annotation tools for marking regions, measuring structures, and classifying findings.
 - Case management for grouping slides with clinical metadata.
 - Multi-slide comparison with synchronized navigation.
@@ -325,7 +325,7 @@ The application provides:
 
 | ID | Requirement | Priority |
 |----|------------|----------|
-| FR-IMG-01 | The application shall support all slide formats accessible via SlideIO, including: SVS, NDPI, SCN, BIF, MRXS, iSyntax, TIFF/BigTIFF, DICOM WSI, CZI, and OME-TIFF. | Must |
+| FR-IMG-01 | The application shall support every slide format the SlideIO library reads: SVS, AFI, NDPI, SCN, CZI, ZVI, VSI, QPTIFF, OME-TIFF, Philips TIFF, DICOM WSI, and ordinary TIFF/BigTIFF, PNG and JPEG images. Formats SlideIO does not read -- Ventana BIF, 3DHISTECH MRXS and Philips iSyntax among them -- are out of scope until a driver for them exists in the library. | Must |
 | FR-IMG-02 | The application shall be format-agnostic at the application level; all format details are encapsulated behind SlideIO. | Must |
 
 ### 6.2 Image Characteristics
