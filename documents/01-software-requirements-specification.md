@@ -42,7 +42,7 @@ The application provides:
 ### 1.3 Target Platforms
 
 - Windows 10/11 (x64)
-- macOS 12+ (Intel and Apple Silicon)
+- macOS 12+ (Apple Silicon)
 - Ubuntu 22.04+ and major Linux distributions (x64)
 
 ### 1.4 Key Dependencies
