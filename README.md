@@ -4,6 +4,8 @@ A cross-platform C++ desktop application for viewing and navigating digital path
 
 SlideIO Viewer renders gigapixel-scale slide images with smooth pan and zoom using GPU-accelerated tile rendering. It supports all major pathology slide formats through the [SlideIO](https://github.com/Booritas/slideio) library.
 
+![SlideIO Viewer](docs/images/viewer.png)
+
 ## Supported Formats
 
 SVS, AFI, NDPI, SCN, CZI, ZVI, VSI, QPTIFF, OME-TIFF, Philips TIFF, DICOM WSI, and TIFF/BigTIFF, PNG and JPEG — every format the SlideIO library supports.
