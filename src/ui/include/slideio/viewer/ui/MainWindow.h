@@ -37,6 +37,11 @@ private:
     // the setting changes.
     void applyDefaultColorProfile();
 
+    // Tells the user that a just-changed default profile only affects slides
+    // opened from now on. Does nothing when no slide is open, since there is
+    // then nothing for the change not to apply to.
+    void warnDefaultProfileAppliesToNewSlides();
+
     struct Impl;
     std::unique_ptr<Impl> m_impl;
 };
