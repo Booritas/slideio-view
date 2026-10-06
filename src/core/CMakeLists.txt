@@ -8,6 +8,7 @@ add_library(slideio-viewer-core STATIC
     src/ScaleBar.cpp
     src/TileSampling.cpp
     src/ColorProfileInfo.cpp
+    src/ColorManagement.cpp
 )
 
 target_include_directories(slideio-viewer-core PUBLIC
