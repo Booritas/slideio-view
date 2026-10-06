@@ -43,6 +43,26 @@ std::vector<TileKey> CoordinateSystem::visibleTiles(const Viewport& vp) const
     return m_pyramid.visibleTiles(level, slideX, slideY, slideW, slideH);
 }
 
+std::vector<TileKey> CoordinateSystem::coarseTiles(const Viewport& vp, int level, ColorMode colorMode,
+                                                   int zIndex, int tFrame) const
+{
+    // Origin clamped, extent not: TilePyramid::visibleTiles already clamps the
+    // column and row range to the level, so this reproduces exactly the tile
+    // set the two inline copies in paintGL selected before extraction.
+    const Rect<double> slideRect = vp.visibleSlideRect();
+    std::vector<TileKey> tiles = m_pyramid.visibleTiles(
+        level,
+        std::max(0, static_cast<int>(slideRect.x)),
+        std::max(0, static_cast<int>(slideRect.y)),
+        static_cast<int>(std::ceil(slideRect.width)),
+        static_cast<int>(std::ceil(slideRect.height)));
+
+    for (TileKey& key : tiles) {
+        key = TileKey(key.level(), key.column(), key.row(), zIndex, tFrame, colorMode);
+    }
+    return tiles;
+}
+
 Rect<double> CoordinateSystem::tileSlideRect(const TileKey& key) const
 {
     const auto& info = m_pyramid.levelInfo(key.level());

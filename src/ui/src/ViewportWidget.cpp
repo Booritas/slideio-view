@@ -2690,28 +2690,14 @@ void ViewportWidget::paintGL()
         // Walk from coarsest to the level just above the current visible level.
         int currentLevel = coordSystem.bestLevel(viewport.scale());
         for (int lvl = m_impl->pyramid->numLevels() - 1; lvl > currentLevel; --lvl) {
-            // Find all tiles at this level that overlap the visible area
-            auto visSlideRect = viewport.visibleSlideRect();
-            auto coarseTiles = m_impl->pyramid->visibleTiles(
-                lvl,
-                std::max(0, static_cast<int>(visSlideRect.x)),
-                std::max(0, static_cast<int>(visSlideRect.y)),
-                static_cast<int>(std::ceil(visSlideRect.width)),
-                static_cast<int>(std::ceil(visSlideRect.height)));
+            // Fully stamped with the active colour mode and plane -- see
+            // CoordinateSystem::coarseTiles for why that matters.
+            auto coarseTiles = coordSystem.coarseTiles(viewport, lvl,
+                                                       m_impl->controller->colorMode(),
+                                                       m_impl->currentZSlice,
+                                                       m_impl->currentTFrame);
 
-            for (auto& fbKey : coarseTiles) {
-                // TilePyramid yields geometry only, so its keys carry the default
-                // Raw colour mode. Stamp the controller's mode on, exactly as
-                // visibleTileKeys() does: without it this pass would look up raw
-                // cache entries and draw raw pixels behind a managed view, which
-                // is what the user sees everywhere a visible tile has not loaded
-                // yet -- all through panning and zooming. In Managed mode the
-                // backdrop may now be briefly absent until managed tiles arrive;
-                // a missing backdrop is correct, wrong-coloured pixels are not.
-                fbKey = core::TileKey(fbKey.level(), fbKey.column(), fbKey.row(),
-                                      fbKey.zIndex(), fbKey.tFrame(),
-                                      m_impl->controller->colorMode());
-
+            for (const auto& fbKey : coarseTiles) {
                 auto fbTexIt = m_impl->textures.find(fbKey);
                 if (fbTexIt == m_impl->textures.end()) {
                     // Also check the tile cache for un-uploaded tiles
@@ -2889,29 +2875,16 @@ void ViewportWidget::paintGL()
         // (Doing all levels in one additive pass would sum them and over-expose.)
         int currentLevel = coordSystem.bestLevel(viewport.scale());
         for (int lvl = m_impl->pyramid->numLevels() - 1; lvl > currentLevel; --lvl) {
-            auto visSlideRect = viewport.visibleSlideRect();
-            auto coarseTiles = m_impl->pyramid->visibleTiles(
-                lvl,
-                std::max(0, static_cast<int>(visSlideRect.x)),
-                std::max(0, static_cast<int>(visSlideRect.y)),
-                static_cast<int>(std::ceil(visSlideRect.width)),
-                static_cast<int>(std::ceil(visSlideRect.height)));
+            // Fully stamped with the active colour mode and plane -- see
+            // CoordinateSystem::coarseTiles for why that matters.
+            auto coarseTiles = coordSystem.coarseTiles(viewport, lvl,
+                                                       m_impl->controller->colorMode(),
+                                                       m_impl->currentZSlice,
+                                                       m_impl->currentTFrame);
 
             bool drewAnyAtLevel = false;
             beginTileFboPass();
-            for (auto& fbKey : coarseTiles) {
-                // TilePyramid yields geometry only, so its keys carry the default
-                // Raw colour mode. Stamp the controller's mode on, exactly as
-                // visibleTileKeys() does: without it this pass would look up raw
-                // cache entries and draw raw pixels behind a managed view, which
-                // is what the user sees everywhere a visible tile has not loaded
-                // yet -- all through panning and zooming. In Managed mode the
-                // backdrop may now be briefly absent until managed tiles arrive;
-                // a missing backdrop is correct, wrong-coloured pixels are not.
-                fbKey = core::TileKey(fbKey.level(), fbKey.column(), fbKey.row(),
-                                      fbKey.zIndex(), fbKey.tFrame(),
-                                      m_impl->controller->colorMode());
-
+            for (const auto& fbKey : coarseTiles) {
                 auto fbTexIt = m_impl->fluorescenceTextures.find(fbKey);
                 if (fbTexIt == m_impl->fluorescenceTextures.end()) {
                     auto tileData = m_impl->tileCache->lookup(fbKey);
