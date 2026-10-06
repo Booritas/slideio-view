@@ -18,9 +18,12 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <tuple>
 #include <type_traits>
+#include <unordered_set>
 
 namespace
 {
@@ -1036,32 +1039,69 @@ std::vector<core::LevelInfo> SlideIOAdapter::levels() const
     return m_levels;
 }
 
-bool SlideIOAdapter::isLevelUnreliable(int level) const
+core::LevelUnreliableRegistry& SlideIOAdapter::unreliableLevelsFor(bool throughManagedScene)
 {
-    return m_unreliableLevels.isUnreliable(level);
+    return throughManagedScene ? m_managedUnreliableLevels : m_unreliableLevels;
 }
 
-bool SlideIOAdapter::markLevelUnreliable(int level)
+const core::LevelUnreliableRegistry& SlideIOAdapter::unreliableLevelsFor(bool throughManagedScene) const
 {
-    const bool firstTime = m_unreliableLevels.mark(level);
+    return throughManagedScene ? m_managedUnreliableLevels : m_unreliableLevels;
+}
+
+bool SlideIOAdapter::isLevelUnreliable(int level, bool throughManagedScene) const
+{
+    return unreliableLevelsFor(throughManagedScene).isUnreliable(level);
+}
+
+bool SlideIOAdapter::markLevelUnreliable(int level, bool throughManagedScene)
+{
+    const bool firstTime = unreliableLevelsFor(throughManagedScene).mark(level);
     if (firstTime) {
-        spdlog::warn("SlideIOAdapter: level {} marked unreliable; will route reads through finer levels", level);
+        spdlog::warn("SlideIOAdapter: level {} marked unreliable on the {} read path; "
+                     "will route those reads through finer levels",
+                     level, throughManagedScene ? "colour-managed" : "raw");
     }
     return firstTime;
 }
 
 void SlideIOAdapter::addOnLevelMarkedUnreliable(std::function<void(int)> listener)
 {
+    // Registered on both ledgers. A listener here is interested in the user's
+    // experience of the slide, not in which scene hit the bad level: the
+    // overlay's "working around corrupted tiles" message and the cache's
+    // level eviction are both wanted whichever path found it, because the
+    // user is waiting on the finer-level fallback either way.
+    //
+    // De-duplicated per listener so registering on two ledgers does not break
+    // the registry's exactly-once contract when both paths mark the same level.
+    // The set is shared by the two registrations of one listener, and marks
+    // arrive from reader threads, so it is mutex-guarded.
+    struct AnnouncedLevels
+    {
+        std::mutex mutex;
+        std::unordered_set<int> levels;
+    };
+    auto announced = std::make_shared<AnnouncedLevels>();
+
     // Wrap rather than register the caller's listener directly: a throwing
     // listener must not take down the reader thread that happened to find the
     // bad level, nor abort the notification of the listeners after it.
-    m_unreliableLevels.addListener([listener = std::move(listener)](int level) {
+    auto wrapper = [listener = std::move(listener), announced](int level) {
+        {
+            std::lock_guard<std::mutex> lock(announced->mutex);
+            if (!announced->levels.insert(level).second) {
+                return;
+            }
+        }
         try {
             listener(level);
         } catch (const std::exception& ex) {
             spdlog::warn("SlideIOAdapter: onLevelMarkedUnreliable listener threw: {}", ex.what());
         }
-    });
+    };
+    m_unreliableLevels.addListener(wrapper);
+    m_managedUnreliableLevels.addListener(wrapper);
 }
 
 core::TileData SlideIOAdapter::readTile(const core::TileKey& key)
@@ -1147,9 +1187,11 @@ core::TileData SlideIOAdapter::readTile(const core::TileKey& key)
     // to the broken level.
     int maxMultiplier = std::max(1, static_cast<int>(std::round(invScale)));
     int multiplier = 1;
-    if (isLevelUnreliable(level)) {
+    // Consulted on the ledger of the path this read will actually take, so a
+    // managed read does not inherit raw's fallback decisions or vice versa.
+    if (isLevelUnreliable(level, throughManagedScene)) {
         int targetLevel = level - 1;
-        while (targetLevel >= 0 && isLevelUnreliable(targetLevel)) --targetLevel;
+        while (targetLevel >= 0 && isLevelUnreliable(targetLevel, throughManagedScene)) --targetLevel;
         if (targetLevel < 0) {
             return core::TileData::createError(tileW, tileH);
         }
@@ -1194,22 +1236,6 @@ core::TileData SlideIOAdapter::readTile(const core::TileKey& key)
             spdlog::error("SlideIOAdapter::readTile: exception reading tile {} (multiplier={}): {}",
                           key.toString(), multiplier, ex.what());
 
-            // Pyramid reliability is a property of the file, not of the colour
-            // transform layered over it. A read through the managed scene can
-            // fail for reasons that say nothing about the underlying level -- a
-            // broken profile, a transform that cannot be applied -- and the
-            // unreliable-level registry is shared by both scenes and never
-            // cleared. Condemning a level on such a failure would route every
-            // later read of it, raw ones included, through the fallback path,
-            // and at level 0 there is no finer level to fall back to: the slide
-            // would stay blank at full resolution for the rest of the session.
-            // So fail this one tile and leave the origin's pyramid alone.
-            if (throughManagedScene) {
-                spdlog::warn("SlideIOAdapter::readTile: colour-managed read of tile {} failed; "
-                             "leaving level {} reliability unchanged", key.toString(), level);
-                return core::TileData::createError(tileW, tileH);
-            }
-
             // Figure out which level SlideIO most likely used for this read, so
             // we can mark that level (not just the requested one) unreliable.
             double effectiveScale = static_cast<double>(multiplier) * lvl.scale;
@@ -1222,11 +1248,16 @@ core::TileData SlideIOAdapter::readTile(const core::TileKey& key)
                     suspectLevel = static_cast<int>(i);
                 }
             }
-            markLevelUnreliable(suspectLevel);
+            // Marked on the ledger of the path that actually failed. A corrupt
+            // tile-offset table fails both paths and will be marked on each as
+            // it is met; a fault in the colour transform fails only the managed
+            // path and must not condemn the level for raw reads, which are fine.
+            // Either way this tile still gets the finer-level fallback below.
+            markLevelUnreliable(suspectLevel, throughManagedScene);
             // Jump straight to the next reliable finer level by scale ratio,
             // not just *2 (avoids re-throwing on irregular pyramid steps).
             int targetLevel = suspectLevel - 1;
-            while (targetLevel >= 0 && isLevelUnreliable(targetLevel)) --targetLevel;
+            while (targetLevel >= 0 && isLevelUnreliable(targetLevel, throughManagedScene)) --targetLevel;
             if (targetLevel < 0) {
                 return core::TileData::createError(tileW, tileH);
             }
