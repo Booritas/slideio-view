@@ -3,6 +3,7 @@
 #include <slideio/slideio/slideio.hpp>
 #include <slideio/slideio/slide.hpp>
 #include <slideio/slideio/scene.hpp>
+#include <slideio/core/colorprofile.hpp>
 #include <slideio/core/levelinfo.hpp>
 #include <slideio/core/metadata.hpp>
 #include <slideio/core/slideio_enums.hpp>
@@ -233,6 +234,66 @@ std::string compressionName(::slideio::Compression c)
         case C::VP8:            return "VP8";
     }
     return "Unknown";
+}
+
+// Translate SlideIO's parsed ICC header into the core layer's mirror of it.
+// The core library links no SlideIO, so the translation has to happen here --
+// same arrangement as convertSlideIODataType above. Keep in sync with
+// slideio/core/colorprofile.hpp.
+slideio::viewer::core::ColorProfileInfo convertColorProfileInfo(const ::slideio::ColorProfileInfo& src)
+{
+    namespace core = slideio::viewer::core;
+
+    auto convertSource = [](::slideio::ColorProfileSource s) {
+        switch (s) {
+            case ::slideio::ColorProfileSource::None:     return core::ColorProfileSource::None;
+            case ::slideio::ColorProfileSource::Embedded: return core::ColorProfileSource::Embedded;
+            case ::slideio::ColorProfileSource::Assumed:  return core::ColorProfileSource::Assumed;
+            case ::slideio::ColorProfileSource::Supplied: return core::ColorProfileSource::Supplied;
+        }
+        return core::ColorProfileSource::None;
+    };
+    auto convertSpace = [](::slideio::IccColorSpace s) {
+        switch (s) {
+            case ::slideio::IccColorSpace::Unknown: return core::IccColorSpace::Unknown;
+            case ::slideio::IccColorSpace::Gray:    return core::IccColorSpace::Gray;
+            case ::slideio::IccColorSpace::RGB:     return core::IccColorSpace::RGB;
+            case ::slideio::IccColorSpace::CMYK:    return core::IccColorSpace::CMYK;
+            case ::slideio::IccColorSpace::Lab:     return core::IccColorSpace::Lab;
+            case ::slideio::IccColorSpace::XYZ:     return core::IccColorSpace::XYZ;
+            case ::slideio::IccColorSpace::YCbCr:   return core::IccColorSpace::YCbCr;
+        }
+        return core::IccColorSpace::Unknown;
+    };
+    auto convertIntent = [](::slideio::RenderingIntent i) {
+        switch (i) {
+            case ::slideio::RenderingIntent::Perceptual:
+                return core::RenderingIntent::Perceptual;
+            case ::slideio::RenderingIntent::RelativeColorimetric:
+                return core::RenderingIntent::RelativeColorimetric;
+            case ::slideio::RenderingIntent::Saturation:
+                return core::RenderingIntent::Saturation;
+            case ::slideio::RenderingIntent::AbsoluteColorimetric:
+                return core::RenderingIntent::AbsoluteColorimetric;
+        }
+        return core::RenderingIntent::RelativeColorimetric;
+    };
+
+    core::ColorProfileInfo dst;
+    dst.present = src.present;
+    dst.source = convertSource(src.source);
+    dst.description = src.description;
+    dst.manufacturer = src.manufacturer;
+    dst.model = src.model;
+    dst.version = src.version;
+    dst.dataSpace = convertSpace(src.dataSpace);
+    dst.connectionSpace = convertSpace(src.connectionSpace);
+    dst.intent = convertIntent(src.intent);
+    dst.dataSize = src.dataSize;
+    // whitePoint is deliberately not carried over: for any ICC v4 profile it
+    // reports the PCS illuminant D50 rather than the device white, so showing
+    // it in the properties panel would mislead more than inform.
+    return dst;
 }
 
 slideio::viewer::core::MetadataNode convertMetadata(
@@ -484,6 +545,12 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
         spdlog::warn("SlideIOAdapter: getCompression failed: {}", ex.what());
         m_slideInfo.compression.clear();
     }
+    try {
+        m_slideInfo.colorProfileInfo = convertColorProfileInfo(m_scene->getColorProfileInfo());
+    } catch (const std::exception& ex) {
+        spdlog::warn("SlideIOAdapter: getColorProfileInfo failed: {}", ex.what());
+        m_slideInfo.colorProfileInfo = core::ColorProfileInfo{};
+    }
     m_slideInfo.numZSlices = m_scene->getNumZSlices();
     m_slideInfo.numTFrames = m_scene->getNumTFrames();
 
@@ -674,6 +741,12 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
     } catch (const std::exception& ex) {
         spdlog::warn("SlideIOAdapter: getCompression failed: {}", ex.what());
         m_slideInfo.compression.clear();
+    }
+    try {
+        m_slideInfo.colorProfileInfo = convertColorProfileInfo(m_scene->getColorProfileInfo());
+    } catch (const std::exception& ex) {
+        spdlog::warn("SlideIOAdapter: getColorProfileInfo failed: {}", ex.what());
+        m_slideInfo.colorProfileInfo = core::ColorProfileInfo{};
     }
     m_slideInfo.numZSlices = m_scene->getNumZSlices();
     m_slideInfo.numTFrames = m_scene->getNumTFrames();
