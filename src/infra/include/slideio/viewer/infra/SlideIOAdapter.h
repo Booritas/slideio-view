@@ -69,6 +69,9 @@ public:
     core::ColorMode colorMode() const override;
     core::ColorProfileInfo activeColorProfileInfo() const override;
 
+    // Raw bytes of the profile the file embeds, empty when it embeds none.
+    std::vector<uint8_t> embeddedProfileBytes() const;
+
 private:
     bool isLevelUnreliable(int level) const;
     // Returns true the first time this level is marked. Subsequent calls return false.
