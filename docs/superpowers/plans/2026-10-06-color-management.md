@@ -197,6 +197,7 @@ Two pure helpers the UI needs: the text for a disabled menu item, and a sanity c
 **Files:**
 - Create: `src/core/include/slideio/viewer/core/ColorManagement.h`
 - Create: `src/core/src/ColorManagement.cpp`
+- Modify: `src/core/include/slideio/viewer/core/Types.h` (the availability enum — see Step 3)
 - Modify: `src/core/CMakeLists.txt`
 - Create: `tests/core/ColorManagementTest.cpp`
 - Modify: `tests/CMakeLists.txt`
@@ -887,14 +888,19 @@ slideio::viewer::core::ColorManagementAvailability buildManagedScene(
 
 - [ ] **Step 5: Call it from both constructors**
 
-In each constructor, after `m_slideInfo.colorProfileInfo` is populated and after `m_slideInfo.fluorescenceHint` is set, add:
+**The insertion point is exact, and getting it wrong fails silently.** In both constructors `m_slideInfo.colorProfileInfo` is assigned well before `fluorescenceHint` exists: at the time of writing, lines 549 and 746 for the profile, and lines 574 and 769 for `const bool fluorescenceHint = channelsIndicateFluorescence(*m_scene);`. The gate reads all four of `colorProfileInfo`, `numChannels`, `channelDataType` and `fluorescenceHint`, so placing the call next to the profile assignment — the intuitive spot — would evaluate it while `fluorescenceHint` is still default-`false`, and a 3-channel 8-bit fluorescence slide would report `Available` and be ICC-transformed as though its intensity channels were RGB.
+
+So: in each constructor, find the `m_slideInfo.isBrightfield = !fluorescenceHint && (` assignment (lines 575 and 770), and insert **after** the `m_slideInfo.fluorescenceHint = fluorescenceHint;` line that Task 3 Step 5 placed beside it:
 
 ```cpp
+    // After fluorescenceHint, not beside colorProfileInfo: the gate needs the
+    // hint, and reading it before it is set would offer colour management on
+    // fluorescence slides.
     m_slideInfo.colorManagement = buildManagedScene(m_scene, m_slideInfo, defaultProfileBytes,
                                                     m_managedScene, m_slideInfo.colorManagementDetail);
 ```
 
-Ordering matters: the gate reads `colorProfileInfo`, `numChannels`, `channelDataType` and `fluorescenceHint`, so it must run after all four are assigned.
+Verify by inspection before moving on: the call must appear textually below both `m_slideInfo.colorProfileInfo = ...` and `m_slideInfo.fluorescenceHint = ...` in each of the two constructors.
 
 - [ ] **Step 6: Implement the accessors and the read selection**
 
@@ -999,6 +1005,8 @@ The only tests that prove the feature converts anything. Requires giving the inf
 **Files:**
 - Modify: `tests/CMakeLists.txt`
 - Modify: `tests/infra/ColorManagedAdapterTest.cpp`
+- Modify: `src/infra/include/slideio/viewer/infra/SlideIOAdapter.h` (the `embeddedProfileBytes` accessor — see Step 1)
+- Modify: `src/infra/src/SlideIOAdapter.cpp` (ditto)
 
 **Interfaces:**
 - Consumes: everything from Task 4.
@@ -1269,6 +1277,24 @@ In `MainWindow.cpp`, create the actions alongside the existing ones and add them
         clearDefaultProfileAction = new QAction("Clear Default ICC Profile", owner);
 ```
 
+Declare both in `MainWindow::Impl` alongside the existing actions (`openAction`, `closeAction`, …):
+
+```cpp
+    QAction* setDefaultProfileAction = nullptr;
+    QAction* clearDefaultProfileAction = nullptr;
+```
+
+MainWindow.cpp also needs the include for `inspectIccHeader`, and the Qt headers for the dialog work:
+
+```cpp
+#include "slideio/viewer/core/ColorManagement.h"
+
+#include <QDir>
+#include <QFile>
+#include <QFileDialog>
+#include <QMessageBox>
+```
+
 - [ ] **Step 3: Implement choosing a profile**
 
 ```cpp
@@ -1460,6 +1486,23 @@ void ViewportWidget::releaseTexturesOfOtherMode(core::ColorMode keep)
         colorManagementAction = new QAction("Color Management", owner);
         colorManagementAction->setCheckable(true);
         colorManagementAction->setShortcut(QKeySequence("Ctrl+Shift+C"));
+```
+
+Declare it in `MainWindow::Impl` beside the Task 7 actions:
+
+```cpp
+    QAction* colorManagementAction = nullptr;
+```
+
+and declare the three new `ViewportWidget` members in `ViewportWidget.h` — the first two public, the third private:
+
+```cpp
+    void setColorMode(core::ColorMode mode);
+    core::ColorProfileInfo activeColorProfileInfo() const;
+```
+
+```cpp
+    void releaseTexturesOfOtherMode(core::ColorMode keep);
 ```
 
 Added to the View menu before the default-profile separator from Task 7.
