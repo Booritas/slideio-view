@@ -9,15 +9,17 @@ TileKey::TileKey()
     , m_row(0)
     , m_zIndex(0)
     , m_tFrame(0)
+    , m_colorMode(ColorMode::Raw)
 {
 }
 
-TileKey::TileKey(int level, int column, int row, int zIndex, int tFrame)
+TileKey::TileKey(int level, int column, int row, int zIndex, int tFrame, ColorMode colorMode)
     : m_level(level)
     , m_column(column)
     , m_row(row)
     , m_zIndex(zIndex)
     , m_tFrame(tFrame)
+    , m_colorMode(colorMode)
 {
 }
 
@@ -46,13 +48,19 @@ int TileKey::tFrame() const
     return m_tFrame;
 }
 
+ColorMode TileKey::colorMode() const
+{
+    return m_colorMode;
+}
+
 bool TileKey::operator==(const TileKey& other) const
 {
     return m_level == other.m_level
         && m_column == other.m_column
         && m_row == other.m_row
         && m_zIndex == other.m_zIndex
-        && m_tFrame == other.m_tFrame;
+        && m_tFrame == other.m_tFrame
+        && m_colorMode == other.m_colorMode;
 }
 
 bool TileKey::operator!=(const TileKey& other) const
@@ -68,6 +76,9 @@ std::string TileKey::toString() const
     if (m_zIndex != 0 || m_tFrame != 0) {
         s += ", z=" + std::to_string(m_zIndex)
            + ", t=" + std::to_string(m_tFrame);
+    }
+    if (m_colorMode == ColorMode::Managed) {
+        s += ", managed";
     }
     s += ")";
     return s;
