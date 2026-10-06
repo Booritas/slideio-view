@@ -426,6 +426,56 @@ construction (on the UI/toggle thread, read from worker threads via
 precondition of going lazy, not a detail to fix in passing. Left to a
 follow-up review and its own change, per the brief for this task.
 
+### Follow-up: measured against total slide-open time
+
+The ~5% bar above was written against `SlideIOAdapter` construction alone,
+whose wrap-free cost is only ≈1 ms — so almost any fixed cost looks extreme
+against it (the ≈3340% figure). The quantity a user actually perceives is
+total slide-open time, of which adapter construction is one part: the caller
+(`openSceneSync` in `src/ui/src/ViewportWidget.cpp`, not reachable from a test
+without editing production code, since it and
+`readCoarseLevelAndBuildThumbnail` both have internal linkage in that file's
+anonymous namespace) also enumerates levels, builds the `TilePyramid` and
+`LruTileCache`, reads every tile of the coarsest pyramid level to autodetect
+the display range (all 72 tiles here — under `kMaxCoarseScanTiles` = 256, so
+unsampled), and reads one full-slide thumbnail `readBlock`. A proxy harness
+reproducing exactly those public-API calls (construction, `levels()`, the
+72-tile coarsest-level scan, one `readBlock` sized to fit 1000px), run three
+times per process across three process invocations (9 runs total, same slide,
+Release, warm cache):
+
+| | Mean | Range (9 runs) |
+|---|---|---|
+| Total open (proxy), eager wrap as shipped | **830.8 ms** | 769.8–888.7 ms |
+| Total open (proxy), without eager wrap (derived: −33.0 ms, this task's earlier construction delta — not re-measured here to avoid touching production code twice) | **797.8 ms** | — |
+
+Eager wrapping's share of total open time is **≈4.0%** — under the ~5% bar,
+not over it. Measured against the right denominator, eager wrapping is
+immaterial to a user already waiting ~800 ms for the rest of the open to
+finish, dominated by the coarsest-level tile scan and the thumbnail
+`readBlock`, not by metadata/histogram bookkeeping as such.
+
+**Revised recommendation: stay eager.** The earlier "go lazy" call was an
+artifact of comparing against the wrong baseline. At ≈4% of total open time,
+eager wrapping is not worth trading for `activeScene()` losing its
+construction-time-only reference safety — a real concurrency hazard — for a
+saving the user is unlikely to perceive. Shipped behaviour (eager, as already
+implemented) is correct as-is; no further change recommended.
+
+One more fact bearing on the denominator: `readCoarseLevelAndBuildThumbnail`
+runs on **every** successful slide open (both `openSceneSync` and
+`openAuxImageSync` call it unconditionally, each wrapped only in a
+try/catch that logs and continues on failure — it is never skipped by slide
+type). Its two passes can each shrink independently, though: the coarsest-
+level scan is strided down to at most `kMaxCoarseScanTiles` (256) tiles
+rather than reading every tile when the coarsest level is larger than that;
+the thumbnail `readBlock` is skipped entirely (`overviewAffordable = false`)
+when the coarsest level exceeds `kMaxOverviewTiles` (4096) tiles — the case of
+a slide with no downsampled pyramid level at all. So the ≈800 ms denominator
+measured here is specific to this slide's 8×9 coarsest level; a slide that
+hits either cap would see a smaller (capped) version of this same work, not a
+skip of the whole pass, except for the `readBlock` half specifically.
+
 ## 11. Sequencing
 
 1. `core` — `TileKey` colour mode, availability, `inspectIccHeader`, `SlideInfo`
