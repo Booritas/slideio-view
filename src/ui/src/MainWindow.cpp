@@ -1,4 +1,5 @@
 #include "slideio/viewer/ui/MainWindow.h"
+#include "slideio/viewer/core/ColorManagement.h"
 #include "slideio/viewer/ui/AboutDialog.h"
 #include "slideio/viewer/ui/AppPaths.h"
 #include "slideio/viewer/ui/AssociatedImageWindow.h"
@@ -38,15 +39,20 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <cstdint>
+#include <vector>
 
 namespace
 {
 constexpr int kMaxRecentFiles = 10;
 const QString kRecentFilesKey = "recentFiles";
+constexpr auto kDefaultProfileKey = "color/defaultSourceProfile";
 } // anonymous namespace
 
 namespace slideio::viewer::ui
 {
+
+namespace core = slideio::viewer::core;
 
 struct MainWindow::Impl
 {
@@ -89,6 +95,8 @@ struct MainWindow::Impl
     QAction* associatedImagesToggleAction = nullptr;
     QAction* propertiesToggleAction = nullptr;
     QAction* metadataToggleAction = nullptr;
+    QAction* setDefaultProfileAction = nullptr;
+    QAction* clearDefaultProfileAction = nullptr;
     QAction* aboutAction = nullptr;
 
     void createActions()
@@ -145,6 +153,14 @@ struct MainWindow::Impl
         minimapToggleAction->setChecked(true);
         minimapToggleAction->setStatusTip("Toggle the minimap overlay");
 
+        setDefaultProfileAction = new QAction("Set Default ICC Profile…", owner);
+        setDefaultProfileAction->setStatusTip(
+            "Choose an RGB ICC profile to assume for slides that embed none");
+
+        clearDefaultProfileAction = new QAction("Clear Default ICC Profile", owner);
+        clearDefaultProfileAction->setStatusTip("Stop assuming a default ICC profile");
+        clearDefaultProfileAction->setEnabled(false);
+
         aboutAction = new QAction("&About SlideIO Viewer...", owner);
         // On macOS this moves the entry into the application menu, where the
         // platform expects it, instead of leaving it under Help.
@@ -183,6 +199,9 @@ struct MainWindow::Impl
         viewMenu->addAction(associatedImagesToggleAction);
         viewMenu->addAction(propertiesToggleAction);
         viewMenu->addAction(metadataToggleAction);
+        viewMenu->addSeparator();
+        viewMenu->addAction(setDefaultProfileAction);
+        viewMenu->addAction(clearDefaultProfileAction);
 
         QMenu* helpMenu = owner->menuBar()->addMenu("&Help");
         helpMenu->addAction(aboutAction);
@@ -260,6 +279,11 @@ struct MainWindow::Impl
         });
 
         QObject::connect(minimapToggleAction, &QAction::toggled, minimapWidget, &QWidget::setVisible);
+
+        QObject::connect(setDefaultProfileAction, &QAction::triggered,
+                          owner, &MainWindow::onSetDefaultColorProfile);
+        QObject::connect(clearDefaultProfileAction, &QAction::triggered,
+                          owner, &MainWindow::onClearDefaultColorProfile);
 
         // Help actions. The dialog is built per invocation so that it picks up
         // the OpenGL strings once the viewport's context has come up, rather
@@ -672,6 +696,10 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->createMenus();
     m_impl->connectSignals();
 
+    // Load the configured default ICC profile (if any) now that the viewport
+    // and the actions that reflect this setting both exist.
+    applyDefaultColorProfile();
+
     // Position overlays
     m_impl->repositionOverlays();
 
@@ -728,6 +756,78 @@ void MainWindow::openSlide(const std::string& path, const std::string& driverId)
     // The scene panel is populated, the loading overlay is hidden, and other
     // post-open UI updates run from the slideOpened/loadingFinished signal handlers.
     m_impl->viewportWidget->openSlide(path, driverId);
+}
+
+void MainWindow::onSetDefaultColorProfile()
+{
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Select Default ICC Profile"), QString(),
+        tr("ICC profiles (*.icc *.icm);;All files (*)"));
+    if (path.isEmpty()) {
+        return;
+    }
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        QMessageBox::warning(this, tr("Default ICC Profile"),
+                             tr("Could not read %1.").arg(QDir::toNativeSeparators(path)));
+        return;
+    }
+    const QByteArray raw = file.readAll();
+    const std::vector<uint8_t> bytes(raw.begin(), raw.end());
+
+    // Checked here rather than left to fail at the next slide open: SlideIO
+    // treats an unusable profile as absence, so without this the setting would
+    // appear to take and then quietly do nothing.
+    const core::IccHeaderSummary summary = core::inspectIccHeader(bytes);
+    if (!summary.plausible) {
+        QMessageBox::warning(this, tr("Default ICC Profile"),
+                             tr("%1 is not a valid ICC profile.")
+                                 .arg(QDir::toNativeSeparators(path)));
+        return;
+    }
+    if (summary.dataSpace != "RGB ") {
+        QMessageBox::warning(
+            this, tr("Default ICC Profile"),
+            tr("%1 describes %2 data. Color management needs an RGB profile.")
+                .arg(QDir::toNativeSeparators(path),
+                     QString::fromStdString(summary.dataSpace).trimmed()));
+        return;
+    }
+
+    QSettings settings;
+    settings.setValue(kDefaultProfileKey, path);
+    applyDefaultColorProfile();
+}
+
+void MainWindow::onClearDefaultColorProfile()
+{
+    QSettings settings;
+    settings.remove(kDefaultProfileKey);
+    applyDefaultColorProfile();
+}
+
+// Reads the configured profile from disk and hands it to the viewport. The path
+// is stored, not the bytes, so replacing the file on disk takes effect on the
+// next slide open rather than needing the setting to be re-chosen.
+void MainWindow::applyDefaultColorProfile()
+{
+    QSettings settings;
+    const QString path = settings.value(kDefaultProfileKey).toString();
+    std::vector<uint8_t> bytes;
+    if (!path.isEmpty()) {
+        QFile file(path);
+        if (file.open(QIODevice::ReadOnly)) {
+            const QByteArray raw = file.readAll();
+            bytes.assign(raw.begin(), raw.end());
+        } else {
+            spdlog::warn("MainWindow: default ICC profile '{}' could not be read; "
+                         "treating it as unconfigured",
+                         path.toStdString());
+        }
+    }
+    m_impl->clearDefaultProfileAction->setEnabled(!path.isEmpty());
+    m_impl->viewportWidget->setDefaultColorProfile(std::move(bytes));
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
