@@ -90,9 +90,16 @@ cache. The result is a stale tile of the wrong colour, appearing intermittently
 and only under load.
 
 Putting the mode in `TileKey` removes the race by construction, because a raw
-tile and a managed tile of the same region become different cache entries. A
-late-finishing raw read inserts under a raw key that managed-mode rendering never
-looks up. Two further benefits fall out: no cache clear is needed at all, and
+tile and a managed tile of the same region become different cache entries *and*
+because the key is what the adapter selects the scene by:
+`SlideIOAdapter::readTile` reads through `sceneForMode(key.colorMode())`, never
+through the adapter's live mode. A read that was enqueued before a toggle and
+finishes after it therefore still produces the rendition its key names, and the
+cache files it under that same key — pixels and key correspond by construction,
+not by timing. (Selecting by the live mode instead is precisely the bug this
+keying is meant to exclude: it would let a read that straddled a toggle be
+cached as though it were the other rendition, and the tile would stay wrong
+until eviction.) Two further benefits fall out: no cache clear is needed at all, and
 toggling back and forth is instant because both sets remain cached — which
 matters, since A/B comparison is the main reason to have a toggle.
 
@@ -304,11 +311,24 @@ deployment needs no change: `CMakeLists.txt:203` already installs all of
   on disk takes effect on next open. Bytes are read at slide open; an unreadable
   path logs a warning and is treated as unconfigured.
 
-**Key construction** — `ViewportController` and `ViewportWidget` stamp the active
-mode on every `TileKey` they build.
+**Key construction** — `TilePyramid` yields geometry only (level, column, row)
+and leaves the default `Raw` mode on the keys it returns; the callers that feed
+rendering or the cache stamp the active mode on. That is
+`ViewportController::visibleTileKeys()` and, in `ViewportWidget`, the coarse
+background pass in `paintGL`. The remaining `TileKey` sites in `ViewportWidget`
+are open-time thumbnail, autodetect and base-layer prepopulation reads: those
+are deliberately raw and their default-`Raw` keys are correct for them.
 
 **Toggle handling** — set the adapter's mode, set the viewport's mode, repaint.
-No cache clear, no scheduler cancellation.
+No cache clear is needed. (`ViewportController::requestVisibleTiles()` does call
+`m_scheduler->cancelAll()` to drop superseded requests, as it does on any view
+change; that is unrelated to colour mode, and correctness does not depend on it.)
+
+**Thumbnails and the minimap overview** are deliberately never colour-managed.
+They come from `readBlock`, which carries no `TileKey` and is never cached under
+one, and from the open-time raw tile reads above. They are navigation aids, not
+diagnostic surfaces, so they keep a single stable appearance that does not shift
+under the toggle.
 
 **Status bar** — an indicator reading `sRGB` when managed, absent when raw.
 
