@@ -79,3 +79,45 @@ TEST_CASE("TileKey Z/T hashing distinguishes", "[core][TileKey]")
     REQUIRE(map[TileKey{0, 0, 0, 1, 0}] == 2);
     REQUIRE(map[TileKey{0, 0, 0, 0, 1}] == 3);
 }
+
+TEST_CASE("TileKey defaults to the raw colour mode", "[core][TileKey]")
+{
+    TileKey key(2, 3, 4);
+    REQUIRE(key.colorMode() == ColorMode::Raw);
+}
+
+TEST_CASE("TileKeys differing only in colour mode are not equal", "[core][TileKey]")
+{
+    // This inequality is what keeps a tile read in the old mode from being
+    // served after the user toggles: the two renditions are separate cache
+    // entries, so a late raw read lands under a key managed rendering never
+    // looks up.
+    TileKey raw(1, 2, 3, 0, 0, ColorMode::Raw);
+    TileKey managed(1, 2, 3, 0, 0, ColorMode::Managed);
+    REQUIRE(raw != managed);
+    REQUIRE_FALSE(raw == managed);
+}
+
+TEST_CASE("TileKeys agreeing on colour mode and coordinates are equal", "[core][TileKey]")
+{
+    TileKey a(1, 2, 3, 4, 5, ColorMode::Managed);
+    TileKey b(1, 2, 3, 4, 5, ColorMode::Managed);
+    REQUIRE(a == b);
+    REQUIRE(std::hash<TileKey>{}(a) == std::hash<TileKey>{}(b));
+}
+
+TEST_CASE("TileKeys differing only in colour mode hash apart", "[core][TileKey]")
+{
+    TileKey raw(7, 8, 9, 0, 0, ColorMode::Raw);
+    TileKey managed(7, 8, 9, 0, 0, ColorMode::Managed);
+    REQUIRE(std::hash<TileKey>{}(raw) != std::hash<TileKey>{}(managed));
+}
+
+TEST_CASE("TileKey::toString names the colour mode only when managed", "[core][TileKey]")
+{
+    // Raw is the overwhelmingly common case; naming it on every log line
+    // would be noise. Managed is the one worth seeing.
+    REQUIRE(TileKey(1, 2, 3).toString().find("managed") == std::string::npos);
+    REQUIRE(TileKey(1, 2, 3, 0, 0, ColorMode::Managed).toString().find("managed")
+            != std::string::npos);
+}
