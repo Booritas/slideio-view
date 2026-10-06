@@ -32,6 +32,17 @@ public:
     // as the tile scheduler, still learns which levels to distrust. Default
     // no-op for backends that don't track this.
     virtual void addOnLevelMarkedUnreliable(std::function<void(int)> /*listener*/) {}
+
+    // Colour mode selection. Backends that cannot convert colour ignore the
+    // setter and always report Raw, so callers need not special-case them.
+    virtual void setColorMode(ColorMode /*mode*/) {}
+    virtual ColorMode colorMode() const { return ColorMode::Raw; }
+
+    // The profile of the scene currently selected, which differs from
+    // SlideInfo::colorProfileInfo: that one records what the file embeds, while
+    // a colour-managed scene reports the profile it actually bound -- a supplied
+    // default, for a slide that embeds none.
+    virtual ColorProfileInfo activeColorProfileInfo() const { return {}; }
 };
 
 } // namespace slideio::viewer::core

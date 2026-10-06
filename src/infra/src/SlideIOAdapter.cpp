@@ -7,6 +7,10 @@
 #include <slideio/core/levelinfo.hpp>
 #include <slideio/core/metadata.hpp>
 #include <slideio/core/slideio_enums.hpp>
+#include <slideio/transformer/transformer.hpp>
+#include <slideio/transformer/colormanagementwrap.hpp>
+
+#include "slideio/viewer/core/ColorManagement.h"
 
 #include <spdlog/spdlog.h>
 
@@ -296,6 +300,55 @@ slideio::viewer::core::ColorProfileInfo convertColorProfileInfo(const ::slideio:
     return dst;
 }
 
+// Build the colour-managed view of a scene, or report why there is not one.
+//
+// The gate is stricter than SlideIO's own. ColorManagement::bindToSource counts
+// channels and checks data types, which a 3-channel 8-bit fluorescence image
+// passes -- it would then ICC-transform three intensity channels as though they
+// were R/G/B. Only the viewer knows the channels are fluorescence, so only the
+// viewer can refuse.
+slideio::viewer::core::ColorManagementAvailability buildManagedScene(
+    const std::shared_ptr<::slideio::Scene>& scene,
+    const slideio::viewer::core::SlideInfo& info,
+    const std::vector<uint8_t>& defaultProfileBytes,
+    std::shared_ptr<::slideio::Scene>& outManagedScene,
+    std::string& outDetail)
+{
+    namespace core = slideio::viewer::core;
+    outManagedScene.reset();
+    outDetail.clear();
+
+    if (!core::isColorimetricForIcc(info.numChannels, info.channelDataType,
+                                    info.fluorescenceHint)) {
+        return core::ColorManagementAvailability::NotColorimetric;
+    }
+
+    const bool haveDefault = !defaultProfileBytes.empty();
+    if (!info.colorProfileInfo.present && !haveDefault) {
+        return core::ColorManagementAvailability::NoProfile;
+    }
+
+    try {
+        ::slideio::ColorManagementWrap cm;
+        cm.setTarget(::slideio::ColorTarget::sRGB);
+        // Fail, not AssumeSRGB: the gate above guarantees a profile, so this
+        // path is unreachable. Fail turns a gate bug into a visible failure at
+        // open rather than an identity transform claiming to be colour-managed.
+        cm.setMissingProfilePolicy(::slideio::MissingProfilePolicy::Fail);
+        // Applied only when the slide embeds nothing. SlideIO lets an override
+        // displace an embedded profile, which is not what a default means.
+        if (haveDefault && !info.colorProfileInfo.present) {
+            cm.setSourceProfileOverride(::slideio::ColorProfile(defaultProfileBytes));
+        }
+        outManagedScene = ::slideio::transformScene(scene, cm);
+        return core::ColorManagementAvailability::Available;
+    } catch (const std::exception& ex) {
+        outDetail = ex.what();
+        spdlog::info("SlideIOAdapter: colour management unavailable: {}", ex.what());
+        return core::ColorManagementAvailability::BindFailed;
+    }
+}
+
 slideio::viewer::core::MetadataNode convertMetadata(
     const ::slideio::Metadata& meta, const std::string& name = {})
 {
@@ -495,7 +548,8 @@ std::string slideioLibraryVersion()
 }
 
 SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
-                               const std::string& driverId)
+                               const std::string& driverId,
+                               std::vector<uint8_t> defaultProfileBytes)
     : m_filePath(filePath)
 {
     spdlog::info("SlideIOAdapter: opening slide '{}', scene {}, driver '{}'",
@@ -573,6 +627,11 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
     // metadata overrides it.
     const bool fluorescenceHint = channelsIndicateFluorescence(*m_scene);
     m_slideInfo.fluorescenceHint = fluorescenceHint;
+    // After fluorescenceHint, not beside colorProfileInfo: the gate needs the
+    // hint, and reading it before it is set would offer colour management on
+    // fluorescence slides.
+    m_slideInfo.colorManagement = buildManagedScene(m_scene, m_slideInfo, defaultProfileBytes,
+                                                    m_managedScene, m_slideInfo.colorManagementDetail);
     m_slideInfo.isBrightfield = !fluorescenceHint && (
         (m_slideInfo.numChannels == 1) ||
         (m_slideInfo.numChannels == 3 && m_slideInfo.channelDataType == core::DataType::Byte));
@@ -703,7 +762,8 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
 }
 
 SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& auxImageName,
-                               const std::string& driverId)
+                               const std::string& driverId,
+                               std::vector<uint8_t> defaultProfileBytes)
     : m_filePath(filePath)
 {
     spdlog::info("SlideIOAdapter: opening slide '{}', aux image '{}', driver '{}'",
@@ -769,6 +829,11 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
     // disambiguation rationale.
     const bool fluorescenceHint = channelsIndicateFluorescence(*m_scene);
     m_slideInfo.fluorescenceHint = fluorescenceHint;
+    // After fluorescenceHint, not beside colorProfileInfo: the gate needs the
+    // hint, and reading it before it is set would offer colour management on
+    // fluorescence slides.
+    m_slideInfo.colorManagement = buildManagedScene(m_scene, m_slideInfo, defaultProfileBytes,
+                                                    m_managedScene, m_slideInfo.colorManagementDetail);
     m_slideInfo.isBrightfield = !fluorescenceHint && (
         (m_slideInfo.numChannels == 1) ||
         (m_slideInfo.numChannels == 3 && m_slideInfo.channelDataType == core::DataType::Byte));
@@ -1001,6 +1066,8 @@ void SlideIOAdapter::addOnLevelMarkedUnreliable(std::function<void(int)> listene
 
 core::TileData SlideIOAdapter::readTile(const core::TileKey& key)
 {
+    const auto& scene = activeScene();
+
     int level = key.level();
     int col = key.column();
     int row = key.row();
@@ -1109,10 +1176,10 @@ core::TileData SlideIOAdapter::readTile(const core::TileKey& key)
             if (m_slideInfo.numZSlices > 1 || m_slideInfo.numTFrames > 1) {
                 std::tuple<int, int> zRange(zIdx, zIdx + 1);
                 std::tuple<int, int> tRange(tIdx, tIdx + 1);
-                m_scene->readResampled4DBlockChannels(blockRect, srcBlockSize, channels,
+                scene->readResampled4DBlockChannels(blockRect, srcBlockSize, channels,
                                                       zRange, tRange, srcBuffer.data(), srcBufSize);
             } else {
-                m_scene->readResampledBlockChannels(blockRect, srcBlockSize, channels,
+                scene->readResampledBlockChannels(blockRect, srcBlockSize, channels,
                                                      srcBuffer.data(), srcBufSize);
             }
         } catch (const std::exception& ex) {
@@ -1174,6 +1241,37 @@ core::TileData SlideIOAdapter::readTile(const core::TileKey& key)
     return core::TileData::createError(tileW, tileH);
 }
 
+void SlideIOAdapter::setColorMode(core::ColorMode mode)
+{
+    m_colorMode.store(mode, std::memory_order_relaxed);
+}
+
+core::ColorMode SlideIOAdapter::colorMode() const
+{
+    return m_colorMode.load(std::memory_order_relaxed);
+}
+
+core::ColorProfileInfo SlideIOAdapter::activeColorProfileInfo() const
+{
+    const auto& scene = activeScene();
+    try {
+        return convertColorProfileInfo(scene->getColorProfileInfo());
+    } catch (const std::exception& ex) {
+        spdlog::warn("SlideIOAdapter: activeColorProfileInfo failed: {}", ex.what());
+        return {};
+    }
+}
+
+const std::shared_ptr<::slideio::Scene>& SlideIOAdapter::activeScene() const
+{
+    // Relaxed is sufficient: correctness comes from the mode being part of the
+    // cache key, not from this load's ordering. A read that straddles a toggle
+    // produces a valid tile of one mode or the other, and it is filed under
+    // that mode's key either way.
+    return (m_colorMode.load(std::memory_order_relaxed) == core::ColorMode::Managed
+            && m_managedScene) ? m_managedScene : m_scene;
+}
+
 std::vector<std::string> SlideIOAdapter::availableDriverIds()
 {
     try {
@@ -1191,6 +1289,7 @@ core::TileData SlideIOAdapter::readBlock(int slideX, int slideY, int slideWidth,
     if (slideWidth <= 0 || slideHeight <= 0 || targetWidth <= 0 || targetHeight <= 0) {
         return core::TileData::createError(targetWidth, targetHeight);
     }
+    const auto& scene = activeScene();
     try {
         std::tuple<int, int, int, int> blockRect(slideX, slideY, slideWidth, slideHeight);
         std::tuple<int, int> blockSize(targetWidth, targetHeight);
@@ -1209,10 +1308,10 @@ core::TileData SlideIOAdapter::readBlock(int slideX, int slideY, int slideWidth,
         if (m_slideInfo.numZSlices > 1 || m_slideInfo.numTFrames > 1) {
             std::tuple<int, int> zRange(zIndex, zIndex + 1);
             std::tuple<int, int> tRange(tFrame, tFrame + 1);
-            m_scene->readResampled4DBlockChannels(blockRect, blockSize, channels,
+            scene->readResampled4DBlockChannels(blockRect, blockSize, channels,
                                                    zRange, tRange, buffer.data(), bufSize);
         } else {
-            m_scene->readResampledBlockChannels(blockRect, blockSize, channels,
+            scene->readResampledBlockChannels(blockRect, blockSize, channels,
                                                  buffer.data(), bufSize);
         }
 

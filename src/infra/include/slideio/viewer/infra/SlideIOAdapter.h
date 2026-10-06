@@ -4,6 +4,8 @@
 #include "slideio/viewer/core/LevelUnreliableRegistry.h"
 #include "slideio/viewer/core/Types.h"
 
+#include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -33,10 +35,14 @@ class SlideIOAdapter : public core::ISlideSource
 public:
     // driverId selects a specific SlideIO driver (e.g., "SVS", "CZI"); pass "" to
     // let SlideIO auto-detect from the file content.
+    // defaultProfileBytes stands in for slides that embed no profile; it is
+    // ignored for slides that do. Empty means no default is configured.
     explicit SlideIOAdapter(const std::string& filePath, int sceneIndex = 0,
-                             const std::string& driverId = "");
+                             const std::string& driverId = "",
+                             std::vector<uint8_t> defaultProfileBytes = {});
     SlideIOAdapter(const std::string& filePath, const std::string& auxImageName,
-                   const std::string& driverId = "");
+                   const std::string& driverId = "",
+                   std::vector<uint8_t> defaultProfileBytes = {});
     ~SlideIOAdapter() override;
 
     static std::pair<std::vector<core::SceneInfo>, std::vector<core::SceneInfo>> enumerateScenes(
@@ -59,14 +65,27 @@ public:
 
     void addOnLevelMarkedUnreliable(std::function<void(int)> listener) override;
 
+    void setColorMode(core::ColorMode mode) override;
+    core::ColorMode colorMode() const override;
+    core::ColorProfileInfo activeColorProfileInfo() const override;
+
 private:
     bool isLevelUnreliable(int level) const;
     // Returns true the first time this level is marked. Subsequent calls return false.
     bool markLevelUnreliable(int level);
 
+    // The scene reads are served from: the colour-managed scene when the mode
+    // is Managed and one was built at open, otherwise the raw scene.
+    const std::shared_ptr<::slideio::Scene>& activeScene() const;
+
     std::string m_filePath;
     std::shared_ptr<::slideio::Slide> m_slide;
     std::shared_ptr<::slideio::Scene> m_scene;
+    // Built at open when the slide qualifies; null otherwise. Shares the origin's
+    // underlying CVScene and its read serialisation mutex, so this is a second
+    // Scene object, not a second reader or file handle.
+    std::shared_ptr<::slideio::Scene> m_managedScene;
+    std::atomic<core::ColorMode> m_colorMode{core::ColorMode::Raw};
     std::vector<core::LevelInfo> m_levels;
     core::SlideInfo m_slideInfo;
 
