@@ -572,6 +572,7 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
     // grayscale fluorescence, so an explicit fluorescence hint in channel
     // metadata overrides it.
     const bool fluorescenceHint = channelsIndicateFluorescence(*m_scene);
+    m_slideInfo.fluorescenceHint = fluorescenceHint;
     m_slideInfo.isBrightfield = !fluorescenceHint && (
         (m_slideInfo.numChannels == 1) ||
         (m_slideInfo.numChannels == 3 && m_slideInfo.channelDataType == core::DataType::Byte));
@@ -767,6 +768,7 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
     // Determine if this is a brightfield slide. See sibling call site for the
     // disambiguation rationale.
     const bool fluorescenceHint = channelsIndicateFluorescence(*m_scene);
+    m_slideInfo.fluorescenceHint = fluorescenceHint;
     m_slideInfo.isBrightfield = !fluorescenceHint && (
         (m_slideInfo.numChannels == 1) ||
         (m_slideInfo.numChannels == 3 && m_slideInfo.channelDataType == core::DataType::Byte));

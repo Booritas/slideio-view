@@ -299,6 +299,12 @@ struct SlideInfo
     std::vector<SceneInfo> auxImages;
     std::vector<LevelInfo> levels;
     ColorProfileInfo colorProfileInfo; // populated from slideio::Scene::getColorProfileInfo()
+    ColorManagementAvailability colorManagement = ColorManagementAvailability::NotColorimetric;
+    std::string colorManagementDetail;  // SlideIO's message when colorManagement == BindFailed
+    // Surfaced because isBrightfield is the wrong gate for ICC conversion in both
+    // directions: it is false for 16-bit RGB brightfield, which ColorManagement
+    // supports, and this hint is what separates 3x8-bit fluorescence from brightfield.
+    bool fluorescenceHint = false;
     MetadataNode slideMetadata;   // populated from slideio::Slide::getMetadata()
     MetadataNode sceneMetadata;   // populated from slideio::Scene::getMetadata()
     MetadataNode channelMetadata; // populated from slideio::Scene::getChannelAttributes()
