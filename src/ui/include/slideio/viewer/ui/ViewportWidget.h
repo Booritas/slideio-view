@@ -68,6 +68,10 @@ public:
     int currentZSlice() const;
     int currentTFrame() const;
 
+    // Bytes of the profile to assume for slides embedding none. Set before a
+    // slide is opened; empty means no default is configured.
+    void setDefaultColorProfile(std::vector<uint8_t> bytes);
+
 signals:
     void viewportChanged();
     void cursorMoved(double slideX, double slideY);

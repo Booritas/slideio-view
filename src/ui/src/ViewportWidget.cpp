@@ -1152,14 +1152,16 @@ using slideio::viewer::ui::SceneOpenResult;
 // overlay can change its label to indicate the slow-but-correct fallback path.
 SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
                               const std::string& driverId,
-                              std::function<void(QString)> statusCallback = {})
+                              std::function<void(QString)> statusCallback = {},
+                              std::vector<uint8_t> defaultProfileBytes = {})
 {
     namespace core = slideio::viewer::core;
     namespace infra = slideio::viewer::infra;
     SceneOpenResult r;
     r.filePath = filePath;
     try {
-        r.slideSource = std::make_shared<infra::SlideIOAdapter>(filePath, sceneIndex, driverId);
+        r.slideSource = std::make_shared<infra::SlideIOAdapter>(
+            filePath, sceneIndex, driverId, std::move(defaultProfileBytes));
         {
             r.slideInfo = r.slideSource->slideInfo();
             auto levels = r.slideSource->levels();
@@ -1203,7 +1205,8 @@ SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
 // Open an auxiliary image synchronously (background thread).
 SceneOpenResult openAuxImageSync(const std::string& filePath, const std::string& auxImageName,
                                  const std::string& driverId,
-                                 std::function<void(QString)> statusCallback = {})
+                                 std::function<void(QString)> statusCallback = {},
+                                 std::vector<uint8_t> defaultProfileBytes = {})
 {
     namespace core = slideio::viewer::core;
     namespace infra = slideio::viewer::infra;
@@ -1211,7 +1214,8 @@ SceneOpenResult openAuxImageSync(const std::string& filePath, const std::string&
     r.filePath = filePath;
     r.isAuxImage = true;
     try {
-        r.slideSource = std::make_shared<infra::SlideIOAdapter>(filePath, auxImageName, driverId);
+        r.slideSource = std::make_shared<infra::SlideIOAdapter>(
+            filePath, auxImageName, driverId, std::move(defaultProfileBytes));
         {
             r.slideInfo = r.slideSource->slideInfo();
             auto levels = r.slideSource->levels();
@@ -1300,6 +1304,11 @@ struct ViewportWidget::Impl
     std::string currentDriverId;  // empty for auto-detect
     int currentZSlice = 0;
     int currentTFrame = 0;
+
+    // Bytes of the profile to assume for slides embedding none, set by
+    // MainWindow (from QSettings, on the UI thread) before a slide is opened.
+    // Captured by value into the background open threads below.
+    std::vector<uint8_t> defaultColorProfile;
 
     // Async open: every slide-open call increments openOpId. Background workers
     // capture the id at start and finalize-on-UI checks it; mismatch means the
@@ -1842,8 +1851,9 @@ void ViewportWidget::openSlide(const std::string& filePath, const std::string& d
         }, Qt::QueuedConnection);
     };
 
-    std::thread([this, opId, filePath, driverId, statusCallback]() {
-        SceneOpenResult result = openSceneSync(filePath, 0, driverId, statusCallback);
+    std::vector<uint8_t> defaultProfileBytes = m_impl->defaultColorProfile;
+    std::thread([this, opId, filePath, driverId, statusCallback, defaultProfileBytes]() {
+        SceneOpenResult result = openSceneSync(filePath, 0, driverId, statusCallback, defaultProfileBytes);
         // Always enumerate scenes so the scene panel can populate, even if scene 0 worked.
         try {
             auto enumResult = infra::SlideIOAdapter::enumerateScenes(filePath, driverId);
@@ -2070,8 +2080,9 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
         }, Qt::QueuedConnection);
     };
 
-    std::thread([this, opId, filePath, sceneIndex, driverId, statusCallback]() {
-        SceneOpenResult result = openSceneSync(filePath, sceneIndex, driverId, statusCallback);
+    std::vector<uint8_t> defaultProfileBytes = m_impl->defaultColorProfile;
+    std::thread([this, opId, filePath, sceneIndex, driverId, statusCallback, defaultProfileBytes]() {
+        SceneOpenResult result = openSceneSync(filePath, sceneIndex, driverId, statusCallback, defaultProfileBytes);
         QMetaObject::invokeMethod(this,
             [this, opId, r = std::move(result)]() mutable {
                 installSceneOpenResult(opId, std::move(r));
@@ -2129,8 +2140,10 @@ void ViewportWidget::openAuxImage(const std::string& filePath, const std::string
         }, Qt::QueuedConnection);
     };
 
-    std::thread([this, opId, filePath, auxImageName, driverId, statusCallback]() {
-        SceneOpenResult result = openAuxImageSync(filePath, auxImageName, driverId, statusCallback);
+    std::vector<uint8_t> defaultProfileBytes = m_impl->defaultColorProfile;
+    std::thread([this, opId, filePath, auxImageName, driverId, statusCallback, defaultProfileBytes]() {
+        SceneOpenResult result = openAuxImageSync(filePath, auxImageName, driverId, statusCallback,
+                                                   defaultProfileBytes);
         QMetaObject::invokeMethod(this,
             [this, opId, r = std::move(result)]() mutable {
                 installSceneOpenResult(opId, std::move(r));
@@ -2329,6 +2342,11 @@ void ViewportWidget::setChannelSettings(const std::vector<core::ChannelInfo>& ch
         m_impl->slideInfo.channels = channels;
         update();
     }
+}
+
+void ViewportWidget::setDefaultColorProfile(std::vector<uint8_t> bytes)
+{
+    m_impl->defaultColorProfile = std::move(bytes);
 }
 
 void ViewportWidget::setZSlice(int zIndex)
