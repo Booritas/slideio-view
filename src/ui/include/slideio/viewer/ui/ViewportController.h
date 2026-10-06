@@ -55,6 +55,9 @@ public:
     int currentZIndex() const;
     int currentTFrame() const;
 
+    void setColorMode(core::ColorMode mode);
+    core::ColorMode colorMode() const;
+
 private:
     std::shared_ptr<core::TilePyramid> m_pyramid;
     std::shared_ptr<core::ITileCache> m_cache;
@@ -66,6 +69,7 @@ private:
     double m_baseMagnification;
     int m_zIndex = 0;
     int m_tFrame = 0;
+    core::ColorMode m_colorMode = core::ColorMode::Raw;
 };
 
 } // namespace slideio::viewer::ui

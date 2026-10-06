@@ -97,11 +97,12 @@ std::vector<core::TileKey> ViewportController::visibleTileKeys() const
         return {};
     }
     auto keys = m_coordSystem->visibleTiles(m_viewport);
-    // Remap keys to include current Z/T indices
-    if (m_zIndex != 0 || m_tFrame != 0) {
-        for (auto& key : keys) {
-            key = core::TileKey(key.level(), key.column(), key.row(), m_zIndex, m_tFrame);
-        }
+    // TilePyramid yields geometry only -- level, column, row. The remaining
+    // dimensions of a tile's identity are view state, so they are stamped here:
+    // Z/T as before, and now the colour mode, so raw and managed tiles of the
+    // same region stay distinct in the cache.
+    for (auto& key : keys) {
+        key = core::TileKey(key.level(), key.column(), key.row(), m_zIndex, m_tFrame, m_colorMode);
     }
     return keys;
 }
@@ -162,6 +163,16 @@ int ViewportController::currentZIndex() const
 int ViewportController::currentTFrame() const
 {
     return m_tFrame;
+}
+
+void ViewportController::setColorMode(core::ColorMode mode)
+{
+    m_colorMode = mode;
+}
+
+core::ColorMode ViewportController::colorMode() const
+{
+    return m_colorMode;
 }
 
 } // namespace slideio::viewer::ui

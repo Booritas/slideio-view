@@ -1783,7 +1783,8 @@ struct ViewportWidget::Impl
             fallbackCol = std::max(0, std::min(fallbackCol, fallbackLevelInfo.tilesX - 1));
             fallbackRow = std::max(0, std::min(fallbackRow, fallbackLevelInfo.tilesY - 1));
 
-            core::TileKey fallbackKey(fallbackLevel, fallbackCol, fallbackRow);
+            core::TileKey fallbackKey(fallbackLevel, fallbackCol, fallbackRow,
+                                      key.zIndex(), key.tFrame(), key.colorMode());
 
             if (textures.find(fallbackKey) != textures.end()) {
                 return fallbackKey;
