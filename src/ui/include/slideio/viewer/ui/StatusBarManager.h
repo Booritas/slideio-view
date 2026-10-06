@@ -22,11 +22,13 @@ public:
     void updateCursorPosition(double slideX, double slideY);
     void updateMagnification(double scale, double baseMagnification);
     void setLoading(bool loading);
+    void setColorManaged(bool managed);
 
 private:
     QStatusBar* m_statusBar;
     QLabel* m_cursorLabel;
     QLabel* m_magnificationLabel;
+    QLabel* m_colorLabel;
     QProgressBar* m_loadingIndicator;
 };
 

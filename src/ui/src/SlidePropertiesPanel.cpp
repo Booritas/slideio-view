@@ -216,9 +216,28 @@ void SlidePropertiesPanel::setSlideInfo(const core::SlideInfo& info)
     // Colour profile. A slide with no usable ICC profile still gets a row: the
     // absence is the point, because it tells the reader the colours on screen
     // are raw scanner RGB rather than colorimetrically defined.
-    const auto& profile = info.colorProfileInfo;
-    const QString summary = QString::fromStdString(core::colorProfileSummary(profile));
-    if (!profile.present) {
+    rebuildColorProfileRows(info.colorProfileInfo);
+}
+
+void SlidePropertiesPanel::setActiveColorProfile(const core::ColorProfileInfo& info)
+{
+    rebuildColorProfileRows(info);
+}
+
+void SlidePropertiesPanel::rebuildColorProfileRows(const core::ColorProfileInfo& info)
+{
+    // Remove any existing top-level "Color profile" item first, so repeated
+    // toggles do not stack duplicate groups in the panel.
+    for (int i = 0; i < m_impl->tree->topLevelItemCount(); ++i) {
+        QTreeWidgetItem* item = m_impl->tree->topLevelItem(i);
+        if (item->text(0) == QStringLiteral("Color profile")) {
+            delete m_impl->tree->takeTopLevelItem(i);
+            break;
+        }
+    }
+
+    const QString summary = QString::fromStdString(core::colorProfileSummary(info));
+    if (!info.present) {
         addRow(m_impl->tree, QStringLiteral("Color profile"), summary);
     } else {
         auto* root = new QTreeWidgetItem(m_impl->tree);
@@ -235,18 +254,18 @@ void SlidePropertiesPanel::setSlideInfo(const core::SlideInfo& info)
         };
 
         addChild(QStringLiteral("Source"),
-                 QString::fromLatin1(core::colorProfileSourceName(profile.source)));
-        addChild(QStringLiteral("Description"), orUnknown(profile.description));
-        addChild(QStringLiteral("Manufacturer"), orUnknown(profile.manufacturer));
-        addChild(QStringLiteral("Model"), orUnknown(profile.model));
-        addChild(QStringLiteral("Version"), orUnknown(profile.version));
+                 QString::fromLatin1(core::colorProfileSourceName(info.source)));
+        addChild(QStringLiteral("Description"), orUnknown(info.description));
+        addChild(QStringLiteral("Manufacturer"), orUnknown(info.manufacturer));
+        addChild(QStringLiteral("Model"), orUnknown(info.model));
+        addChild(QStringLiteral("Version"), orUnknown(info.version));
         addChild(QStringLiteral("Data space"),
-                 QString::fromLatin1(core::iccColorSpaceName(profile.dataSpace)));
+                 QString::fromLatin1(core::iccColorSpaceName(info.dataSpace)));
         addChild(QStringLiteral("Connection space"),
-                 QString::fromLatin1(core::iccColorSpaceName(profile.connectionSpace)));
+                 QString::fromLatin1(core::iccColorSpaceName(info.connectionSpace)));
         addChild(QStringLiteral("Intent"),
-                 QString::fromLatin1(core::renderingIntentName(profile.intent)));
-        addChild(QStringLiteral("Size"), formatBytes(static_cast<qint64>(profile.dataSize)));
+                 QString::fromLatin1(core::renderingIntentName(info.intent)));
+        addChild(QStringLiteral("Size"), formatBytes(static_cast<qint64>(info.dataSize)));
         root->setExpanded(true);
     }
 }

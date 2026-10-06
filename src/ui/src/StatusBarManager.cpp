@@ -14,6 +14,7 @@ StatusBarManager::StatusBarManager(QObject* parent)
     , m_statusBar(nullptr)
     , m_cursorLabel(nullptr)
     , m_magnificationLabel(nullptr)
+    , m_colorLabel(nullptr)
     , m_loadingIndicator(nullptr)
 {
 }
@@ -39,6 +40,10 @@ void StatusBarManager::setup(QStatusBar* statusBar)
     m_magnificationLabel = new QLabel("100%", m_statusBar);
     m_magnificationLabel->setMinimumWidth(100);
     m_statusBar->addPermanentWidget(m_magnificationLabel);
+
+    m_colorLabel = new QLabel(QString(), m_statusBar);
+    m_colorLabel->setVisible(false);
+    m_statusBar->addPermanentWidget(m_colorLabel);
 
     m_loadingIndicator = new QProgressBar(m_statusBar);
     m_loadingIndicator->setMaximumWidth(100);
@@ -87,6 +92,15 @@ void StatusBarManager::setLoading(bool loading)
     if (m_loadingIndicator) {
         m_loadingIndicator->setVisible(loading);
     }
+}
+
+void StatusBarManager::setColorManaged(bool managed)
+{
+    if (!m_colorLabel) {
+        return;
+    }
+    m_colorLabel->setText(managed ? QStringLiteral("sRGB") : QString());
+    m_colorLabel->setVisible(managed);
 }
 
 } // namespace slideio::viewer::ui
