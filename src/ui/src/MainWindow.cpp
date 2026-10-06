@@ -35,6 +35,7 @@
 #include <QRegion>
 #include <QScreen>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QStatusBar>
 #include <QUrl>
 
@@ -157,7 +158,8 @@ struct MainWindow::Impl
 
         colorManagementAction = new QAction("Color Management", owner);
         colorManagementAction->setCheckable(true);
-        colorManagementAction->setShortcut(QKeySequence("Ctrl+Shift+C"));
+        colorManagementAction->setShortcut(QKeySequence("Ctrl+Shift+I"));
+        colorManagementAction->setEnabled(false);
 
         setDefaultProfileAction = new QAction("Set Default ICC Profile…", owner);
         setDefaultProfileAction->setStatusTip(
@@ -389,10 +391,21 @@ struct MainWindow::Impl
                 QSettings settings;
                 const bool wanted = available
                     && settings.value(kColorManagementKey, false).toBool();
-                colorManagementAction->setChecked(wanted);
+                // Syncing the action's checked state to the newly opened slide is
+                // not a user action and must not be recorded as one: without this
+                // blocker, an unmanageable slide (wanted == false) changing the
+                // action's state away from a remembered "on" would fire toggled()
+                // and overwrite the stored preference with false. The lines below
+                // already perform every update onColorManagementToggled would —
+                // the slot is only suppressed, not skipped.
+                {
+                    QSignalBlocker blocker(colorManagementAction);
+                    colorManagementAction->setChecked(wanted);
+                }
                 viewportWidget->setColorMode(
                     wanted ? core::ColorMode::Managed : core::ColorMode::Raw);
                 statusBarManager->setColorManaged(wanted);
+                propertiesPanel->setActiveColorProfile(viewportWidget->activeColorProfileInfo());
 
                 metadataPanel->setSlideInfo(info);
                 // No thumbnail will arrive for a slide with no downsampled
@@ -420,6 +433,17 @@ struct MainWindow::Impl
             channelMixerPanel->clearChannels();
             propertiesPanel->clear();
             metadataPanel->clear();
+
+            colorManagementAction->setEnabled(false);
+            {
+                // As in the slide-opened handler: resetting the action to reflect
+                // "no slide open" is not a user action, so it must not fire
+                // toggled() and overwrite the remembered view/colorManagement
+                // preference.
+                QSignalBlocker blocker(colorManagementAction);
+                colorManagementAction->setChecked(false);
+            }
+            statusBarManager->setColorManaged(false);
             // Note: scene panel is NOT cleared here because slideClosed also fires
             // during scene switching (openScene calls closeSlide internally).
             // The scene panel is cleared explicitly in openSlide() and the close action.

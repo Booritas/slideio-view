@@ -2351,7 +2351,7 @@ void ViewportWidget::setDefaultColorProfile(std::vector<uint8_t> bytes)
 
 void ViewportWidget::setColorMode(core::ColorMode mode)
 {
-    if (!m_impl->slideSource) {
+    if (!m_impl->slideSource || !m_impl->controller) {
         return;
     }
     m_impl->slideSource->setColorMode(mode);
