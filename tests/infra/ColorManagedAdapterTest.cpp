@@ -4,9 +4,11 @@
 #include "slideio/viewer/core/ColorManagement.h"
 #include "slideio/viewer/core/Types.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 using namespace slideio::viewer;
 
@@ -29,6 +31,21 @@ bool haveImage(const std::string& path)
     if (!f) return false;
     std::fclose(f);
     return true;
+}
+
+// Catch2 stringifies both operands of a failed assertion, and these buffers are
+// ~196 KB each -- asserting on them directly means a genuine regression crashes
+// the reporter instead of reporting. Compare scalar summaries so a failure stays
+// readable, and so the message says how far apart the buffers are. Guarded
+// against mismatched sizes even though callers already assert equality first.
+size_t countDifferingBytes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b)
+{
+    const size_t n = std::min(a.size(), b.size());
+    size_t count = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (a[i] != b[i]) ++count;
+    }
+    return count;
 }
 
 } // namespace
@@ -122,7 +139,7 @@ TEST_CASE("Colour management changes the pixels of a profiled slide",
     REQUIRE_FALSE(raw.isError());
     REQUIRE_FALSE(managed.isError());
     REQUIRE(raw.buffer().size() == managed.buffer().size());
-    REQUIRE(raw.buffer() != managed.buffer());
+    REQUIRE(countDifferingBytes(raw.buffer(), managed.buffer()) > 0);
 }
 
 TEST_CASE("Colour managing an sRGB-profiled slide is an identity transform",
@@ -147,7 +164,8 @@ TEST_CASE("Colour managing an sRGB-profiled slide is an identity transform",
 
     REQUIRE_FALSE(raw.isError());
     REQUIRE_FALSE(managed.isError());
-    REQUIRE(raw.buffer() == managed.buffer());
+    REQUIRE(raw.buffer().size() == managed.buffer().size());
+    REQUIRE(countDifferingBytes(raw.buffer(), managed.buffer()) == 0);
 }
 
 TEST_CASE("A configured default profile is reported as the bound profile",
