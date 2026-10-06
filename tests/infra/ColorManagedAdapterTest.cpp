@@ -130,11 +130,14 @@ TEST_CASE("Colour management changes the pixels of a profiled slide",
     REQUIRE(adapter.slideInfo().colorManagement == core::ColorManagementAvailability::Available);
 
     // Level 2 is this slide's coarsest pyramid level (3 levels total): a real,
-    // single tile, read fast.
-    const core::TileKey key(2, 0, 0);
-    const core::TileData raw = adapter.readTile(key);
+    // single tile, read fast. The mode travels on the key, which is what the
+    // adapter selects the scene by; setColorMode is called alongside only
+    // because that is what the UI does.
+    const core::TileKey rawKey(2, 0, 0, 0, 0, core::ColorMode::Raw);
+    const core::TileKey managedKey(2, 0, 0, 0, 0, core::ColorMode::Managed);
+    const core::TileData raw = adapter.readTile(rawKey);
     adapter.setColorMode(core::ColorMode::Managed);
-    const core::TileData managed = adapter.readTile(key);
+    const core::TileData managed = adapter.readTile(managedKey);
 
     REQUIRE_FALSE(raw.isError());
     REQUIRE_FALSE(managed.isError());
@@ -157,15 +160,81 @@ TEST_CASE("Colour managing an sRGB-profiled slide is an identity transform",
     infra::SlideIOAdapter adapter(path, 0, "");
     REQUIRE(adapter.slideInfo().colorManagement == core::ColorManagementAvailability::Available);
 
-    const core::TileKey key(0, 0, 0);
-    const core::TileData raw = adapter.readTile(key);
+    const core::TileKey rawKey(0, 0, 0, 0, 0, core::ColorMode::Raw);
+    const core::TileKey managedKey(0, 0, 0, 0, 0, core::ColorMode::Managed);
+    const core::TileData raw = adapter.readTile(rawKey);
     adapter.setColorMode(core::ColorMode::Managed);
-    const core::TileData managed = adapter.readTile(key);
+    const core::TileData managed = adapter.readTile(managedKey);
 
     REQUIRE_FALSE(raw.isError());
     REQUIRE_FALSE(managed.isError());
     REQUIRE(raw.buffer().size() == managed.buffer().size());
     REQUIRE(countDifferingBytes(raw.buffer(), managed.buffer()) == 0);
+}
+
+TEST_CASE("A tile's pixels follow its key's colour mode, not the adapter's current mode",
+          "[infra][ColorManagement]")
+{
+    // The regression this guards: readTile used to pick the scene from the
+    // adapter's live atomic mode while TileLoadScheduler cached the result
+    // under the requested key. A mode flip between enqueue and read therefore
+    // filed one rendition's pixels under the other's key -- permanently, until
+    // eviction -- which is exactly the mismatch that putting ColorMode in
+    // TileKey exists to prevent. Reading the same key under both live modes
+    // must now give byte-identical results.
+    const std::string path = imagePath("svs/JP2K-33003-1.svs");
+    if (!haveImage(path)) { SKIP("test image corpus not available"); }
+
+    infra::SlideIOAdapter adapter(path, 0, "");
+    REQUIRE(adapter.slideInfo().colorManagement == core::ColorManagementAvailability::Available);
+
+    const core::TileKey managedKey(2, 0, 0, 0, 0, core::ColorMode::Managed);
+
+    // A managed key read while the adapter still says Raw -- the open-time
+    // window, before MainWindow's slideOpened handler flips the mode.
+    adapter.setColorMode(core::ColorMode::Raw);
+    const core::TileData duringRaw = adapter.readTile(managedKey);
+    adapter.setColorMode(core::ColorMode::Managed);
+    const core::TileData duringManaged = adapter.readTile(managedKey);
+
+    REQUIRE_FALSE(duringRaw.isError());
+    REQUIRE_FALSE(duringManaged.isError());
+    REQUIRE(duringRaw.buffer().size() == duringManaged.buffer().size());
+    REQUIRE(countDifferingBytes(duringRaw.buffer(), duringManaged.buffer()) == 0);
+
+    // And the managed key really did produce managed pixels in both cases, so
+    // the agreement above is not two raw reads agreeing with each other.
+    const core::TileKey rawKey(2, 0, 0, 0, 0, core::ColorMode::Raw);
+    adapter.setColorMode(core::ColorMode::Raw);
+    const core::TileData rawPixels = adapter.readTile(rawKey);
+    REQUIRE_FALSE(rawPixels.isError());
+    REQUIRE(rawPixels.buffer().size() == duringRaw.buffer().size());
+    REQUIRE(countDifferingBytes(rawPixels.buffer(), duringRaw.buffer()) > 0);
+}
+
+TEST_CASE("A raw key reads raw pixels even while the adapter is in managed mode",
+          "[infra][ColorManagement]")
+{
+    // The converse of the case above: an in-flight raw read that completes
+    // after a toggle to Managed must still deliver raw pixels, because a raw
+    // key is what the cache will file it under.
+    const std::string path = imagePath("svs/JP2K-33003-1.svs");
+    if (!haveImage(path)) { SKIP("test image corpus not available"); }
+
+    infra::SlideIOAdapter adapter(path, 0, "");
+    REQUIRE(adapter.slideInfo().colorManagement == core::ColorManagementAvailability::Available);
+
+    const core::TileKey rawKey(2, 0, 0, 0, 0, core::ColorMode::Raw);
+
+    adapter.setColorMode(core::ColorMode::Raw);
+    const core::TileData duringRaw = adapter.readTile(rawKey);
+    adapter.setColorMode(core::ColorMode::Managed);
+    const core::TileData duringManaged = adapter.readTile(rawKey);
+
+    REQUIRE_FALSE(duringRaw.isError());
+    REQUIRE_FALSE(duringManaged.isError());
+    REQUIRE(duringRaw.buffer().size() == duringManaged.buffer().size());
+    REQUIRE(countDifferingBytes(duringRaw.buffer(), duringManaged.buffer()) == 0);
 }
 
 TEST_CASE("A configured default profile is reported as the bound profile",

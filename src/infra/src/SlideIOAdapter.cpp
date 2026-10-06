@@ -1066,7 +1066,15 @@ void SlideIOAdapter::addOnLevelMarkedUnreliable(std::function<void(int)> listene
 
 core::TileData SlideIOAdapter::readTile(const core::TileKey& key)
 {
-    const auto& scene = activeScene();
+    // Selected from the key, not from the adapter's current mode. The key is the
+    // request, and the cache files the result under it, so choosing by live mode
+    // would let a read that started before a toggle be cached as though it were
+    // the other rendition -- the exact mismatch keying by mode exists to prevent.
+    const std::shared_ptr<::slideio::Scene>& scene = sceneForMode(key.colorMode());
+    // Compared against the pointer sceneForMode actually returned, so this stays
+    // true to the selection above even if the mode is Managed but no managed
+    // scene was built and the read fell back to the origin.
+    const bool throughManagedScene = (m_managedScene != nullptr) && (scene == m_managedScene);
 
     int level = key.level();
     int col = key.column();
@@ -1185,6 +1193,23 @@ core::TileData SlideIOAdapter::readTile(const core::TileKey& key)
         } catch (const std::exception& ex) {
             spdlog::error("SlideIOAdapter::readTile: exception reading tile {} (multiplier={}): {}",
                           key.toString(), multiplier, ex.what());
+
+            // Pyramid reliability is a property of the file, not of the colour
+            // transform layered over it. A read through the managed scene can
+            // fail for reasons that say nothing about the underlying level -- a
+            // broken profile, a transform that cannot be applied -- and the
+            // unreliable-level registry is shared by both scenes and never
+            // cleared. Condemning a level on such a failure would route every
+            // later read of it, raw ones included, through the fallback path,
+            // and at level 0 there is no finer level to fall back to: the slide
+            // would stay blank at full resolution for the rest of the session.
+            // So fail this one tile and leave the origin's pyramid alone.
+            if (throughManagedScene) {
+                spdlog::warn("SlideIOAdapter::readTile: colour-managed read of tile {} failed; "
+                             "leaving level {} reliability unchanged", key.toString(), level);
+                return core::TileData::createError(tileW, tileH);
+            }
+
             // Figure out which level SlideIO most likely used for this read, so
             // we can mark that level (not just the requested one) unreliable.
             double effectiveScale = static_cast<double>(multiplier) * lvl.scale;
@@ -1272,14 +1297,21 @@ std::vector<uint8_t> SlideIOAdapter::embeddedProfileBytes() const
     }
 }
 
+const std::shared_ptr<::slideio::Scene>& SlideIOAdapter::sceneForMode(core::ColorMode mode) const
+{
+    return (mode == core::ColorMode::Managed && m_managedScene) ? m_managedScene : m_scene;
+}
+
 const std::shared_ptr<::slideio::Scene>& SlideIOAdapter::activeScene() const
 {
-    // Relaxed is sufficient: correctness comes from the mode being part of the
-    // cache key, not from this load's ordering. A read that straddles a toggle
-    // produces a valid tile of one mode or the other, and it is filed under
-    // that mode's key either way.
-    return (m_colorMode.load(std::memory_order_relaxed) == core::ColorMode::Managed
-            && m_managedScene) ? m_managedScene : m_scene;
+    // Only for reads that carry no colour mode of their own -- readBlock, which
+    // serves thumbnails and overviews and is never cached under a TileKey. Keyed
+    // reads must go through sceneForMode(key.colorMode()) instead, so that their
+    // pixels and the key they are filed under cannot disagree.
+    //
+    // Relaxed is sufficient: nothing here is ordered against other state, and a
+    // readBlock that straddles a toggle may legitimately return either rendition.
+    return sceneForMode(m_colorMode.load(std::memory_order_relaxed));
 }
 
 std::vector<std::string> SlideIOAdapter::availableDriverIds()
