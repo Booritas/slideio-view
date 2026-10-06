@@ -2699,7 +2699,19 @@ void ViewportWidget::paintGL()
                 static_cast<int>(std::ceil(visSlideRect.width)),
                 static_cast<int>(std::ceil(visSlideRect.height)));
 
-            for (const auto& fbKey : coarseTiles) {
+            for (auto& fbKey : coarseTiles) {
+                // TilePyramid yields geometry only, so its keys carry the default
+                // Raw colour mode. Stamp the controller's mode on, exactly as
+                // visibleTileKeys() does: without it this pass would look up raw
+                // cache entries and draw raw pixels behind a managed view, which
+                // is what the user sees everywhere a visible tile has not loaded
+                // yet -- all through panning and zooming. In Managed mode the
+                // backdrop may now be briefly absent until managed tiles arrive;
+                // a missing backdrop is correct, wrong-coloured pixels are not.
+                fbKey = core::TileKey(fbKey.level(), fbKey.column(), fbKey.row(),
+                                      fbKey.zIndex(), fbKey.tFrame(),
+                                      m_impl->controller->colorMode());
+
                 auto fbTexIt = m_impl->textures.find(fbKey);
                 if (fbTexIt == m_impl->textures.end()) {
                     // Also check the tile cache for un-uploaded tiles
