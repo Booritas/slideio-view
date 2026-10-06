@@ -30,6 +30,7 @@ protected:
 private:
     void onSetDefaultColorProfile();
     void onClearDefaultColorProfile();
+    void onColorManagementToggled(bool enabled);
 
     // Reads the configured default ICC profile (if any) from disk and hands
     // its bytes to the viewport. Called once at startup and again whenever

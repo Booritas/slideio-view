@@ -47,6 +47,7 @@ namespace
 constexpr int kMaxRecentFiles = 10;
 const QString kRecentFilesKey = "recentFiles";
 constexpr auto kDefaultProfileKey = "color/defaultSourceProfile";
+constexpr auto kColorManagementKey = "view/colorManagement";
 } // anonymous namespace
 
 namespace slideio::viewer::ui
@@ -95,6 +96,7 @@ struct MainWindow::Impl
     QAction* associatedImagesToggleAction = nullptr;
     QAction* propertiesToggleAction = nullptr;
     QAction* metadataToggleAction = nullptr;
+    QAction* colorManagementAction = nullptr;
     QAction* setDefaultProfileAction = nullptr;
     QAction* clearDefaultProfileAction = nullptr;
     QAction* aboutAction = nullptr;
@@ -153,6 +155,10 @@ struct MainWindow::Impl
         minimapToggleAction->setChecked(true);
         minimapToggleAction->setStatusTip("Toggle the minimap overlay");
 
+        colorManagementAction = new QAction("Color Management", owner);
+        colorManagementAction->setCheckable(true);
+        colorManagementAction->setShortcut(QKeySequence("Ctrl+Shift+C"));
+
         setDefaultProfileAction = new QAction("Set Default ICC Profile…", owner);
         setDefaultProfileAction->setStatusTip(
             "Choose an RGB ICC profile to assume for slides that embed none");
@@ -199,6 +205,8 @@ struct MainWindow::Impl
         viewMenu->addAction(associatedImagesToggleAction);
         viewMenu->addAction(propertiesToggleAction);
         viewMenu->addAction(metadataToggleAction);
+        viewMenu->addSeparator();
+        viewMenu->addAction(colorManagementAction);
         viewMenu->addSeparator();
         viewMenu->addAction(setDefaultProfileAction);
         viewMenu->addAction(clearDefaultProfileAction);
@@ -279,6 +287,9 @@ struct MainWindow::Impl
         });
 
         QObject::connect(minimapToggleAction, &QAction::toggled, minimapWidget, &QWidget::setVisible);
+
+        QObject::connect(colorManagementAction, &QAction::toggled,
+                          owner, &MainWindow::onColorManagementToggled);
 
         QObject::connect(setDefaultProfileAction, &QAction::triggered,
                           owner, &MainWindow::onSetDefaultColorProfile);
@@ -367,6 +378,22 @@ struct MainWindow::Impl
                 }
 
                 propertiesPanel->setSlideInfo(info);
+
+                const bool available =
+                    info.colorManagement == core::ColorManagementAvailability::Available;
+                colorManagementAction->setEnabled(available);
+                colorManagementAction->setToolTip(QString::fromStdString(
+                    core::colorManagementUnavailableReason(info.colorManagement,
+                                                           info.colorManagementDetail)));
+
+                QSettings settings;
+                const bool wanted = available
+                    && settings.value(kColorManagementKey, false).toBool();
+                colorManagementAction->setChecked(wanted);
+                viewportWidget->setColorMode(
+                    wanted ? core::ColorMode::Managed : core::ColorMode::Raw);
+                statusBarManager->setColorManaged(wanted);
+
                 metadataPanel->setSlideInfo(info);
                 // No thumbnail will arrive for a slide with no downsampled
                 // level, so tell the minimap to explain the empty panel
@@ -756,6 +783,22 @@ void MainWindow::openSlide(const std::string& path, const std::string& driverId)
     // The scene panel is populated, the loading overlay is hidden, and other
     // post-open UI updates run from the slideOpened/loadingFinished signal handlers.
     m_impl->viewportWidget->openSlide(path, driverId);
+}
+
+void MainWindow::onColorManagementToggled(bool enabled)
+{
+    QSettings settings;
+    settings.setValue(kColorManagementKey, enabled);
+
+    m_impl->viewportWidget->setColorMode(enabled ? core::ColorMode::Managed
+                                                 : core::ColorMode::Raw);
+    m_impl->statusBarManager->setColorManaged(enabled);
+    // The two scenes report different provenance -- the wrapper reports the
+    // profile it bound, which for a supplied default is not what the file
+    // carries -- so the panel is refreshed from the active scene, not from the
+    // SlideInfo captured at open.
+    m_impl->propertiesPanel->setActiveColorProfile(
+        m_impl->viewportWidget->activeColorProfileInfo());
 }
 
 void MainWindow::onSetDefaultColorProfile()

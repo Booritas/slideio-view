@@ -2349,6 +2349,57 @@ void ViewportWidget::setDefaultColorProfile(std::vector<uint8_t> bytes)
     m_impl->defaultColorProfile = std::move(bytes);
 }
 
+void ViewportWidget::setColorMode(core::ColorMode mode)
+{
+    if (!m_impl->slideSource) {
+        return;
+    }
+    m_impl->slideSource->setColorMode(mode);
+    m_impl->controller->setColorMode(mode);
+    releaseTexturesOfOtherMode(mode);
+    // No cache clear and no scheduler cancellation: the mode is part of the key,
+    // so tiles of the other mode are simply not looked up, and any read already
+    // in flight files its result under the key it was issued with.
+    m_impl->controller->requestVisibleTiles();
+    update();
+}
+
+core::ColorProfileInfo ViewportWidget::activeColorProfileInfo() const
+{
+    if (!m_impl->slideSource) {
+        return {};
+    }
+    return m_impl->slideSource->activeColorProfileInfo();
+}
+
+void ViewportWidget::releaseTexturesOfOtherMode(core::ColorMode keep)
+{
+    if (!m_impl->gl) {
+        return;
+    }
+    makeCurrent();
+    for (auto it = m_impl->textures.begin(); it != m_impl->textures.end(); ) {
+        if (it->first.colorMode() != keep) {
+            m_impl->gl->glDeleteTextures(1, &it->second);
+            it = m_impl->textures.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto it = m_impl->fluorescenceTextures.begin();
+         it != m_impl->fluorescenceTextures.end(); ) {
+        if (it->first.colorMode() != keep) {
+            for (GLuint id : it->second.channelTexIds) {
+                m_impl->gl->glDeleteTextures(1, &id);
+            }
+            it = m_impl->fluorescenceTextures.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    doneCurrent();
+}
+
 void ViewportWidget::setZSlice(int zIndex)
 {
     if (!m_impl->slideOpen || !m_impl->controller) return;

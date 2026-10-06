@@ -26,7 +26,17 @@ public:
     void setSlideInfo(const core::SlideInfo& info);
     void clear();
 
+    // Replaces the colour-profile rows with the profile of the scene currently
+    // being read, leaving every other row as setSlideInfo left it.
+    void setActiveColorProfile(const core::ColorProfileInfo& info);
+
 private:
+    // Removes any existing top-level "Color profile" item, then adds a fresh
+    // one built from `info`. Shared by setSlideInfo (the profile at open time)
+    // and setActiveColorProfile (the profile of the scene currently selected
+    // for reading, which can differ after a colour-management toggle).
+    void rebuildColorProfileRows(const core::ColorProfileInfo& info);
+
     struct Impl;
     std::unique_ptr<Impl> m_impl;
 };

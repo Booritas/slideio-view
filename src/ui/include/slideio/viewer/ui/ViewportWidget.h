@@ -1,5 +1,6 @@
 #pragma once
 
+#include "slideio/viewer/core/TileKey.h"
 #include "slideio/viewer/core/Types.h"
 #include "slideio/viewer/ui/GpuInfo.h"
 
@@ -72,6 +73,14 @@ public:
     // slide is opened; empty means no default is configured.
     void setDefaultColorProfile(std::vector<uint8_t> bytes);
 
+    // Switches which rendition of the open slide is read and displayed.
+    // A no-op when no slide is open.
+    void setColorMode(core::ColorMode mode);
+
+    // The colour profile of the scene currently being read. Default-constructed
+    // when no slide is open.
+    core::ColorProfileInfo activeColorProfileInfo() const;
+
 signals:
     void viewportChanged();
     void cursorMoved(double slideX, double slideY);
@@ -98,6 +107,11 @@ protected:
 
 private:
     void installSceneOpenResult(uint64_t opId, SceneOpenResult result);
+
+    // Drops the GPU textures of every tile not in `keep`'s colour mode so the
+    // other rendition's CPU-cached tiles can be re-uploaded on demand instead
+    // of both modes' textures being held at once.
+    void releaseTexturesOfOtherMode(core::ColorMode keep);
 
     struct Impl;
     std::unique_ptr<Impl> m_impl;
