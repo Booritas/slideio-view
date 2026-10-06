@@ -865,6 +865,7 @@ void MainWindow::onSetDefaultColorProfile()
     QSettings settings;
     settings.setValue(kDefaultProfileKey, path);
     applyDefaultColorProfile();
+    warnDefaultProfileAppliesToNewSlides();
 }
 
 void MainWindow::onClearDefaultColorProfile()
@@ -872,6 +873,24 @@ void MainWindow::onClearDefaultColorProfile()
     QSettings settings;
     settings.remove(kDefaultProfileKey);
     applyDefaultColorProfile();
+    warnDefaultProfileAppliesToNewSlides();
+}
+
+// The default profile is only consumed where an adapter is constructed, so a
+// slide that is already open keeps the binding it was opened with -- including
+// the "no profile at all" binding whose menu tooltip says no default is set.
+// Rebuilding the open slide's scenes in place is a larger change; saying so
+// plainly is the honest alternative to leaving the user with a stale view and
+// a tooltip that has become untrue.
+void MainWindow::warnDefaultProfileAppliesToNewSlides()
+{
+    if (m_impl->viewportWidget->currentFilePath().empty()) {
+        return;
+    }
+    QMessageBox::information(
+        this, tr("Default ICC Profile"),
+        tr("The default color profile applies to slides opened from now on. "
+           "Reopen the current slide for the change to take effect on it."));
 }
 
 // Reads the configured profile from disk and hands it to the viewport. The path
