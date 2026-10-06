@@ -8,6 +8,7 @@ add_executable(slideio-viewer-core-tests
     core/LevelUnreliableRegistryTest.cpp
     core/ScaleBarTest.cpp
     core/TileSamplingTest.cpp
+    core/ColorProfileInfoTest.cpp
 )
 
 target_link_libraries(slideio-viewer-core-tests

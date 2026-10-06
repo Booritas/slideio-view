@@ -209,6 +209,57 @@ struct LevelInfo
     int tilesY = 0;
 };
 
+/// Where a scene's ICC colour profile came from. Mirrors slideio::ColorProfileSource.
+enum class ColorProfileSource
+{
+    None,       ///< the file carries no profile
+    Embedded,   ///< a real ICC profile read out of the file
+    Assumed,    ///< none embedded; sRGB substituted by SlideIO
+    Supplied,   ///< handed to SlideIO by the caller, not found in the file
+};
+
+/// Colour space of ICC profile data. Mirrors slideio::IccColorSpace, and is
+/// unrelated to the channel colours above.
+enum class IccColorSpace { Unknown, Gray, RGB, CMYK, Lab, XYZ, YCbCr };
+
+/// ICC rendering intent. Mirrors slideio::RenderingIntent.
+enum class RenderingIntent { Perceptual, RelativeColorimetric, Saturation, AbsoluteColorimetric };
+
+/// Parsed header of a scene's ICC colour profile.
+///
+/// A mirror of slideio::ColorProfileInfo rather than a reuse of it: that type is
+/// exported from SlideIO::core, and this library links nothing. Translation
+/// happens in the infrastructure layer, where the SlideIO headers already live.
+///
+/// `present` gates every other field. It is false both when the scene carries no
+/// profile and when it carries bytes that would not parse — and in the second
+/// case `source` still reads Embedded, because it is copied from the tag the
+/// driver found, not derived from a successful parse. So `present == false`
+/// means "no usable colorimetry", whatever `source` says.
+struct ColorProfileInfo
+{
+    bool present = false;
+    ColorProfileSource source = ColorProfileSource::None;
+    std::string description;
+    std::string manufacturer;
+    std::string model;
+    std::string version;
+    IccColorSpace dataSpace = IccColorSpace::Unknown;
+    IccColorSpace connectionSpace = IccColorSpace::Unknown;
+    RenderingIntent intent = RenderingIntent::RelativeColorimetric;
+    size_t dataSize = 0;
+};
+
+/// One-line description of a scene's colour profile, for the properties panel:
+/// what the profile calls itself, and whether the slide actually carries it.
+/// Returns a "not color-managed" line when there is no usable colorimetry.
+std::string colorProfileSummary(const ColorProfileInfo& info);
+
+/// Display names for the colour-profile enums, for the properties panel rows.
+const char* colorProfileSourceName(ColorProfileSource source);
+const char* iccColorSpaceName(IccColorSpace space);
+const char* renderingIntentName(RenderingIntent intent);
+
 struct SlideInfo
 {
     std::string filePath;
@@ -235,6 +286,7 @@ struct SlideInfo
     std::vector<SceneInfo> scenes;
     std::vector<SceneInfo> auxImages;
     std::vector<LevelInfo> levels;
+    ColorProfileInfo colorProfileInfo; // populated from slideio::Scene::getColorProfileInfo()
     MetadataNode slideMetadata;   // populated from slideio::Slide::getMetadata()
     MetadataNode sceneMetadata;   // populated from slideio::Scene::getMetadata()
     MetadataNode channelMetadata; // populated from slideio::Scene::getChannelAttributes()

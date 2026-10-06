@@ -7,6 +7,7 @@ add_library(slideio-viewer-core STATIC
     src/LevelUnreliableRegistry.cpp
     src/ScaleBar.cpp
     src/TileSampling.cpp
+    src/ColorProfileInfo.cpp
 )
 
 target_include_directories(slideio-viewer-core PUBLIC

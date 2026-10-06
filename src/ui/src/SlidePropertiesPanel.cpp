@@ -212,6 +212,43 @@ void SlidePropertiesPanel::setSlideInfo(const core::SlideInfo& info)
         }
         root->setExpanded(true);
     }
+
+    // Colour profile. A slide with no usable ICC profile still gets a row: the
+    // absence is the point, because it tells the reader the colours on screen
+    // are raw scanner RGB rather than colorimetrically defined.
+    const auto& profile = info.colorProfileInfo;
+    const QString summary = QString::fromStdString(core::colorProfileSummary(profile));
+    if (!profile.present) {
+        addRow(m_impl->tree, QStringLiteral("Color profile"), summary);
+    } else {
+        auto* root = new QTreeWidgetItem(m_impl->tree);
+        root->setText(0, QStringLiteral("Color profile"));
+        root->setText(1, summary);
+
+        auto addChild = [root](const QString& key, const QString& value) {
+            auto* entry = new QTreeWidgetItem(root);
+            entry->setText(0, key);
+            entry->setText(1, value);
+        };
+        auto orUnknown = [](const std::string& s) {
+            return s.empty() ? QStringLiteral("(unknown)") : QString::fromStdString(s);
+        };
+
+        addChild(QStringLiteral("Source"),
+                 QString::fromLatin1(core::colorProfileSourceName(profile.source)));
+        addChild(QStringLiteral("Description"), orUnknown(profile.description));
+        addChild(QStringLiteral("Manufacturer"), orUnknown(profile.manufacturer));
+        addChild(QStringLiteral("Model"), orUnknown(profile.model));
+        addChild(QStringLiteral("Version"), orUnknown(profile.version));
+        addChild(QStringLiteral("Data space"),
+                 QString::fromLatin1(core::iccColorSpaceName(profile.dataSpace)));
+        addChild(QStringLiteral("Connection space"),
+                 QString::fromLatin1(core::iccColorSpaceName(profile.connectionSpace)));
+        addChild(QStringLiteral("Intent"),
+                 QString::fromLatin1(core::renderingIntentName(profile.intent)));
+        addChild(QStringLiteral("Size"), formatBytes(static_cast<qint64>(profile.dataSize)));
+        root->setExpanded(true);
+    }
 }
 
 } // namespace slideio::viewer::ui
