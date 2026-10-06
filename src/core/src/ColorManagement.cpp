@@ -70,4 +70,36 @@ IccHeaderSummary inspectIccHeader(const std::vector<uint8_t>& bytes)
     return summary;
 }
 
+DefaultProfileStatus classifyDefaultProfile(bool readable, const IccHeaderSummary& summary)
+{
+    if (!readable) {
+        return DefaultProfileStatus::Unreadable;
+    }
+    if (!summary.plausible) {
+        return DefaultProfileStatus::NotAProfile;
+    }
+    // The four-character ICC signature, trailing space included.
+    if (summary.dataSpace != "RGB ") {
+        return DefaultProfileStatus::NotRgb;
+    }
+    return DefaultProfileStatus::Ok;
+}
+
+std::string defaultProfileProblemText(DefaultProfileStatus status, const std::string& path)
+{
+    switch (status) {
+    case DefaultProfileStatus::Ok:
+        return {};
+    case DefaultProfileStatus::Unreadable:
+        return "The default ICC profile " + path + " could not be read. Set a new one, or clear it.";
+    case DefaultProfileStatus::NotAProfile:
+        return "The default ICC profile " + path + " is no longer a valid ICC profile."
+               " Set a new one, or clear it.";
+    case DefaultProfileStatus::NotRgb:
+        return "The default ICC profile " + path + " no longer describes RGB data."
+               " Set a new one, or clear it.";
+    }
+    return {};
+}
+
 } // namespace slideio::viewer::core

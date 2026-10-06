@@ -102,6 +102,11 @@ struct MainWindow::Impl
     QAction* clearDefaultProfileAction = nullptr;
     QAction* aboutAction = nullptr;
 
+    // Why the configured default ICC profile cannot be used, if it cannot.
+    // Empty when none is configured or it is fine. Shown instead of the
+    // slide-centric reason, which would otherwise blame the slide.
+    std::string defaultProfileProblem;
+
     void createActions()
     {
         openAction = new QAction("&Open Slide...", owner);
@@ -194,6 +199,11 @@ struct MainWindow::Impl
         fileMenu->addAction(exitAction);
 
         QMenu* viewMenu = owner->menuBar()->addMenu("&View");
+        // Qt does not render QAction tooltips inside a menu unless asked. The
+        // Color Management item is disabled whenever colour management is
+        // unavailable, and its tooltip is the only place the reason is stated;
+        // without this the user sees a greyed item and no explanation at all.
+        viewMenu->setToolTipsVisible(true);
         viewMenu->addAction(zoomInAction);
         viewMenu->addAction(zoomOutAction);
         viewMenu->addSeparator();
@@ -384,9 +394,24 @@ struct MainWindow::Impl
                 const bool available =
                     info.colorManagement == core::ColorManagementAvailability::Available;
                 colorManagementAction->setEnabled(available);
-                colorManagementAction->setToolTip(QString::fromStdString(
+                // A configured-but-unusable default profile is a fault in the
+                // setting, not in the slide. applyDefaultColorProfile dropped
+                // its bytes, so infra correctly sees no default and reports
+                // NoProfile; say what actually went wrong rather than letting
+                // that stand as "no default profile is set".
+                std::string reason =
                     core::colorManagementUnavailableReason(info.colorManagement,
-                                                           info.colorManagementDetail)));
+                                                           info.colorManagementDetail);
+                if (!available && !defaultProfileProblem.empty()) {
+                    reason = defaultProfileProblem;
+                }
+                // Both: the tooltip renders in the menu (viewMenu has
+                // setToolTipsVisible), the status tip in the status bar on
+                // hover, which is what every other action here uses.
+                colorManagementAction->setToolTip(QString::fromStdString(reason));
+                colorManagementAction->setStatusTip(QString::fromStdString(
+                    reason.empty() ? std::string("Convert slide colours to sRGB via its ICC profile")
+                                   : reason));
 
                 QSettings settings;
                 const bool wanted = available
@@ -902,17 +927,33 @@ void MainWindow::applyDefaultColorProfile()
     QSettings settings;
     const QString path = settings.value(kDefaultProfileKey).toString();
     std::vector<uint8_t> bytes;
+    m_impl->defaultProfileProblem.clear();
+
     if (!path.isEmpty()) {
         QFile file(path);
-        if (file.open(QIODevice::ReadOnly)) {
+        const bool readable = file.open(QIODevice::ReadOnly);
+        if (readable) {
             const QByteArray raw = file.readAll();
             bytes.assign(raw.begin(), raw.end());
-        } else {
-            spdlog::warn("MainWindow: default ICC profile '{}' could not be read; "
-                         "treating it as unconfigured",
-                         path.toStdString());
+        }
+
+        // Revalidated on every load, not only when the user picked the file.
+        // The setting stores a path, so the file can be truncated, replaced or
+        // deleted afterwards. Handing unusable bytes to SlideIO makes it report
+        // that the *slide* embeds no profile -- true, and exactly why the
+        // default was being consulted -- so the user is told their slide is at
+        // fault for a problem in their own setting. Drop the bytes and keep the
+        // real reason to show instead.
+        const core::DefaultProfileStatus status =
+            core::classifyDefaultProfile(readable, core::inspectIccHeader(bytes));
+        if (status != core::DefaultProfileStatus::Ok) {
+            m_impl->defaultProfileProblem =
+                core::defaultProfileProblemText(status, QDir::toNativeSeparators(path).toStdString());
+            bytes.clear();
+            spdlog::warn("MainWindow: {}", m_impl->defaultProfileProblem);
         }
     }
+
     m_impl->clearDefaultProfileAction->setEnabled(!path.isEmpty());
     m_impl->viewportWidget->setDefaultColorProfile(std::move(bytes));
 }

@@ -43,4 +43,28 @@ struct IccHeaderSummary
 /// the authority on whether a profile is usable.
 IccHeaderSummary inspectIccHeader(const std::vector<uint8_t>& bytes);
 
+/// State of the user's configured default ICC profile, as found on disk now.
+///
+/// The setting stores a path, so the file it names can change after it was
+/// chosen. Anything but Ok means the bytes must not be handed to SlideIO: it
+/// treats an unusable override as absence, and the resulting message blames
+/// the slide for embedding no profile -- which is true, and is precisely why
+/// the default was being consulted.
+enum class DefaultProfileStatus
+{
+    Ok,
+    Unreadable,    ///< the path could not be opened at all
+    NotAProfile,   ///< the bytes are not an ICC profile
+    NotRgb,        ///< a valid profile, but not of RGB data
+};
+
+/// Classify a configured default profile. `readable` says whether the file was
+/// opened; `summary` is meaningful only when it was.
+DefaultProfileStatus classifyDefaultProfile(bool readable, const IccHeaderSummary& summary);
+
+/// One sentence naming the default-profile setting and what is wrong with it,
+/// for the user who would otherwise be told their slide is at fault. Empty for
+/// DefaultProfileStatus::Ok.
+std::string defaultProfileProblemText(DefaultProfileStatus status, const std::string& path);
+
 } // namespace slideio::viewer::core

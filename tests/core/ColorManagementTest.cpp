@@ -143,3 +143,75 @@ TEST_CASE("isColorimetricForIcc rejects data types ColorManagement cannot bind",
     REQUIRE_FALSE(isColorimetricForIcc(3, DataType::Int16, false));
     REQUIRE_FALSE(isColorimetricForIcc(3, DataType::None, false));
 }
+
+// --- the configured default profile, revalidated at every startup ----------
+//
+// The setting stores a path, not bytes, and is validated only when the user
+// picks the file. If it is later truncated, replaced or deleted, the viewer
+// used to blame the slide: SlideIO reported "the scene embeds no ICC profile"
+// (true, and exactly why the default was being consulted) and nothing named
+// the real culprit. These classify the setting's own state so the message can.
+
+TEST_CASE("classifyDefaultProfile accepts a readable RGB profile", "[core][ColorManagement]")
+{
+    IccHeaderSummary summary;
+    summary.plausible = true;
+    summary.dataSpace = "RGB ";
+    REQUIRE(classifyDefaultProfile(true, summary) == DefaultProfileStatus::Ok);
+}
+
+TEST_CASE("classifyDefaultProfile reports an unreadable file", "[core][ColorManagement]")
+{
+    // Deleted, renamed, or on a disconnected network share. Nothing was read,
+    // so the summary is meaningless and must not be consulted.
+    REQUIRE(classifyDefaultProfile(false, IccHeaderSummary{}) == DefaultProfileStatus::Unreadable);
+}
+
+TEST_CASE("classifyDefaultProfile reports bytes that are not a profile", "[core][ColorManagement]")
+{
+    IccHeaderSummary summary;
+    summary.plausible = false;
+    REQUIRE(classifyDefaultProfile(true, summary) == DefaultProfileStatus::NotAProfile);
+}
+
+TEST_CASE("classifyDefaultProfile reports a profile that is not RGB", "[core][ColorManagement]")
+{
+    IccHeaderSummary summary;
+    summary.plausible = true;
+    summary.dataSpace = "CMYK";
+    REQUIRE(classifyDefaultProfile(true, summary) == DefaultProfileStatus::NotRgb);
+}
+
+TEST_CASE("defaultProfileProblemText names the setting, not the slide",
+          "[core][ColorManagement]")
+{
+    // The whole point: the old message pointed at the slide for a fault in the
+    // user's own setting. Every problem text must name the file.
+    const std::string path = "D:/profiles/scanner.icc";
+    for (auto status : {DefaultProfileStatus::Unreadable,
+                        DefaultProfileStatus::NotAProfile,
+                        DefaultProfileStatus::NotRgb}) {
+        const std::string text = defaultProfileProblemText(status, path);
+        REQUIRE_FALSE(text.empty());
+        REQUIRE(text.find(path) != std::string::npos);
+        REQUIRE(text.find("default") != std::string::npos);
+    }
+}
+
+TEST_CASE("defaultProfileProblemText distinguishes the three failures",
+          "[core][ColorManagement]")
+{
+    const std::string path = "p.icc";
+    const std::string unreadable = defaultProfileProblemText(DefaultProfileStatus::Unreadable, path);
+    const std::string notProfile = defaultProfileProblemText(DefaultProfileStatus::NotAProfile, path);
+    const std::string notRgb = defaultProfileProblemText(DefaultProfileStatus::NotRgb, path);
+    REQUIRE(unreadable != notProfile);
+    REQUIRE(notProfile != notRgb);
+    REQUIRE(unreadable != notRgb);
+}
+
+TEST_CASE("defaultProfileProblemText is empty when the default profile is fine",
+          "[core][ColorManagement]")
+{
+    REQUIRE(defaultProfileProblemText(DefaultProfileStatus::Ok, "p.icc").empty());
+}
