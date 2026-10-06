@@ -11,7 +11,7 @@ target_include_directories(slideio-viewer-infra PUBLIC
 
 target_link_libraries(slideio-viewer-infra
     PUBLIC slideio-viewer-core
-    PRIVATE SlideIO::slideio SlideIO::core spdlog::spdlog
+    PRIVATE SlideIO::slideio SlideIO::core SlideIO::transformer spdlog::spdlog
 )
 
 target_compile_features(slideio-viewer-infra PUBLIC cxx_std_17)

@@ -28,6 +28,8 @@ unset(SlideIO_LIBRARY_RELEASE CACHE)
 unset(SlideIO_LIBRARY_DEBUG CACHE)
 unset(SlideIO_CORE_LIBRARY_RELEASE CACHE)
 unset(SlideIO_CORE_LIBRARY_DEBUG CACHE)
+unset(SlideIO_TRANSFORMER_LIBRARY_RELEASE CACHE)
+unset(SlideIO_TRANSFORMER_LIBRARY_DEBUG CACHE)
 
 find_path(SlideIO_INCLUDE_DIR_RELEASE
     NAMES slideio/slideio/slideio.hpp
@@ -65,9 +67,22 @@ find_library(SlideIO_CORE_LIBRARY_DEBUG
     NO_DEFAULT_PATH
 )
 
+find_library(SlideIO_TRANSFORMER_LIBRARY_RELEASE
+    NAMES slideio-transformer
+    PATHS "${_slideio_release_prefix}/lib"
+    NO_DEFAULT_PATH
+)
+
+find_library(SlideIO_TRANSFORMER_LIBRARY_DEBUG
+    NAMES slideio-transformer_d
+    PATHS "${_slideio_debug_prefix}/lib"
+    NO_DEFAULT_PATH
+)
+
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(SlideIO
-    REQUIRED_VARS SlideIO_LIBRARY_RELEASE SlideIO_CORE_LIBRARY_RELEASE SlideIO_INCLUDE_DIR_RELEASE
+    REQUIRED_VARS SlideIO_LIBRARY_RELEASE SlideIO_CORE_LIBRARY_RELEASE SlideIO_TRANSFORMER_LIBRARY_RELEASE
+        SlideIO_INCLUDE_DIR_RELEASE
 )
 
 # If a debug install isn't present, transparently fall back to the release
@@ -148,10 +163,44 @@ if(SlideIO_FOUND AND NOT TARGET SlideIO::slideio)
             MAP_IMPORTED_CONFIG_DEBUG Release
         )
     endif()
+
+    if(WIN32)
+        set(_slideio_transformer_loc_release "${_slideio_release_prefix}/bin/slideio-transformer.dll")
+        set(_slideio_transformer_loc_debug   "${_slideio_debug_prefix}/bin/slideio-transformer_d.dll")
+    else()
+        set(_slideio_transformer_loc_release "${SlideIO_TRANSFORMER_LIBRARY_RELEASE}")
+        set(_slideio_transformer_loc_debug   "${SlideIO_TRANSFORMER_LIBRARY_DEBUG}")
+    endif()
+
+    add_library(SlideIO::transformer SHARED IMPORTED)
+    set_target_properties(SlideIO::transformer PROPERTIES
+        IMPORTED_LOCATION_RELEASE "${_slideio_transformer_loc_release}"
+        INTERFACE_INCLUDE_DIRECTORIES "${_slideio_include_genex}"
+        MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release
+        MAP_IMPORTED_CONFIG_MINSIZEREL Release
+    )
+    if(WIN32)
+        set_target_properties(SlideIO::transformer PROPERTIES
+            IMPORTED_IMPLIB_RELEASE "${SlideIO_TRANSFORMER_LIBRARY_RELEASE}")
+    endif()
+    if(SlideIO_TRANSFORMER_LIBRARY_DEBUG)
+        set_target_properties(SlideIO::transformer PROPERTIES
+            IMPORTED_LOCATION_DEBUG "${_slideio_transformer_loc_debug}"
+        )
+        if(WIN32)
+            set_target_properties(SlideIO::transformer PROPERTIES
+                IMPORTED_IMPLIB_DEBUG "${SlideIO_TRANSFORMER_LIBRARY_DEBUG}")
+        endif()
+    else()
+        set_target_properties(SlideIO::transformer PROPERTIES
+            MAP_IMPORTED_CONFIG_DEBUG Release
+        )
+    endif()
 endif()
 
 mark_as_advanced(
     SlideIO_INCLUDE_DIR_RELEASE SlideIO_INCLUDE_DIR_DEBUG
     SlideIO_LIBRARY_RELEASE SlideIO_LIBRARY_DEBUG
     SlideIO_CORE_LIBRARY_RELEASE SlideIO_CORE_LIBRARY_DEBUG
+    SlideIO_TRANSFORMER_LIBRARY_RELEASE SlideIO_TRANSFORMER_LIBRARY_DEBUG
 )
