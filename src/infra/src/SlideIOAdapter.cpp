@@ -334,9 +334,14 @@ slideio::viewer::core::ColorManagementAvailability buildManagedScene(
     try {
         ::slideio::ColorManagementWrap cm;
         cm.setTarget(::slideio::ColorTarget::sRGB);
-        // Fail, not AssumeSRGB: the gate above guarantees a profile, so this
-        // path is unreachable. Fail turns a gate bug into a visible failure at
-        // open rather than an identity transform claiming to be colour-managed.
+        // Fail, not AssumeSRGB. The gate above guarantees only that bytes are
+        // present -- embedded, or a default whose header was validated when the
+        // user picked it. A default profile that has since been truncated or
+        // replaced is re-read unvalidated at every startup, so SlideIO may
+        // discard the override as absence and throw here; that surfaces as
+        // BindFailed. Fail turns both that and a gate bug into a visible
+        // failure at open rather than an identity transform claiming to be
+        // colour-managed.
         cm.setMissingProfilePolicy(::slideio::MissingProfilePolicy::Fail);
         // Applied only when the slide embeds nothing. SlideIO lets an override
         // displace an embedded profile, which is not what a default means.
@@ -1339,6 +1344,12 @@ const std::shared_ptr<::slideio::Scene>& SlideIOAdapter::activeScene() const
     // serves thumbnails and overviews and is never cached under a TileKey. Keyed
     // reads must go through sceneForMode(key.colorMode()) instead, so that their
     // pixels and the key they are filed under cannot disagree.
+    //
+    // This makes readBlock mode-dependent. Those surfaces are raw today only
+    // because of WHEN they run: every readBlock call site is at open time or on
+    // a temp adapter still in Raw, so no toggle can reach one. A caller that
+    // refreshed the minimap from a live adapter would need
+    // sceneForMode(ColorMode::Raw), not this.
     //
     // Relaxed is sufficient: nothing here is ordered against other state, and a
     // readBlock that straddles a toggle may legitimately return either rendition.
