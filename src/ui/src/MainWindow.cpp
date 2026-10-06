@@ -893,9 +893,10 @@ void MainWindow::warnDefaultProfileAppliesToNewSlides()
            "Reopen the current slide for the change to take effect on it."));
 }
 
-// Reads the configured profile from disk and hands it to the viewport. The path
-// is stored, not the bytes, so replacing the file on disk takes effect on the
-// next slide open rather than needing the setting to be re-chosen.
+// Reads the configured profile from disk and hands its bytes to the viewport,
+// which caches them. QSettings stores the path, but the bytes are read here
+// only -- at construction and whenever the setting changes -- so replacing the
+// file on disk has no effect until the app restarts or the user re-picks it.
 void MainWindow::applyDefaultColorProfile()
 {
     QSettings settings;

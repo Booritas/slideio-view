@@ -309,16 +309,24 @@ deployment needs no change: `CMakeLists.txt:203` already installs all of
 
 - `view/colorManagement` — bool, initially `false`, persisted once the user sets
   it. "Off by default" is the initial default, not a reset-every-launch.
-- `color/defaultSourceProfile` — the *path*, not the bytes, so replacing the file
-  on disk takes effect on next open. Bytes are read at slide open; an unreadable
-  path logs a warning and is treated as unconfigured.
+- `color/defaultSourceProfile` — the *path*, not the bytes. The bytes are read
+  from that path by `MainWindow::applyDefaultColorProfile()` at construction and
+  whenever the setting changes, and cached in the viewport for the open paths to
+  copy; they are *not* re-read per slide open, so replacing the file on disk has
+  no effect until the app restarts or the user re-picks it. An unreadable path
+  logs a warning and is treated as unconfigured. The header is validated only
+  when the user picks the file, so a profile that later goes stale or corrupt is
+  re-read unvalidated at startup and fails at bind time as `BindFailed`.
 
 **Key construction** — `TilePyramid` yields geometry only (level, column, row)
 and leaves the default `Raw` mode on the keys it returns; the callers that feed
 rendering or the cache stamp the active mode on. That is
-`ViewportController::visibleTileKeys()` and, in `ViewportWidget`, the coarse
-background pass in `paintGL`. The remaining `TileKey` sites in `ViewportWidget`
-are open-time thumbnail, autodetect and base-layer prepopulation reads: those
+`ViewportController::visibleTileKeys()` and, in `ViewportWidget`, *both* coarse
+background passes in `paintGL` — the single-channel brightfield one and the one
+in the catch-all `else` branch, which is the path every colour-managed slide
+actually takes, since `isColorimetricForIcc` requires three channels. The two
+passes stamp identically; keep them that way. The remaining `TileKey` sites in
+`ViewportWidget` are open-time thumbnail, autodetect and base-layer reads: those
 are deliberately raw and their default-`Raw` keys are correct for them.
 `Prefetcher` also builds keys without a mode; it is not wired into the viewport
 today, so nothing it builds reaches the scheduler or the cache. It will need the
@@ -329,11 +337,17 @@ No cache clear is needed. (`ViewportController::requestVisibleTiles()` does call
 `m_scheduler->cancelAll()` to drop superseded requests, as it does on any view
 change; that is unrelated to colour mode, and correctness does not depend on it.)
 
-**Thumbnails and the minimap overview** are deliberately never colour-managed.
-They come from `readBlock`, which carries no `TileKey` and is never cached under
-one, and from the open-time raw tile reads above. They are navigation aids, not
-diagnostic surfaces, so they keep a single stable appearance that does not shift
-under the toggle.
+**Thumbnails and the minimap overview** are raw in practice, and deliberately
+so. They come from `readBlock`, which carries no `TileKey` and is never cached
+under one, and from the open-time raw tile reads above. Note that `readBlock` is
+*not* itself mode-independent: it routes through `activeScene()`, so it returns
+whichever rendition the adapter's mode selects at the moment of the call. What
+makes these surfaces stable is *when* they run — all four `readBlock` call sites
+are at open time or on temp adapters still in `Raw`, so no toggle can reach
+them. They are navigation aids, not diagnostic surfaces, and a single stable
+appearance is what we want for them. Refreshing the minimap from the live
+adapter later would break that and would need `sceneForMode(ColorMode::Raw)`
+rather than `activeScene()`.
 
 **Status bar** — an indicator reading `sRGB` when managed, absent when raw.
 
