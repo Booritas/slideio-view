@@ -73,9 +73,16 @@ public:
     std::vector<uint8_t> embeddedProfileBytes() const;
 
 private:
-    bool isLevelUnreliable(int level) const;
-    // Returns true the first time this level is marked. Subsequent calls return false.
-    bool markLevelUnreliable(int level);
+    // Pyramid reliability is tracked per read path, not per slide: see the
+    // comment on m_unreliableLevels. Both take the flag readTile computes for
+    // the scene it actually selected.
+    bool isLevelUnreliable(int level, bool throughManagedScene) const;
+    // Returns true the first time this level is marked on this path. Subsequent
+    // calls for the same level and path return false.
+    bool markLevelUnreliable(int level, bool throughManagedScene);
+
+    core::LevelUnreliableRegistry& unreliableLevelsFor(bool throughManagedScene);
+    const core::LevelUnreliableRegistry& unreliableLevelsFor(bool throughManagedScene) const;
 
     // The scene that serves a given colour mode: the colour-managed scene when
     // Managed is asked for and one was built at open, otherwise the raw scene.
@@ -96,7 +103,14 @@ private:
     std::vector<core::LevelInfo> m_levels;
     core::SlideInfo m_slideInfo;
 
+    // One ledger per read path. The two scenes read the same file, but a
+    // managed read goes through the transform layer on top of it, so a failure
+    // on one path says nothing about the other. A single shared ledger let
+    // either path condemn a level for both -- and since the registry is never
+    // cleared, a condemned level 0 has no finer level to fall back to and would
+    // stay blank for the rest of the session, in both modes.
     core::LevelUnreliableRegistry m_unreliableLevels;
+    core::LevelUnreliableRegistry m_managedUnreliableLevels;
 };
 
 } // namespace slideio::viewer::infra

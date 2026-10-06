@@ -106,3 +106,55 @@ TEST_CASE("LevelUnreliableRegistry marks a level once under concurrent readers",
     REQUIRE(winners.load() == 1);
     REQUIRE(notifications.load() == 1);
 }
+
+TEST_CASE("Separate registries keep separate ledgers for the raw and managed read paths",
+          "[core][LevelUnreliableRegistry]")
+{
+    // SlideIOAdapter holds one registry per read path. The two scenes read the
+    // same file, but a managed read goes through the transform layer on top of
+    // it, so a failure on one path says nothing about the other. A single
+    // shared ledger let either path condemn a level for both -- and since the
+    // registry is never cleared, a condemned level 0 has no finer level to fall
+    // back to and would stay blank for the rest of the session in both modes.
+    LevelUnreliableRegistry rawPath;
+    LevelUnreliableRegistry managedPath;
+
+    REQUIRE(managedPath.mark(0));
+    REQUIRE(managedPath.isUnreliable(0));
+    REQUIRE_FALSE(rawPath.isUnreliable(0));
+
+    // And the other direction: the path that actually failed is the only one
+    // that learns about it.
+    REQUIRE(rawPath.mark(2));
+    REQUIRE(rawPath.isUnreliable(2));
+    REQUIRE_FALSE(managedPath.isUnreliable(2));
+
+    // Marking the same level on the second path is a first mark there, not a
+    // repeat: a corrupt tile-offset table fails both paths and must be marked
+    // on each as it is met.
+    REQUIRE(managedPath.mark(2));
+    REQUIRE(managedPath.isUnreliable(2));
+}
+
+TEST_CASE("One listener on both path registries hears from each of them",
+          "[core][LevelUnreliableRegistry]")
+{
+    // Why SlideIOAdapter::addOnLevelMarkedUnreliable de-duplicates: a listener
+    // cares about the user's experience of the slide, not about which scene hit
+    // the bad level, so it is registered on both ledgers. Each registry keeps
+    // its own exactly-once promise, which means a level marked on both paths
+    // would reach the listener twice without the adapter's own de-duplication.
+    LevelUnreliableRegistry rawPath;
+    LevelUnreliableRegistry managedPath;
+
+    std::vector<int> heard;
+    auto listener = [&heard](int level) { heard.push_back(level); };
+    rawPath.addListener(listener);
+    managedPath.addListener(listener);
+
+    rawPath.mark(3);
+    REQUIRE(heard == std::vector<int>{3});
+
+    managedPath.mark(3);
+    REQUIRE(heard == std::vector<int>{3, 3});
+}
