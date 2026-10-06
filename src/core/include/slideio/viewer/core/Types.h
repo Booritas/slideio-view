@@ -225,6 +225,18 @@ enum class IccColorSpace { Unknown, Gray, RGB, CMYK, Lab, XYZ, YCbCr };
 /// ICC rendering intent. Mirrors slideio::RenderingIntent.
 enum class RenderingIntent { Perceptual, RelativeColorimetric, Saturation, AbsoluteColorimetric };
 
+/// Why colour management is or is not offered for a slide.
+enum class ColorManagementAvailability
+{
+    Available,
+    /// Not three channels of Byte/UInt16, or the channels are fluorescence.
+    NotColorimetric,
+    /// Colorimetric, but the slide embeds no profile and no default is configured.
+    NoProfile,
+    /// SlideIO refused the wrap; the accompanying detail carries its message.
+    BindFailed,
+};
+
 /// Parsed header of a scene's ICC colour profile.
 ///
 /// A mirror of slideio::ColorProfileInfo rather than a reuse of it: that type is
