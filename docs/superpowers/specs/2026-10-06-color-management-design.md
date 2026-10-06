@@ -106,9 +106,11 @@ matters, since A/B comparison is the main reason to have a toggle.
 The cost is up to 2× cache occupancy for a slide the user has actually toggled.
 The LRU budget absorbs this by evicting the colder set.
 
-`TileKey` has five construction sites outside its own header and implementation
-(`TilePyramid.cpp`, `ViewportController.cpp`, `ViewportWidget.cpp`), so the churn
-is contained.
+`TileKey` is constructed in only four files outside its own header and
+implementation — `TilePyramid.cpp`, `ViewportController.cpp`,
+`ViewportWidget.cpp` and `Prefetcher.cpp` — so the churn is contained. Which of
+those sites have to stamp the mode, and which are correct leaving the default
+`Raw` on, is set out under **Key construction** below.
 
 ### Why capability is probed, not predicted
 
@@ -318,6 +320,9 @@ rendering or the cache stamp the active mode on. That is
 background pass in `paintGL`. The remaining `TileKey` sites in `ViewportWidget`
 are open-time thumbnail, autodetect and base-layer prepopulation reads: those
 are deliberately raw and their default-`Raw` keys are correct for them.
+`Prefetcher` also builds keys without a mode; it is not wired into the viewport
+today, so nothing it builds reaches the scheduler or the cache. It will need the
+same stamp before it is switched on.
 
 **Toggle handling** — set the adapter's mode, set the viewport's mode, repaint.
 No cache clear is needed. (`ViewportController::requestVisibleTiles()` does call
