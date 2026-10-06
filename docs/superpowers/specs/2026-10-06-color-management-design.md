@@ -1,7 +1,7 @@
 # Colour management of the tile pipeline — design
 
 **Date:** 2026-10-06
-**Status:** Draft (awaiting review)
+**Status:** Implemented
 **Branch:** `color-management`, based on `main` @ `54ac47a`
 
 ## Goal
@@ -292,7 +292,7 @@ deployment needs no change: `CMakeLists.txt:203` already installs all of
 
 | Item | Behaviour |
 |---|---|
-| `Color management` | Checkable, `Ctrl+Shift+C`. Disabled when availability ≠ `Available`, with `colorManagementUnavailableReason()` as its tooltip. |
+| `Color management` | Checkable, `Ctrl+Shift+I` (not `Ctrl+Shift+C`: that combination is already the Channels panel toggle in `MainWindow.cpp`'s panel-toggle setup — do not "restore" `Ctrl+Shift+C` here). Disabled when availability ≠ `Available`, with `colorManagementUnavailableReason()` as its tooltip. |
 | `Set default ICC profile…` | File dialog (`*.icc *.icm`). Rejects a file failing `inspectIccHeader`, or whose `dataSpace` is not `"RGB "`, with a message naming the reason. |
 | `Clear default ICC profile` | Enabled only when one is set. |
 
@@ -355,10 +355,17 @@ does nothing.
 - `colorManagementUnavailableReason`: one case per enum value, including that
   `BindFailed` includes its detail string.
 
-**Integration (infra):** open `gdal/colors.png` (672-byte embedded sRGB profile),
-read one tile in each mode, assert the pixel data differs; open
+**Integration (infra):** the conversion test does not use `gdal/colors.png` as
+originally planned here. `colors.png` embeds a plain "GIMP built-in sRGB"
+profile, and `Managed` mode always targets sRGB, so converting it is an
+identity transform that can never demonstrate a real conversion. Instead:
+open `svs/JP2K-33003-1.svs` (Aperio, a profile that actually disagrees with
+sRGB), read one tile in each mode, assert the pixel data differs; `colors.png`
+is kept as the fixture for a deliberate identity-transform regression test
+instead, asserting raw and managed bytes are equal. Also: open
 `img_2448x2448_3x8bit_SRC_RGB_ducks.png` with a default profile configured and
-assert the same; assert a fluorescence fixture reports `NotColorimetric`.
+assert it is reported as `Supplied`; assert a fluorescence fixture reports
+`NotColorimetric`.
 
 This requires `slideio-viewer-infra-tests` to find the SlideIO DLLs at runtime —
 the `ENVIRONMENT_MODIFICATION` treatment `ui-tests` already gets at
@@ -374,16 +381,50 @@ CZI (greyed, `NoProfile`).
 
 ## 10. Performance
 
-Two measurements, both recorded in the implementation:
+Measured on `svs/JP2K-33003-1.svs` (15374×17497, Aperio profile), Release
+build, warm filesystem cache, three runs each via a temporary timing harness
+(not part of the shipped code).
 
-- **Slide open:** time to construct `SlideIOAdapter` with and without eager
-  wrapping, on a large SVS. Expected to be dominated by existing metadata and
-  histogram work. If eager wrapping proves material, fall back to building
-  `m_managedScene` lazily on first enable, keeping the gate as the predictor.
-- **Tile read:** per-tile `readTile` time in both modes on the same slide. The
-  lcms2 transform is immutable after binding and `apply()` is const and
-  re-entrant (`colormanagement.hpp:45-47`), so it runs on the existing worker
-  threads with no added serialisation.
+- **Slide open.** `SlideIOAdapter` construction, with the eager
+  `buildManagedScene` wrap versus with the `transformScene` call suppressed:
+
+  | | Run 1 | Run 2 | Run 3 | Mean |
+  |---|---|---|---|---|
+  | With eager wrap | 34.00 ms | 34.07 ms | 33.96 ms | **34.01 ms** |
+  | Without eager wrap | 1.04 ms | 1.00 ms | 0.93 ms | **0.99 ms** |
+
+  Eager wrapping adds ≈33.0 ms, a ≈34× (≈3340%) increase over the
+  wrap-free construction cost — the opposite of the "dominated by existing
+  metadata and histogram work" expectation above, and far past the ~5%
+  threshold for staying eager. The cost is building the lcms2 transform
+  itself (`transformScene` → `ColorManagementWrap::bindToSource`), not
+  anything already-planned metadata work hides it behind.
+
+- **Tile read.** `readTile`, 100 tiles at the same keys, each mode:
+
+  | | Total (100 tiles) | Mean per tile |
+  |---|---|---|
+  | Raw | 239.69 ms | 2.40 ms |
+  | Managed | 402.39 ms | 4.02 ms |
+
+  Managed reads cost ≈1.63 ms more per tile than raw (≈+68%). The lcms2
+  transform is immutable after binding and `apply()` is const and re-entrant
+  (`colormanagement.hpp:45-47`), so this runs on the existing worker threads
+  with no added serialisation — the per-tile cost is the conversion itself,
+  not contention.
+
+**Recommendation:** go lazy. Build `m_managedScene` on first
+`setColorMode(Managed)` instead of eagerly in the constructor, keeping the
+gate (`isColorimetricForIcc` + profile presence) as the availability
+predictor exactly as today — only the `transformScene` call itself moves.
+This is not a one-line change: `SlideIOAdapter::activeScene()` currently
+returns a reference to a member `shared_ptr` and is documented as safe only
+because neither `m_scene` nor `m_managedScene` is reassigned after
+construction. Lazy construction reassigns `m_managedScene` after
+construction (on the UI/toggle thread, read from worker threads via
+`activeScene()`), so making that access safe under concurrent reads is a
+precondition of going lazy, not a detail to fix in passing. Left to a
+follow-up review and its own change, per the brief for this task.
 
 ## 11. Sequencing
 
