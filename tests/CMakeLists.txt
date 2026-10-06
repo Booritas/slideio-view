@@ -22,6 +22,7 @@ add_test(NAME core-tests COMMAND slideio-viewer-core-tests)
 add_executable(slideio-viewer-infra-tests
     infra/LruTileCacheTest.cpp
     infra/TileLoadSchedulerTest.cpp
+    infra/ColorManagedAdapterTest.cpp
 )
 
 target_link_libraries(slideio-viewer-infra-tests
@@ -44,11 +45,13 @@ target_link_libraries(slideio-viewer-ui-tests
 
 add_test(NAME ui-tests COMMAND slideio-viewer-ui-tests)
 
-# Unlike the core and infra test binaries, this one actually pulls in Qt and
-# SlideIO symbols, and nothing deploys runtime dependencies into the build
-# tree. Copying the DLLs next to the executable is not enough: slideio.dll
-# loads a family of sibling slideio-*.dll drivers, so point the test at the
-# install directories instead.
+# Both this binary and the UI one pull in SlideIO symbols, and nothing deploys
+# runtime dependencies into the build tree. Copying the DLLs next to the
+# executable is not enough: slideio.dll loads a family of sibling slideio-*.dll
+# drivers, so point the tests at the install directories instead.
+#
+# SLIDEIO_VIEWER_TEST_IMAGES points at the image corpus, which is not part of
+# this repository; tests needing it skip when it is unset or the file is absent.
 if(WIN32)
     if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
         # _qt_bin_dir comes from slideio_viewer_qt_bin_dir() in the top-level
@@ -58,9 +61,11 @@ if(WIN32)
         set(_slideio_bin_dir "$<IF:$<CONFIG:Debug>,${SLIDEIO_ROOT}/debug/bin,${SLIDEIO_ROOT}/release/bin>")
         set_tests_properties(ui-tests PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:${_slideio_bin_dir};PATH=path_list_prepend:${_qt_bin_dir}")
+        set_tests_properties(infra-tests PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${_slideio_bin_dir}")
     else()
         message(WARNING
-            "CMake < 3.22: the ui-tests target cannot have its PATH set up automatically. "
-            "Run slideio-viewer-ui-tests with the Qt and SlideIO bin directories on PATH.")
+            "CMake < 3.22: the ui-tests and infra-tests targets cannot have their PATH set up "
+            "automatically. Run them with the Qt and SlideIO bin directories on PATH.")
     endif()
 endif()

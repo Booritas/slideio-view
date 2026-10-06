@@ -1262,6 +1262,16 @@ core::ColorProfileInfo SlideIOAdapter::activeColorProfileInfo() const
     }
 }
 
+std::vector<uint8_t> SlideIOAdapter::embeddedProfileBytes() const
+{
+    try {
+        return m_scene->getColorProfile().getData();
+    } catch (const std::exception& ex) {
+        spdlog::warn("SlideIOAdapter: embeddedProfileBytes failed: {}", ex.what());
+        return {};
+    }
+}
+
 const std::shared_ptr<::slideio::Scene>& SlideIOAdapter::activeScene() const
 {
     // Relaxed is sufficient: correctness comes from the mode being part of the
