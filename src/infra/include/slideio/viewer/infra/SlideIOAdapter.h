@@ -77,8 +77,12 @@ private:
     // Returns true the first time this level is marked. Subsequent calls return false.
     bool markLevelUnreliable(int level);
 
-    // The scene reads are served from: the colour-managed scene when the mode
-    // is Managed and one was built at open, otherwise the raw scene.
+    // The scene that serves a given colour mode: the colour-managed scene when
+    // Managed is asked for and one was built at open, otherwise the raw scene.
+    const std::shared_ptr<::slideio::Scene>& sceneForMode(core::ColorMode mode) const;
+
+    // The scene that serves reads carrying no colour mode of their own
+    // (readBlock): whichever mode the adapter is currently set to.
     const std::shared_ptr<::slideio::Scene>& activeScene() const;
 
     std::string m_filePath;
