@@ -49,6 +49,13 @@ public:
     bool isSlideOpen() const;
     const std::string& currentFilePath() const;
 
+    // The open slide's content-derived identity (core::computeSlideId), cached
+    // from the background open worker that already computed it -- callers must
+    // not recompute it by re-walking the slide's files on the UI thread, which
+    // for a DICOM study is a full recursive directory scan. Empty when no
+    // slide is open or the open slide could not be identified.
+    const std::string& currentSlideId() const;
+
     ViewportController* controller() const;
 
     // OpenGL strings captured when the context came up. Every field is empty

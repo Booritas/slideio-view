@@ -1052,19 +1052,13 @@ void MainWindow::applyColorProfilePolicy()
 
 std::string MainWindow::currentSlideId() const
 {
-    if (!m_impl->viewportWidget->isSlideOpen()) {
-        return {};
-    }
-    const core::SlideInfo& info = m_impl->viewportWidget->slideInfo();
-    if (info.scenes.empty()) {
-        return {};
-    }
-    const std::optional<uint64_t> size =
-        slideContentSize(m_impl->viewportWidget->currentFilePath());
-    if (!size) {
-        return {};
-    }
-    return core::computeSlideId(info, *size);
+    // The background open worker already computed this (and from the exact
+    // same inputs this function used to redo the work with); re-deriving it
+    // here meant a second slideContentSize() walk on the UI thread on every
+    // open, which for a DICOM study is a full recursive directory scan. See
+    // ViewportWidget::currentSlideId() for the empty-string contract: no slide
+    // open, or the open slide could not be identified -- both unchanged here.
+    return m_impl->viewportWidget->currentSlideId();
 }
 
 void MainWindow::onSetSlideColorProfile()
