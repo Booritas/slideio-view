@@ -271,7 +271,7 @@ MetadataReader extracts: dimensions, resolution (um/px),
         |
         v
 Generate content-derived slide ID:
-  hash(file_size + dimensions + scan_date + scanner_id)
+  computeSlideId(scenes, fileSizeBytes) -- see §9.1
         |
         v
 Validate calibration metadata:
@@ -730,22 +730,48 @@ Credentials are stored in the OS keychain (macOS Keychain, Windows Credential Ma
 
 ### 9.1 Content-Derived Slide Identifiers (Addressing Review Finding 1.5)
 
-Slide filenames are not globally unique. The application generates a content-derived slide ID:
+Slide filenames are not globally unique. The application generates a content-derived slide ID.
+
+An earlier version of this section hashed `file_size + dimensions + scan_date +
+scanner_id`. That cannot be implemented: `SlideInfo` carries no `scanDate` or
+`scannerModel` field, and those values exist only inside driver-specific
+`slideMetadata` / `sceneMetadata` trees that SVS, CZI and NDPI each populate
+differently (and some not at all). The scheme below is the one actually built,
+in `core::computeSlideId` (`SlideId.h` / `SlideId.cpp`):
 
 ```cpp
-std::string generateSlideId(const std::filesystem::path& path,
-                            const SlideMetadata& meta) {
-    // Hash of: file_size + dimensions + scan_date + scanner_id
-    auto hash_input = std::to_string(std::filesystem::file_size(path))
-        + std::to_string(meta.fullDimensions.width())
-        + std::to_string(meta.fullDimensions.height())
-        + meta.scanDate
-        + meta.scannerModel;
-    return sha256_hex(hash_input).substr(0, 16);  // 16-char hex ID
-}
+std::string computeSlideId(const std::vector<SceneInfo>& scenes, uint64_t fileSizeBytes);
+std::string computeSlideId(const SlideInfo& info, uint64_t fileSizeBytes);
 ```
 
-This ID is stored in the annotation file and verified on load. If the annotation file's embedded slide ID does not match the current slide's computed ID, the user is warned and given the option to re-associate or reject the annotations.
+The hash input is the file size followed by the scene count, then, for each
+scene in index order, its `index`, `width`, `height` and `numChannels` --
+fields separated by `\x1F` (ASCII unit separator) so no two distinct inputs can
+run together into the same string. Deliberately excluded: `driverId` (unresolved
+before the slide is opened, and auto-detected vs. explicitly-driven opens of the
+same file must agree), the file path, and the open scene's own `width`,
+`height`, `numChannels`, `channelDataType`, `numZoomLevels`, `numZSlices`,
+`numTFrames`, `resolutionX` and `resolutionY` -- each of those varies by scene
+and would key one multi-scene file to several different IDs. No input is
+floating-point.
+
+`fileSizeBytes` is not simply `std::filesystem::file_size(path)`: a slide is not
+always one file (a DICOM study is a directory of `.dcm` files), and on MSVC
+`file_size` on a directory does not fail, it silently returns the directory
+entry's own size -- the same small constant for every study from one scanner.
+The application instead sums the regular files beneath the slide path
+(`ui::slideContentSize`), which is the only thing that still discriminates
+between two studies that otherwise share their view count, detector dimensions
+and channel count. `slideContentSize` returns `std::nullopt`, never zero, when
+the size cannot be determined at all, and callers treat that as "this slide
+cannot be identified," not as a valid ID of its own.
+
+The hash itself is FNV-1a 64-bit, rendered as 16 lowercase hex characters --
+**not** SHA-256, and **not** cryptographic or tamper-evident. It exists to key
+a user's own stored settings, not to authenticate anything; a user who edits
+those settings can already point an override wherever they like.
+
+This ID is stored in the annotation file and verified on load. If the annotation file's embedded slide ID does not match the current slide's computed ID, the user is warned and given the option to re-associate or reject the annotations. A *matching* ID is, for the same reason, not proof of provenance: it must never be treated as evidence that an annotation file actually belongs to the slide it is opened against, only as the lookup key the application already trusts the user to have assigned correctly.
 
 ### 9.2 Annotation JSON Schema
 
