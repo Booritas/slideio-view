@@ -5,6 +5,7 @@
 #include "slideio/viewer/core/Types.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -26,6 +27,21 @@ struct ColorProfilePolicy
     std::vector<uint8_t> defaultBytes; ///< already validated; empty if none
     std::unordered_map<std::string, std::string> overridePathsBySlideId;
 };
+
+/// The byte size of a slide's content, for use as an identity input.
+///
+/// A slide is not always one file: a DICOM study is a directory of .dcm files.
+/// std::filesystem::file_size does not report a directory's contents -- on MSVC
+/// it does not even fail, it returns the directory entry's own size, the same
+/// small constant for every study. Summing the regular files beneath it keeps
+/// the size discriminating for exactly the family of slides that would
+/// otherwise all size alike: two studies from one scanner share their view
+/// count, detector dimensions and channel count, so the byte count is the only
+/// thing left separating them.
+///
+/// nullopt means the size could not be determined at all. Callers treat that as
+/// "cannot identify this slide", never as size zero.
+std::optional<uint64_t> slideContentSize(const std::string& path);
 
 /// Choose the profile for a slide, given its scene table and file size.
 ///
