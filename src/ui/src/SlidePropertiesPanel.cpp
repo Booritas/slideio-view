@@ -73,13 +73,17 @@ const char* colorProfileOriginName(core::ColorProfileOrigin origin)
     return "Slide";
 }
 
-std::string displacedProfileNote(const core::SlideInfo& info)
+const char* originRowLabel(core::ColorMode colorMode)
 {
-    if (!info.displacedEmbeddedProfile) {
+    return (colorMode == core::ColorMode::Raw) ? "Origin when managed" : "Origin";
+}
+
+std::string displacedProfileNote(bool displaced, const std::string& embeddedDescription)
+{
+    if (!displaced) {
         return {};
     }
-    const std::string embedded =
-        info.colorProfileInfo.description.empty() ? "unnamed" : info.colorProfileInfo.description;
+    const std::string embedded = embeddedDescription.empty() ? "unnamed" : embeddedDescription;
     return "displaced: " + embedded;
 }
 
@@ -236,20 +240,29 @@ void SlidePropertiesPanel::setSlideInfo(const core::SlideInfo& info)
     // Colour profile. A slide with no usable ICC profile still gets a row: the
     // absence is the point, because it tells the reader the colours on screen
     // are raw scanner RGB rather than colorimetrically defined.
+    // No setColorMode has run yet for this slide at open time (MainWindow
+    // decides and applies the mode moments later, in the same handler, via
+    // setActiveColorProfile) -- Raw is a placeholder immediately superseded by
+    // that call, never the label the user actually sees.
     rebuildColorProfileRows(info.colorProfileInfo, info.colorProfileOrigin,
-                            info.displacedEmbeddedProfile);
+                            info.displacedEmbeddedProfile, info.colorProfileInfo.description,
+                            core::ColorMode::Raw);
 }
 
 void SlidePropertiesPanel::setActiveColorProfile(const core::ColorProfileInfo& info,
                                                   core::ColorProfileOrigin origin,
-                                                  bool displacedEmbedded)
+                                                  bool displacedEmbedded,
+                                                  const std::string& embeddedDescription,
+                                                  core::ColorMode colorMode)
 {
-    rebuildColorProfileRows(info, origin, displacedEmbedded);
+    rebuildColorProfileRows(info, origin, displacedEmbedded, embeddedDescription, colorMode);
 }
 
 void SlidePropertiesPanel::rebuildColorProfileRows(const core::ColorProfileInfo& info,
                                                     core::ColorProfileOrigin origin,
-                                                    bool displacedEmbedded)
+                                                    bool displacedEmbedded,
+                                                    const std::string& embeddedDescription,
+                                                    core::ColorMode colorMode)
 {
     // Remove any existing top-level "Color profile" item first, so repeated
     // toggles do not stack duplicate groups in the panel.
@@ -283,14 +296,16 @@ void SlidePropertiesPanel::rebuildColorProfileRows(const core::ColorProfileInfo&
 
         // ColorProfileSource reports both a default and an override as
         // "Supplied", so the library's own answer cannot distinguish them.
-        // This row can.
-        addChild(QStringLiteral("Origin"),
+        // This row can -- but only for the profile that would apply were
+        // colour management on. With it off, the pixels on screen are raw
+        // scanner RGB, and an unqualified "Origin" row next to "Source:
+        // Embedded" would assert something about those pixels that isn't
+        // true; the relabelling says what the row actually describes instead
+        // of hiding it.
+        addChild(QString::fromLatin1(originRowLabel(colorMode)),
                  QString::fromLatin1(colorProfileOriginName(origin)));
 
-        core::SlideInfo displacedCheck;
-        displacedCheck.colorProfileInfo = info;
-        displacedCheck.displacedEmbeddedProfile = displacedEmbedded;
-        const std::string displaced = displacedProfileNote(displacedCheck);
+        const std::string displaced = displacedProfileNote(displacedEmbedded, embeddedDescription);
         if (!displaced.empty()) {
             addChild(QStringLiteral("Embedded"), QString::fromStdString(displaced));
         }
