@@ -131,9 +131,27 @@ Today `ViewportWidget::openSlide` calls `enumerateScenes` *after*
 calls swap order, so enumeration — which already happens on every open — feeds
 the override lookup. This adds no file open: it moves one that is already there.
 
-`ViewportWidget::openScene` and `openAuxImage` need no reordering; they run on a
-file whose `SlideInfo::scenes` is already populated, so the ID is computable on
-the UI thread before the worker starts.
+`ViewportWidget::openScene` and `openAuxImage` need no reordering, because the
+file's scene list is already populated before either is called. But only the
+scene list is read on the UI thread; the size lookup and the resolve itself run
+on the worker, exactly as in `openSlide` (see §7). The split falls there
+because `m_impl->slideInfo.scenes` is UI-thread state that must be read before
+the worker starts, while `resolveColorProfile` does file I/O -- it reads the
+override's profile file -- that must not block the UI thread if that file sits
+on an unreachable network share.
+
+**The scene list is guarded by a file match, not used as-is.** `slideInfo`
+describes whichever file was open last. If `openScene` or `openAuxImage` targets
+a *different* file -- a different slide entirely, not a different scene of the
+same one -- `slideInfo.scenes` is not that file's scene list, and computing an
+identity from it could match a different slide's stored override: a
+pathologist would be shown one slide through a profile chosen for another. Both
+functions compare the incoming `filePath` against `slideInfo.filePath` and
+substitute an empty scene vector on a mismatch
+(`ViewportWidget.cpp:2124-2126`, `:2222-2224`). The empty vector is deliberate,
+not a fallback value: `resolveColorProfile`'s existing rule for an empty
+`scenes` -- decline to look anything up -- already covers "this slide cannot be
+identified," so there is exactly one rule for that case rather than two.
 
 ### Divergence from `03-software-architecture-and-design.md` §9.1
 
