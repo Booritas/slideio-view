@@ -27,8 +27,8 @@ QSettingsColorProfileOverrideStore::QSettingsColorProfileOverrideStore()
 {
 }
 
-QSettingsColorProfileOverrideStore::QSettingsColorProfileOverrideStore(const QString& iniFilePath)
-    : m_settings(std::make_unique<QSettings>(iniFilePath, QSettings::IniFormat))
+QSettingsColorProfileOverrideStore::QSettingsColorProfileOverrideStore(const std::string& iniFilePath)
+    : m_settings(std::make_unique<QSettings>(QString::fromStdString(iniFilePath), QSettings::IniFormat))
 {
 }
 

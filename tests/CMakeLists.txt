@@ -29,7 +29,7 @@ add_executable(slideio-viewer-infra-tests
 )
 
 target_link_libraries(slideio-viewer-infra-tests
-    PRIVATE slideio-viewer-infra Catch2::Catch2WithMain
+    PRIVATE slideio-viewer-infra Catch2::Catch2WithMain Qt6::Core
 )
 
 add_test(NAME infra-tests COMMAND slideio-viewer-infra-tests)

@@ -29,7 +29,7 @@ TEST_CASE("QSettings store round-trips every field", "[infra][OverrideStore]")
 {
     QTemporaryDir dir;
     REQUIRE(dir.isValid());
-    const QString ini = dir.filePath("overrides.ini");
+    const std::string ini = dir.filePath("overrides.ini").toStdString();
 
     {
         QSettingsColorProfileOverrideStore store(ini);
@@ -51,7 +51,7 @@ TEST_CASE("QSettings store reports a miss as empty", "[infra][OverrideStore]")
 {
     QTemporaryDir dir;
     REQUIRE(dir.isValid());
-    QSettingsColorProfileOverrideStore store(dir.filePath("overrides.ini"));
+    QSettingsColorProfileOverrideStore store(dir.filePath("overrides.ini").toStdString());
 
     REQUIRE_FALSE(store.find("0000000000000000").has_value());
 }
@@ -61,7 +61,7 @@ TEST_CASE("QSettings store removes one entry and lists the rest",
 {
     QTemporaryDir dir;
     REQUIRE(dir.isValid());
-    QSettingsColorProfileOverrideStore store(dir.filePath("overrides.ini"));
+    QSettingsColorProfileOverrideStore store(dir.filePath("overrides.ini").toStdString());
 
     store.set(makeEntry("aaaaaaaaaaaaaaaa"));
     store.set(makeEntry("bbbbbbbbbbbbbbbb"));
@@ -77,7 +77,7 @@ TEST_CASE("QSettings store overwrites rather than duplicating",
 {
     QTemporaryDir dir;
     REQUIRE(dir.isValid());
-    QSettingsColorProfileOverrideStore store(dir.filePath("overrides.ini"));
+    QSettingsColorProfileOverrideStore store(dir.filePath("overrides.ini").toStdString());
 
     store.set(makeEntry("a3f8c2e109b74d21"));
     ColorProfileOverride second = makeEntry("a3f8c2e109b74d21");
@@ -94,7 +94,7 @@ TEST_CASE("QSettings store starts empty on a fresh file", "[infra][OverrideStore
 {
     QTemporaryDir dir;
     REQUIRE(dir.isValid());
-    QSettingsColorProfileOverrideStore store(dir.filePath("nothing-here.ini"));
+    QSettingsColorProfileOverrideStore store(dir.filePath("nothing-here.ini").toStdString());
 
     REQUIRE(store.all().empty());
 }
