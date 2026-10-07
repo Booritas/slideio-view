@@ -1323,7 +1323,13 @@ struct ViewportWidget::Impl
     // reverts to auto-detect the moment the user switches scene. Auto-detection
     // is unreliable for directory slides (DICOM studies are opened with an
     // explicit "DCM"), so reopenCurrentScene reads this instead.
+    //
+    // fileDriverId is only meaningful for the file it was captured against,
+    // recorded alongside it in fileDriverIdPath. openScene/openAuxImage can
+    // retarget currentFilePath to a different file without updating either, so
+    // a reader must check the path still matches before trusting the driver.
     std::string fileDriverId;     // empty for auto-detect
+    std::string fileDriverIdPath; // file fileDriverId was captured against
     int currentZSlice = 0;
     int currentTFrame = 0;
 
@@ -1881,6 +1887,7 @@ void ViewportWidget::openSlide(const std::string& filePath, const std::string& d
     // user (or the CLI, or a drop) chose for it is recorded. Nothing downstream
     // overwrites it; see the field's declaration.
     m_impl->fileDriverId = driverId;
+    m_impl->fileDriverIdPath = filePath;
     m_impl->currentSceneIndex = 0;
     m_impl->currentAuxImageName.clear();
     const uint64_t opId = ++m_impl->openOpId;
@@ -2542,7 +2549,16 @@ void ViewportWidget::reopenCurrentScene()
     // reopens through openScene with no driver id, which leaves currentDriverId
     // empty. Reopening a DICOM study on auto-detect after that would change the
     // driver underneath a user who only asked to change a colour profile.
-    const std::string driverId = m_impl->fileDriverId;
+    //
+    // fileDriverId is only trustworthy while it was captured against the file
+    // we are about to reopen. openScene/openAuxImage can retarget
+    // currentFilePath to a different file without updating fileDriverId, so a
+    // stale fileDriverId from a previously-opened file must not be applied to
+    // this one; currentDriverId -- the pre-fileDriverId behaviour -- is the
+    // safe fallback.
+    const std::string driverId = (m_impl->fileDriverIdPath == filePath)
+        ? m_impl->fileDriverId
+        : m_impl->currentDriverId;
     const std::string auxName = m_impl->currentAuxImageName;
     const int sceneIndex = m_impl->currentSceneIndex;
 
