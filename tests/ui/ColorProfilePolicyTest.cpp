@@ -150,8 +150,13 @@ TEST_CASE("an unidentifiable slide reports why, so a dropped override is never s
     // because it DOES know: it is the one that chose to pass an empty vector.
     // Without this, a permission-denied subdirectory or an unreachable mount
     // drops a stored override with nothing but a debug log line to show for it.
+    //
+    // The policy must hold at least one override for the message to be true --
+    // see the test below. Whose it is cannot be known, which is exactly why the
+    // message is hedged ("any color profile saved for it").
     ui::ColorProfilePolicy policy;
     policy.defaultBytes = validRgbProfileBytes();
+    policy.overridePathsBySlideId["ffffffffffffffff"] = "C:/profiles/other.icc";
 
     std::string problem;
     const auto supplied = ui::resolveColorProfileForOpen(policy, {}, 0, problem);
@@ -160,6 +165,26 @@ TEST_CASE("an unidentifiable slide reports why, so a dropped override is never s
     REQUIRE(supplied.bytes == policy.defaultBytes);
     REQUIRE_FALSE(problem.empty());
     REQUIRE(problem.find("could not be identified") != std::string::npos);
+}
+
+TEST_CASE("an unidentifiable slide says nothing when no override is configured",
+          "[ui][ColorProfilePolicy]")
+{
+    // Review Finding 2, and the documented contract on
+    // ViewportWidget::lastColorProfileProblem: empty when none was configured.
+    // A DICOM study with one unreadable subdirectory cannot be sized, so the
+    // open path passes an empty scene list -- and a user who has never created
+    // a per-slide profile was being told one of theirs had been dropped.
+    ui::ColorProfilePolicy policy;
+    policy.defaultBytes = validRgbProfileBytes();
+    REQUIRE(policy.overridePathsBySlideId.empty());
+
+    std::string problem;
+    const auto supplied = ui::resolveColorProfileForOpen(policy, {}, 0, problem);
+
+    REQUIRE_FALSE(supplied.isSlideOverride);
+    REQUIRE(supplied.bytes == policy.defaultBytes);
+    REQUIRE(problem.empty());
 }
 
 TEST_CASE("resolveColorProfileForOpen agrees with resolveColorProfile when identity succeeds",
@@ -211,6 +236,12 @@ TEST_CASE("an unreadable override falls back and reports why",
     REQUIRE(supplied.bytes == policy.defaultBytes);
     REQUIRE_FALSE(problem.empty());
     REQUIRE(problem.find("profile.icc") != std::string::npos);
+    // Review Finding 1. Naming the path was never enough: the message used to
+    // be the default profile's, which told a user whose per-slide override had
+    // moved to go and fix a setting they may never have touched.
+    REQUIRE(problem.find("this slide") != std::string::npos);
+    REQUIRE(problem.find("Manage Slide ICC Profiles") != std::string::npos);
+    REQUIRE(problem.find("default") == std::string::npos);
 }
 
 TEST_CASE("an override that is not an RGB profile falls back",

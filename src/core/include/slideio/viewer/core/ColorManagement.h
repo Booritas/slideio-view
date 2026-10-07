@@ -67,4 +67,14 @@ DefaultProfileStatus classifyDefaultProfile(bool readable, const IccHeaderSummar
 /// DefaultProfileStatus::Ok.
 std::string defaultProfileProblemText(DefaultProfileStatus status, const std::string& path);
 
+/// The same, for a profile the user nominated for one particular slide.
+///
+/// A separate function rather than a parameter on the one above because the
+/// repair is in a different place: the default profile is a single setting in
+/// the View menu, while a per-slide override is only reachable through the
+/// "Manage Slide ICC Profiles" dialog. Telling the user to fix the default
+/// setting points them at a setting they may never have touched. Empty for
+/// DefaultProfileStatus::Ok.
+std::string slideProfileProblemText(DefaultProfileStatus status, const std::string& path);
+
 } // namespace slideio::viewer::core

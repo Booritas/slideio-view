@@ -96,7 +96,10 @@ core::SuppliedColorProfile resolveColorProfile(const ColorProfilePolicy& policy,
     const core::DefaultProfileStatus status =
         core::classifyDefaultProfile(readable, core::inspectIccHeader(bytes));
     if (status != core::DefaultProfileStatus::Ok) {
-        outProblem = core::defaultProfileProblemText(
+        // The per-slide wording, not defaultProfileProblemText's: what failed
+        // here is the override the user set for this one slide, and it is
+        // repaired in the manage dialog, not in the default-profile setting.
+        outProblem = core::slideProfileProblemText(
             status, QDir::toNativeSeparators(path).toStdString());
         return fallback;
     }
@@ -114,7 +117,15 @@ core::SuppliedColorProfile resolveColorProfileForOpen(const ColorProfilePolicy& 
 {
     const core::SuppliedColorProfile supplied =
         resolveColorProfile(policy, scenes, fileSizeBytes, outProblem);
-    if (scenes.empty()) {
+    // Reported only when the policy actually holds an override that could have
+    // been dropped. With none configured there is nothing to warn about, and a
+    // DICOM study whose size could not be taken would otherwise tell a user who
+    // has never set a per-slide profile that one of theirs was not applied.
+    //
+    // The map being non-empty is the right granularity: if the user has
+    // overrides for other slides and this one cannot be identified, we genuinely
+    // cannot tell whether one of them was this slide's, so the message belongs.
+    if (scenes.empty() && !policy.overridePathsBySlideId.empty()) {
         // resolveColorProfile declined the lookup and left outProblem empty --
         // correctly, since passing it an empty vector is indistinguishable from
         // "enumeration legitimately found nothing" from inside that function.
