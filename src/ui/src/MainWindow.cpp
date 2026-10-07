@@ -472,7 +472,9 @@ struct MainWindow::Impl
                 viewportWidget->setColorMode(
                     wanted ? core::ColorMode::Managed : core::ColorMode::Raw);
                 statusBarManager->setColorManaged(wanted);
-                propertiesPanel->setActiveColorProfile(viewportWidget->activeColorProfileInfo());
+                propertiesPanel->setActiveColorProfile(
+                    viewportWidget->activeColorProfileInfo(),
+                    info.colorProfileOrigin, info.displacedEmbeddedProfile);
 
                 metadataPanel->setSlideInfo(info);
                 // No thumbnail will arrive for a slide with no downsampled
@@ -892,7 +894,9 @@ void MainWindow::onColorManagementToggled(bool enabled)
     // carries -- so the panel is refreshed from the active scene, not from the
     // SlideInfo captured at open.
     m_impl->propertiesPanel->setActiveColorProfile(
-        m_impl->viewportWidget->activeColorProfileInfo());
+        m_impl->viewportWidget->activeColorProfileInfo(),
+        m_impl->viewportWidget->slideInfo().colorProfileOrigin,
+        m_impl->viewportWidget->slideInfo().displacedEmbeddedProfile);
 }
 
 void MainWindow::onSetDefaultColorProfile()

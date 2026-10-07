@@ -41,6 +41,7 @@ add_executable(slideio-viewer-ui-tests
     ui/DriverFiltersTest.cpp
     ui/PathDisplayTest.cpp
     ui/SlideDropTest.cpp
+    ui/SlidePropertiesPanelTest.cpp
 )
 
 target_link_libraries(slideio-viewer-ui-tests
