@@ -11,6 +11,7 @@ add_library(slideio-viewer-ui STATIC
     src/AboutInfo.cpp
     src/AppPaths.cpp
     src/AssociatedImageWindow.cpp
+    src/ColorProfilePolicy.cpp
     src/DriverFilters.cpp
     src/PathDisplay.cpp
     src/ViewportController.cpp
