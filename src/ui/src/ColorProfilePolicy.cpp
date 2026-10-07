@@ -6,8 +6,55 @@
 #include <QFile>
 #include <QString>
 
+#include <filesystem>
+#include <system_error>
+
 namespace slideio::viewer::ui
 {
+
+std::optional<uint64_t> slideContentSize(const std::string& path)
+{
+    std::error_code ec;
+    const std::filesystem::path p(path);
+
+    // Checked before file_size rather than after it fails, because on MSVC it
+    // does not fail on a directory -- it succeeds and returns the directory
+    // entry's own size.
+    const bool isDir = std::filesystem::is_directory(p, ec);
+    if (ec) {
+        return std::nullopt;
+    }
+
+    if (isDir) {
+        uint64_t total = 0;
+        for (std::filesystem::recursive_directory_iterator it(p, ec), end; it != end;
+             it.increment(ec)) {
+            if (ec) {
+                return std::nullopt;
+            }
+            if (it->is_regular_file(ec)) {
+                const auto size = it->file_size(ec);
+                if (ec) {
+                    return std::nullopt;
+                }
+                total += static_cast<uint64_t>(size);
+            }
+            if (ec) {
+                return std::nullopt;
+            }
+        }
+        if (ec) {
+            return std::nullopt;
+        }
+        return total;
+    }
+
+    const auto size = std::filesystem::file_size(p, ec);
+    if (ec) {
+        return std::nullopt;
+    }
+    return static_cast<uint64_t>(size);
+}
 
 core::SuppliedColorProfile resolveColorProfile(const ColorProfilePolicy& policy,
                                                const std::vector<core::SceneInfo>& scenes,

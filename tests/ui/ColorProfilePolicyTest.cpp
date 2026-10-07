@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -147,10 +148,16 @@ TEST_CASE("an unreadable override falls back and reports why",
     // not fail the open, and must not blame the slide.
     const std::vector<core::SceneInfo> scenes{makeScene(0, 100, 100)};
 
+    // A nonexistent path under a real temporary directory, not a UNC share: the
+    // branch under test is readable == false, and a share path would reach it
+    // only after however long this host takes to give up on SMB discovery.
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const QString missing = dir.filePath("no/such/profile.icc");
+
     ui::ColorProfilePolicy policy;
     policy.defaultBytes = validRgbProfileBytes();
-    policy.overridePathsBySlideId[core::computeSlideId(scenes, 4096)] =
-        "//unreachable-share/no/such/profile.icc";
+    policy.overridePathsBySlideId[core::computeSlideId(scenes, 4096)] = missing.toStdString();
 
     std::string problem;
     const auto supplied = ui::resolveColorProfile(policy, scenes, 4096, problem);
@@ -181,4 +188,94 @@ TEST_CASE("an override that is not an RGB profile falls back",
     REQUIRE_FALSE(supplied.isSlideOverride);
     REQUIRE(supplied.bytes == policy.defaultBytes);
     REQUIRE_FALSE(problem.empty());
+}
+
+TEST_CASE("a single-file slide sizes to that file's bytes", "[ui][ColorProfilePolicy]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const QString file = writeFile(dir.filePath("slide.svs"), std::vector<uint8_t>(1234, 0x11));
+
+    const auto size = ui::slideContentSize(file.toStdString());
+    REQUIRE(size.has_value());
+    REQUIRE(*size == 1234);
+}
+
+TEST_CASE("a directory slide sizes to the sum of the files beneath it",
+          "[ui][ColorProfilePolicy]")
+{
+    // The DICOM case. std::filesystem::file_size does not report a directory's
+    // contents -- on MSVC it does not even fail, it returns the directory
+    // entry's own size, the same small constant for every study. Two studies
+    // from one scanner share their scene geometry, so a constant size would
+    // collide them onto one slide id and one stored override.
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    writeFile(dir.filePath("a.dcm"), std::vector<uint8_t>(1000, 0x22));
+    writeFile(dir.filePath("b.dcm"), std::vector<uint8_t>(2000, 0x33));
+    REQUIRE(QDir(dir.path()).mkpath("sub"));
+    writeFile(dir.filePath("sub/c.dcm"), std::vector<uint8_t>(3000, 0x44));
+
+    const auto size = ui::slideContentSize(dir.path().toStdString());
+    REQUIRE(size.has_value());
+    REQUIRE(*size == 6000); // recursive, and nothing but the regular files
+}
+
+TEST_CASE("two directory slides of differing content size differently",
+          "[ui][ColorProfilePolicy]")
+{
+    // The property that actually matters: the size must separate two studies
+    // that a plain file_size would report identically.
+    QTemporaryDir one;
+    QTemporaryDir two;
+    REQUIRE(one.isValid());
+    REQUIRE(two.isValid());
+    writeFile(one.filePath("a.dcm"), std::vector<uint8_t>(1000, 0x22));
+    writeFile(two.filePath("a.dcm"), std::vector<uint8_t>(1001, 0x22));
+
+    const auto sizeOne = ui::slideContentSize(one.path().toStdString());
+    const auto sizeTwo = ui::slideContentSize(two.path().toStdString());
+    REQUIRE(sizeOne.has_value());
+    REQUIRE(sizeTwo.has_value());
+    REQUIRE(*sizeOne != *sizeTwo);
+}
+
+TEST_CASE("a path that is not there has no size at all", "[ui][ColorProfilePolicy]")
+{
+    // nullopt, not zero: callers must decline to identify the slide rather than
+    // hash every unsizable slide alike.
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+
+    const auto size = ui::slideContentSize(dir.filePath("no/such/slide.svs").toStdString());
+    REQUIRE_FALSE(size.has_value());
+}
+
+TEST_CASE("the DICOM study fixture sizes to its contents, not its directory entry",
+          "[ui][ColorProfilePolicy]")
+{
+    // The plan-mandated fixture, and the case the helper exists for. A DICOM
+    // study is a directory; std::filesystem::file_size reports its directory
+    // entry instead of its contents, which is a small constant unrelated to the
+    // study -- so two studies from one scanner, which already share their scene
+    // geometry, would collide onto one slide id.
+    //
+    // Skipped rather than failed when the corpus is absent, matching how the
+    // infra suite handles the same problem.
+    const char* root = std::getenv("SLIDEIO_VIEWER_TEST_IMAGES");
+    if (!root) {
+        SKIP("SLIDEIO_VIEWER_TEST_IMAGES is not set");
+    }
+    const std::string study = std::string(root) + "/dcm/benigns_01/patient0186";
+    if (!QDir(QString::fromStdString(study)).exists()) {
+        SKIP("the DICOM study fixture is not present");
+    }
+
+    const auto size = ui::slideContentSize(study);
+    REQUIRE(size.has_value());
+
+    // Asserted as a floor rather than an exact byte count so the test survives
+    // a corpus refresh. The point is that it is the study's bytes and not a
+    // directory entry, which is at most a few kilobytes.
+    REQUIRE(*size > 1024 * 1024);
 }

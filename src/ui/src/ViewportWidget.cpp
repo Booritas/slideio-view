@@ -33,8 +33,8 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
-#include <filesystem>
 #include <limits>
+#include <optional>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -1883,16 +1883,21 @@ void ViewportWidget::openSlide(const std::string& filePath, const std::string& d
             spdlog::warn("openSlide: failed to enumerate scenes: {}", ex.what());
         }
 
-        uint64_t fileSize = 0;
-        try {
-            fileSize = static_cast<uint64_t>(std::filesystem::file_size(filePath));
-        } catch (const std::exception& ex) {
-            spdlog::warn("openSlide: failed to size '{}': {}", filePath, ex.what());
+        const std::optional<uint64_t> contentSize = slideContentSize(filePath);
+        if (!contentSize) {
+            spdlog::debug("openSlide: could not size '{}'; slide will not be identified", filePath);
         }
+
+        // Deliberately a separate reference from `scenes`, which the scene
+        // panel still needs in full: an undeterminable size means this slide
+        // cannot be identified, and an empty list is how that is said -- the
+        // same single rule the filePath guard uses, not a second one.
+        const std::vector<core::SceneInfo> unidentifiable;
+        const std::vector<core::SceneInfo>& scenesForIdentity = contentSize ? scenes : unidentifiable;
 
         std::string problem;
         const core::SuppliedColorProfile supplied =
-            resolveColorProfile(policy, scenes, fileSize, problem);
+            resolveColorProfile(policy, scenesForIdentity, contentSize.value_or(0), problem);
 
         SceneOpenResult result = openSceneSync(filePath, 0, driverId, statusCallback, supplied);
         result.scenes = std::move(scenes);
@@ -2142,16 +2147,20 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
     ColorProfilePolicy policy = m_impl->colorProfilePolicy;
     std::thread([this, opId, filePath, sceneIndex, driverId, statusCallback,
                  policy, scenesForIdentity]() {
-        uint64_t fileSize = 0;
-        try {
-            fileSize = static_cast<uint64_t>(std::filesystem::file_size(filePath));
-        } catch (const std::exception& ex) {
-            spdlog::warn("openScene: failed to size '{}': {}", filePath, ex.what());
+        const std::optional<uint64_t> contentSize = slideContentSize(filePath);
+        if (!contentSize) {
+            spdlog::debug("openScene: could not size '{}'; slide will not be identified", filePath);
         }
+
+        // An undeterminable size means this slide cannot be identified, said
+        // the one way the resolver understands.
+        const std::vector<core::SceneInfo> unidentifiable;
+        const std::vector<core::SceneInfo>& scenesForResolve =
+            contentSize ? scenesForIdentity : unidentifiable;
 
         std::string problem;
         const core::SuppliedColorProfile supplied =
-            resolveColorProfile(policy, scenesForIdentity, fileSize, problem);
+            resolveColorProfile(policy, scenesForResolve, contentSize.value_or(0), problem);
 
         SceneOpenResult result = openSceneSync(filePath, sceneIndex, driverId,
                                                statusCallback, supplied);
@@ -2189,6 +2198,8 @@ void ViewportWidget::closeSlide()
     }
 
     m_impl->slideOpen = false;
+    // Belongs to the slide that was showing; there is no slide now.
+    m_impl->colorProfileProblem.clear();
     emit slideClosed();
     update();
 }
@@ -2216,6 +2227,9 @@ void ViewportWidget::openAuxImage(const std::string& filePath, const std::string
     m_impl->currentFilePath = filePath;
     m_impl->currentDriverId = driverId;
     m_impl->currentAuxImageName = auxImageName;
+    // Unused while an aux name is set, but kept in step so the pair always
+    // describes one open rather than two.
+    m_impl->currentSceneIndex = 0;
     const uint64_t opId = ++m_impl->openOpId;
 
     QString displayName = QString::fromStdString(filePath);
@@ -2233,16 +2247,20 @@ void ViewportWidget::openAuxImage(const std::string& filePath, const std::string
     ColorProfilePolicy policy = m_impl->colorProfilePolicy;
     std::thread([this, opId, filePath, auxImageName, driverId, statusCallback,
                  policy, scenesForIdentity]() {
-        uint64_t fileSize = 0;
-        try {
-            fileSize = static_cast<uint64_t>(std::filesystem::file_size(filePath));
-        } catch (const std::exception& ex) {
-            spdlog::warn("openAuxImage: failed to size '{}': {}", filePath, ex.what());
+        const std::optional<uint64_t> contentSize = slideContentSize(filePath);
+        if (!contentSize) {
+            spdlog::debug("openAuxImage: could not size '{}'; slide will not be identified", filePath);
         }
+
+        // An undeterminable size means this slide cannot be identified, said
+        // the one way the resolver understands.
+        const std::vector<core::SceneInfo> unidentifiable;
+        const std::vector<core::SceneInfo>& scenesForResolve =
+            contentSize ? scenesForIdentity : unidentifiable;
 
         std::string problem;
         const core::SuppliedColorProfile supplied =
-            resolveColorProfile(policy, scenesForIdentity, fileSize, problem);
+            resolveColorProfile(policy, scenesForResolve, contentSize.value_or(0), problem);
 
         SceneOpenResult result = openAuxImageSync(filePath, auxImageName, driverId,
                                                   statusCallback, supplied);
@@ -2263,6 +2281,9 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
     }
 
     if (!result.success) {
+        // Nothing is on screen for the problem to be about. Left standing it
+        // would name a slide the user is no longer looking at.
+        m_impl->colorProfileProblem.clear();
         spdlog::error("ViewportWidget::installSceneOpenResult: open failed: {}", result.errorMsg);
         emit errorOccurred(std::string("Failed to open slide: ") + result.errorMsg);
         emit loadingFinished();
