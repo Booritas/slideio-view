@@ -141,6 +141,51 @@ TEST_CASE("an override is not applied via another slide's scene list",
     REQUIRE(problem.empty());
 }
 
+TEST_CASE("an unidentifiable slide reports why, so a dropped override is never silent",
+          "[ui][ColorProfilePolicy]")
+{
+    // Review Finding 4. resolveColorProfile correctly stays silent on an empty
+    // scene list -- it cannot tell "enumeration failed" from "legitimately no
+    // scenes" -- but the open path calls resolveColorProfileForOpen precisely
+    // because it DOES know: it is the one that chose to pass an empty vector.
+    // Without this, a permission-denied subdirectory or an unreachable mount
+    // drops a stored override with nothing but a debug log line to show for it.
+    ui::ColorProfilePolicy policy;
+    policy.defaultBytes = validRgbProfileBytes();
+
+    std::string problem;
+    const auto supplied = ui::resolveColorProfileForOpen(policy, {}, 0, problem);
+
+    REQUIRE_FALSE(supplied.isSlideOverride);
+    REQUIRE(supplied.bytes == policy.defaultBytes);
+    REQUIRE_FALSE(problem.empty());
+    REQUIRE(problem.find("could not be identified") != std::string::npos);
+}
+
+TEST_CASE("resolveColorProfileForOpen agrees with resolveColorProfile when identity succeeds",
+          "[ui][ColorProfilePolicy]")
+{
+    // The wrapper must not fabricate a problem when the slide WAS identified,
+    // override or no override.
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const QString iccPath = writeFile(dir.filePath("slide.icc"), validRgbProfileBytes());
+
+    const std::vector<core::SceneInfo> scenes{makeScene(0, 100, 100)};
+    const std::string slideId = core::computeSlideId(scenes, 4096);
+
+    ui::ColorProfilePolicy policy;
+    policy.defaultBytes = {1, 2, 3};
+    policy.overridePathsBySlideId[slideId] = iccPath.toStdString();
+
+    std::string problem;
+    const auto supplied = ui::resolveColorProfileForOpen(policy, scenes, 4096, problem);
+
+    REQUIRE(supplied.isSlideOverride);
+    REQUIRE(supplied.bytes == validRgbProfileBytes());
+    REQUIRE(problem.empty());
+}
+
 TEST_CASE("an unreadable override falls back and reports why",
           "[ui][ColorProfilePolicy]")
 {

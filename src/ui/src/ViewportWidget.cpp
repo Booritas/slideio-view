@@ -65,6 +65,14 @@ struct SceneOpenResult
     // otherwise. Surfaced like defaultProfileProblem, so the user is never
     // told their slide is at fault for a problem in their own setting.
     std::string colorProfileProblem;
+
+    // The slide's content-derived identity, computed on this background thread
+    // from the same scene list and file size the colour-profile resolve used.
+    // Empty when the slide could not be identified. Carried so the UI thread
+    // never has to compute it itself: MainWindow::currentSlideId() used to
+    // redo the work of slideContentSize() synchronously on every open, which
+    // for a DICOM study is a full recursive directory walk.
+    std::string slideId;
 };
 } // namespace slideio::viewer::ui
 
@@ -1320,6 +1328,12 @@ struct ViewportWidget::Impl
     // open that lost is discarded with the rest of that result.
     std::string colorProfileProblem;
 
+    // The open slide's content-derived identity, cached from the winning open
+    // result so MainWindow::currentSlideId() never has to recompute it (which
+    // means re-walking a DICOM study's directory) on the UI thread. Empty when
+    // no slide is open or the open slide could not be identified.
+    std::string currentSlideId;
+
     // What is currently displayed, so reopenCurrentScene can rebuild it.
     int currentSceneIndex = 0;
     std::string currentAuxImageName; // empty unless an aux image is shown
@@ -1897,12 +1911,14 @@ void ViewportWidget::openSlide(const std::string& filePath, const std::string& d
 
         std::string problem;
         const core::SuppliedColorProfile supplied =
-            resolveColorProfile(policy, scenesForIdentity, contentSize.value_or(0), problem);
+            resolveColorProfileForOpen(policy, scenesForIdentity, contentSize.value_or(0), problem);
 
         SceneOpenResult result = openSceneSync(filePath, 0, driverId, statusCallback, supplied);
         result.scenes = std::move(scenes);
         result.auxImages = std::move(auxImages);
         result.colorProfileProblem = std::move(problem);
+        result.slideId = scenesForIdentity.empty() ? std::string{}
+            : core::computeSlideId(scenesForIdentity, contentSize.value_or(0));
 
         QMetaObject::invokeMethod(this,
             [this, opId, r = std::move(result)]() mutable {
@@ -2160,11 +2176,13 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
 
         std::string problem;
         const core::SuppliedColorProfile supplied =
-            resolveColorProfile(policy, scenesForResolve, contentSize.value_or(0), problem);
+            resolveColorProfileForOpen(policy, scenesForResolve, contentSize.value_or(0), problem);
 
         SceneOpenResult result = openSceneSync(filePath, sceneIndex, driverId,
                                                statusCallback, supplied);
         result.colorProfileProblem = std::move(problem);
+        result.slideId = scenesForResolve.empty() ? std::string{}
+            : core::computeSlideId(scenesForResolve, contentSize.value_or(0));
         QMetaObject::invokeMethod(this,
             [this, opId, r = std::move(result)]() mutable {
                 installSceneOpenResult(opId, std::move(r));
@@ -2198,8 +2216,11 @@ void ViewportWidget::closeSlide()
     }
 
     m_impl->slideOpen = false;
-    // Belongs to the slide that was showing; there is no slide now.
+    // Belongs to the slide that was showing; there is no slide now. A stale
+    // identity would be worse than none: it would let a later caller believe
+    // the slide now open is the one this id was computed for.
     m_impl->colorProfileProblem.clear();
+    m_impl->currentSlideId.clear();
     emit slideClosed();
     update();
 }
@@ -2260,11 +2281,13 @@ void ViewportWidget::openAuxImage(const std::string& filePath, const std::string
 
         std::string problem;
         const core::SuppliedColorProfile supplied =
-            resolveColorProfile(policy, scenesForResolve, contentSize.value_or(0), problem);
+            resolveColorProfileForOpen(policy, scenesForResolve, contentSize.value_or(0), problem);
 
         SceneOpenResult result = openAuxImageSync(filePath, auxImageName, driverId,
                                                   statusCallback, supplied);
         result.colorProfileProblem = std::move(problem);
+        result.slideId = scenesForResolve.empty() ? std::string{}
+            : core::computeSlideId(scenesForResolve, contentSize.value_or(0));
         QMetaObject::invokeMethod(this,
             [this, opId, r = std::move(result)]() mutable {
                 installSceneOpenResult(opId, std::move(r));
@@ -2284,6 +2307,7 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
         // Nothing is on screen for the problem to be about. Left standing it
         // would name a slide the user is no longer looking at.
         m_impl->colorProfileProblem.clear();
+        m_impl->currentSlideId.clear();
         spdlog::error("ViewportWidget::installSceneOpenResult: open failed: {}", result.errorMsg);
         emit errorOccurred(std::string("Failed to open slide: ") + result.errorMsg);
         emit loadingFinished();
@@ -2307,6 +2331,7 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
     }
 
     m_impl->colorProfileProblem = std::move(result.colorProfileProblem);
+    m_impl->currentSlideId = std::move(result.slideId);
     m_impl->slideSource = std::move(result.slideSource);
     m_impl->tileCache = std::move(result.tileCache);
     m_impl->pyramid = std::move(result.pyramid);
@@ -2376,6 +2401,11 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
 const std::string& ViewportWidget::currentFilePath() const
 {
     return m_impl->currentFilePath;
+}
+
+const std::string& ViewportWidget::currentSlideId() const
+{
+    return m_impl->currentSlideId;
 }
 
 bool ViewportWidget::isSlideOpen() const

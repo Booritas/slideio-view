@@ -62,4 +62,20 @@ core::SuppliedColorProfile resolveColorProfile(const ColorProfilePolicy& policy,
                                                uint64_t fileSizeBytes,
                                                std::string& outProblem);
 
+/// Same as resolveColorProfile, for the slide-open path specifically, with one
+/// addition: an empty `scenes` here does not only mean "decline the lookup" to
+/// resolveColorProfile, it also means the caller could not identify this slide
+/// at all -- an unreadable file, an unreachable mount, or a stale scene list
+/// left over from a different file (the open path passes an empty list rather
+/// than reuse it, since a geometry match against the wrong slide could apply
+/// its override to this one). Either way, any override configured for this
+/// slide was never looked up, and resolveColorProfile has no way to say why its
+/// input was empty -- it is not told. This wraps it and reports that case
+/// through `outProblem` too, so the open path's open-with-the-wrong-colours
+/// failure has a visible trace instead of only a debug log line.
+core::SuppliedColorProfile resolveColorProfileForOpen(const ColorProfilePolicy& policy,
+                                                      const std::vector<core::SceneInfo>& scenes,
+                                                      uint64_t fileSizeBytes,
+                                                      std::string& outProblem);
+
 } // namespace slideio::viewer::ui
