@@ -930,45 +930,57 @@ void MainWindow::onColorManagementToggled(bool enabled)
         ctrl ? ctrl->colorMode() : core::ColorMode::Raw);
 }
 
-void MainWindow::onSetDefaultColorProfile()
+// Checked here rather than left to fail at the next slide open: SlideIO
+// treats an unusable profile as absence, so without this a setting or an
+// override would appear to take and then quietly do nothing.
+std::optional<QString> MainWindow::pickAndValidateIccProfile(const QString& dialogCaption,
+                                                              const QString& messageBoxTitle)
 {
     const QString path = QFileDialog::getOpenFileName(
-        this, tr("Select Default ICC Profile"), QString(),
+        this, dialogCaption, QString(),
         tr("ICC profiles (*.icc *.icm);;All files (*)"));
     if (path.isEmpty()) {
-        return;
+        return std::nullopt;
     }
 
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
-        QMessageBox::warning(this, tr("Default ICC Profile"),
+        QMessageBox::warning(this, messageBoxTitle,
                              tr("Could not read %1.").arg(QDir::toNativeSeparators(path)));
-        return;
+        return std::nullopt;
     }
     const QByteArray raw = file.readAll();
     const std::vector<uint8_t> bytes(raw.begin(), raw.end());
 
-    // Checked here rather than left to fail at the next slide open: SlideIO
-    // treats an unusable profile as absence, so without this the setting would
-    // appear to take and then quietly do nothing.
     const core::IccHeaderSummary summary = core::inspectIccHeader(bytes);
     if (!summary.plausible) {
-        QMessageBox::warning(this, tr("Default ICC Profile"),
+        QMessageBox::warning(this, messageBoxTitle,
                              tr("%1 is not a valid ICC profile.")
                                  .arg(QDir::toNativeSeparators(path)));
-        return;
+        return std::nullopt;
     }
     if (summary.dataSpace != "RGB ") {
         QMessageBox::warning(
-            this, tr("Default ICC Profile"),
+            this, messageBoxTitle,
             tr("%1 describes %2 data. Color management needs an RGB profile.")
                 .arg(QDir::toNativeSeparators(path),
                      QString::fromStdString(summary.dataSpace).trimmed()));
+        return std::nullopt;
+    }
+
+    return path;
+}
+
+void MainWindow::onSetDefaultColorProfile()
+{
+    const std::optional<QString> path = pickAndValidateIccProfile(
+        tr("Select Default ICC Profile"), tr("Default ICC Profile"));
+    if (!path) {
         return;
     }
 
     QSettings settings;
-    settings.setValue(kDefaultProfileKey, path);
+    settings.setValue(kDefaultProfileKey, *path);
     applyDefaultColorProfile();
     warnDefaultProfileAppliesToNewSlides();
 }
@@ -1071,37 +1083,12 @@ void MainWindow::onSetSlideColorProfile()
         return;
     }
 
-    const QString path = QFileDialog::getOpenFileName(
-        this, tr("Select ICC Profile for This Slide"), QString(),
-        tr("ICC profiles (*.icc *.icm);;All files (*)"));
-    if (path.isEmpty()) {
+    const std::optional<QString> pickedPath = pickAndValidateIccProfile(
+        tr("Select ICC Profile for This Slide"), tr("Slide ICC Profile"));
+    if (!pickedPath) {
         return;
     }
-
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) {
-        QMessageBox::warning(this, tr("Slide ICC Profile"),
-                             tr("Could not read %1.").arg(QDir::toNativeSeparators(path)));
-        return;
-    }
-    const QByteArray raw = file.readAll();
-    const std::vector<uint8_t> bytes(raw.begin(), raw.end());
-
-    const core::IccHeaderSummary summary = core::inspectIccHeader(bytes);
-    if (!summary.plausible) {
-        QMessageBox::warning(this, tr("Slide ICC Profile"),
-                             tr("%1 is not a valid ICC profile.")
-                                 .arg(QDir::toNativeSeparators(path)));
-        return;
-    }
-    if (summary.dataSpace != "RGB ") {
-        QMessageBox::warning(
-            this, tr("Slide ICC Profile"),
-            tr("%1 describes %2 data. Color management needs an RGB profile.")
-                .arg(QDir::toNativeSeparators(path),
-                     QString::fromStdString(summary.dataSpace).trimmed()));
-        return;
-    }
+    const QString& path = *pickedPath;
 
     // An override displaces whatever the slide carries. When the slide carries
     // its own characterisation, say so before replacing it: the result is a
