@@ -572,6 +572,11 @@ struct MainWindow::Impl
 
             colorManagementAction->setEnabled(false);
             setSlideProfileAction->setEnabled(false);
+            // The action is disabled because no slide is open now, not because
+            // of whatever slide the tooltip/status tip last described -- clear
+            // that reason rather than let it outlive the slide it was about.
+            setSlideProfileAction->setToolTip(QString());
+            setSlideProfileAction->setStatusTip(QString::fromStdString(kSetSlideProfileDescription));
             clearSlideProfileAction->setEnabled(false);
             {
                 // As in the slide-opened handler: resetting the action to reflect
