@@ -143,7 +143,8 @@ The primary users -- clinical pathologists -- review 40-80 slides per day under 
        - **Color swatch** (QPushButton): shows the current pseudo-color; click opens QColorDialog for custom color selection
      - **Default color assignment**: Channels are matched by name to known fluorescence dyes (DAPI→blue, FITC/GFP→green, Cy3/TRITC→red, Cy5→magenta). Unnamed channels receive index-based defaults (blue, green, red, magenta, cyan, yellow, white).
      - **Compositing**: Visible channels are composited with **additive blending** against a black background. The OpenGL pipeline renders each channel as a separate pass with `glBlendFunc(GL_ONE, GL_ONE)`.
-     - **Per-channel brightness/contrast sliders**: Deferred to a later phase (infrastructure supports per-channel DisplayRange).
+     - **Per-channel intensity slider**: Each row carries a slider (range 0-400, mapping to a 0.0x-4.0x multiplier, 1.0x at the 25% mark) applied to that channel's contribution to the composite.
+     - **Per-channel display range**: Each row expands (disclosure toggle) to a histogram view (`ChannelHistogramView`) with draggable min/max handles, backed by text boxes for typed entry; a Log/Lin toggle switches the histogram's vertical scale. An **Auto** button restores the auto-detected display range (enabled only when one was found for that channel) and a **Reset** button restores the channel's full data-type range. A panel-level **Reset All** button restores color, intensity, visibility and display range for every channel to the state the slide was opened with.
 
 ### 2.5 Main Toolbar
 

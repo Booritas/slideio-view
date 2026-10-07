@@ -1,7 +1,7 @@
 # Per-slide ICC profile override — design
 
 **Date:** 2026-10-07
-**Status:** Approved, not implemented
+**Status:** Implemented
 **Base:** `main` @ `dbbc1dd`
 
 ## Goal
@@ -81,6 +81,17 @@ then for each entry of scenes, in index order:
 Fields are separated by `\x1F` (ASCII unit separator), which cannot occur in any
 of them. Without a separator, width 1 with height 00 and width 10 with height 0
 would hash alike.
+
+**`fileSizeBytes` is not `std::filesystem::file_size(path)`.** A slide is not
+always one file -- a DICOM study is a directory of `.dcm` files -- and on MSVC
+`file_size` on a directory does not fail, it silently returns the directory
+entry's own size, the same small constant for every study. `ui::slideContentSize`
+instead sums the regular files beneath the slide path, which is what keeps two
+studies from one scanner distinguishable: they already share their view count,
+detector dimensions and channel count, so the byte count is the only field left
+to tell them apart. `slideContentSize` returns `std::optional<uint64_t>`, and
+`nullopt` means the size could not be determined at all -- callers treat that as
+"cannot identify this slide," never as a size of zero.
 
 **`driverId` is deliberately not an input**, for two independent reasons. It is
 unresolved before the slide is opened — `""` means auto-detect, and the resolved
@@ -235,17 +246,21 @@ against `QSettings`, under `color/slideProfiles/<slideId>`, each entry holding
 links `slideio-viewer-core`, `SlideIO::*` and `spdlog` only — `Qt6::Core` is
 *not* among them, notwithstanding the target table in `CLAUDE.md`, which
 describes the intended architecture rather than the built one. Implementation
-adds `Qt6::Core` to that target, and adds the Qt bin directory to the
-`infra-tests` `ENVIRONMENT_MODIFICATION` in `tests/CMakeLists.txt`, which today
-prepends only the SlideIO directory and would leave the test binary unable to
-find the Qt DLLs on Windows.
+adds `Qt6::Core` to that target as `PRIVATE`, so the dependency does not leak
+into anything linking `slideio-viewer-infra`'s public header; the public
+constructor below takes `std::string`, not `QString`, so a consumer of the
+header does not need Qt in scope at all. `infra-tests` links `Qt6::Core`
+directly for its own use (constructing `QSettings` test fixtures), and the Qt
+bin directory is added to its `ENVIRONMENT_MODIFICATION` in
+`tests/CMakeLists.txt`, which previously prepended only the SlideIO directory
+and would have left the test binary unable to find the Qt DLLs on Windows.
 
 The store takes an explicit settings file in tests so they never touch the
 user's real configuration:
 
 ```cpp
 QSettingsColorProfileOverrideStore();                      // the application's settings
-explicit QSettingsColorProfileOverrideStore(const QString& iniFilePath); // tests
+explicit QSettingsColorProfileOverrideStore(const std::string& iniFilePath); // tests
 ```
 
 **No automatic pruning.** An entry is a few hundred bytes; ten thousand is about
