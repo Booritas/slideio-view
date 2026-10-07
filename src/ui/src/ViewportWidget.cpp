@@ -1913,12 +1913,20 @@ void ViewportWidget::openSlide(const std::string& filePath, const std::string& d
         const core::SuppliedColorProfile supplied =
             resolveColorProfileForOpen(policy, scenesForIdentity, contentSize.value_or(0), problem);
 
+        // Computed before anything is moved into `result`: scenesForIdentity is
+        // a reference to `scenes`, which is about to be moved out for the scene
+        // panel. Reading it afterwards yields a moved-from vector and an empty
+        // identity -- which silently disables the per-slide override UI for
+        // every slide opened through this path.
+        std::string slideId = scenesForIdentity.empty()
+            ? std::string{}
+            : core::computeSlideId(scenesForIdentity, contentSize.value_or(0));
+
         SceneOpenResult result = openSceneSync(filePath, 0, driverId, statusCallback, supplied);
         result.scenes = std::move(scenes);
         result.auxImages = std::move(auxImages);
         result.colorProfileProblem = std::move(problem);
-        result.slideId = scenesForIdentity.empty() ? std::string{}
-            : core::computeSlideId(scenesForIdentity, contentSize.value_or(0));
+        result.slideId = std::move(slideId);
 
         QMetaObject::invokeMethod(this,
             [this, opId, r = std::move(result)]() mutable {
