@@ -955,7 +955,12 @@ void MainWindow::applyDefaultColorProfile()
     }
 
     m_impl->clearDefaultProfileAction->setEnabled(!path.isEmpty());
-    m_impl->viewportWidget->setDefaultColorProfile(std::move(bytes));
+
+    // Only the default half of the policy so far. Task 6 fills in the per-slide
+    // overrides from the store.
+    ColorProfilePolicy policy;
+    policy.defaultBytes = std::move(bytes);
+    m_impl->viewportWidget->setColorProfilePolicy(std::move(policy));
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)

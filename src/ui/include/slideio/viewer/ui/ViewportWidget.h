@@ -2,6 +2,7 @@
 
 #include "slideio/viewer/core/TileKey.h"
 #include "slideio/viewer/core/Types.h"
+#include "slideio/viewer/ui/ColorProfilePolicy.h"
 #include "slideio/viewer/ui/GpuInfo.h"
 
 #include <QImage>
@@ -69,9 +70,20 @@ public:
     int currentZSlice() const;
     int currentTFrame() const;
 
-    // Bytes of the profile to assume for slides embedding none. Set before a
-    // slide is opened; empty means no default is configured.
-    void setDefaultColorProfile(std::vector<uint8_t> bytes);
+    // The profile policy to apply to slides opened from now on: the global
+    // default, plus the per-slide overrides by slide id. Snapshotted by
+    // MainWindow on the UI thread; the open threads capture it by value.
+    void setColorProfilePolicy(ColorProfilePolicy policy);
+
+    // Why a configured override could not be used on the slide now showing.
+    // Empty when none was configured or it was fine.
+    const std::string& lastColorProfileProblem() const;
+
+    // Reopen whatever is currently displayed, so a profile change takes effect
+    // without the user reopening the file by hand. A no-op when nothing is
+    // open. Goes through the ordinary open path, so the openOpId guard still
+    // decides which of several in-flight opens wins.
+    void reopenCurrentScene();
 
     // Switches which rendition of the open slide is read and displayed.
     // A no-op when no slide is open.
