@@ -1161,7 +1161,8 @@ SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
     r.filePath = filePath;
     try {
         r.slideSource = std::make_shared<infra::SlideIOAdapter>(
-            filePath, sceneIndex, driverId, std::move(defaultProfileBytes));
+            filePath, sceneIndex, driverId,
+            core::SuppliedColorProfile{std::move(defaultProfileBytes), false});
         {
             r.slideInfo = r.slideSource->slideInfo();
             auto levels = r.slideSource->levels();
@@ -1215,7 +1216,8 @@ SceneOpenResult openAuxImageSync(const std::string& filePath, const std::string&
     r.isAuxImage = true;
     try {
         r.slideSource = std::make_shared<infra::SlideIOAdapter>(
-            filePath, auxImageName, driverId, std::move(defaultProfileBytes));
+            filePath, auxImageName, driverId,
+            core::SuppliedColorProfile{std::move(defaultProfileBytes), false});
         {
             r.slideInfo = r.slideSource->slideInfo();
             auto levels = r.slideSource->levels();

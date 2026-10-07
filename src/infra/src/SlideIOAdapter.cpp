@@ -313,7 +313,7 @@ slideio::viewer::core::ColorProfileInfo convertColorProfileInfo(const ::slideio:
 slideio::viewer::core::ColorManagementAvailability buildManagedScene(
     const std::shared_ptr<::slideio::Scene>& scene,
     const slideio::viewer::core::SlideInfo& info,
-    const std::vector<uint8_t>& defaultProfileBytes,
+    const slideio::viewer::core::SuppliedColorProfile& supplied,
     std::shared_ptr<::slideio::Scene>& outManagedScene,
     std::string& outDetail)
 {
@@ -326,8 +326,8 @@ slideio::viewer::core::ColorManagementAvailability buildManagedScene(
         return core::ColorManagementAvailability::NotColorimetric;
     }
 
-    const bool haveDefault = !defaultProfileBytes.empty();
-    if (!info.colorProfileInfo.present && !haveDefault) {
+    const bool haveBytes = !supplied.bytes.empty();
+    if (!info.colorProfileInfo.present && !haveBytes) {
         return core::ColorManagementAvailability::NoProfile;
     }
 
@@ -335,18 +335,21 @@ slideio::viewer::core::ColorManagementAvailability buildManagedScene(
         ::slideio::ColorManagementWrap cm;
         cm.setTarget(::slideio::ColorTarget::sRGB);
         // Fail, not AssumeSRGB. The gate above guarantees only that bytes are
-        // present -- embedded, or a default whose header was validated when the
-        // user picked it. A default profile that has since been truncated or
-        // replaced is re-read unvalidated at every startup, so SlideIO may
-        // discard the override as absence and throw here; that surfaces as
-        // BindFailed. Fail turns both that and a gate bug into a visible
-        // failure at open rather than an identity transform claiming to be
-        // colour-managed.
+        // present -- embedded, or supplied bytes whose header was validated
+        // when the user picked them. Supplied bytes that have since been
+        // truncated or replaced are re-read unvalidated at every startup, so
+        // SlideIO may discard the override as absence and throw here; that
+        // surfaces as BindFailed. Fail turns both that and a gate bug into a
+        // visible failure at open rather than an identity transform claiming
+        // to be colour-managed.
         cm.setMissingProfilePolicy(::slideio::MissingProfilePolicy::Fail);
-        // Applied only when the slide embeds nothing. SlideIO lets an override
-        // displace an embedded profile, which is not what a default means.
-        if (haveDefault && !info.colorProfileInfo.present) {
-            cm.setSourceProfileOverride(::slideio::ColorProfile(defaultProfileBytes));
+        // A default stands in only for a slide that embeds nothing: displacing
+        // an embedded profile is not what a default means. A per-slide
+        // override is the opposite case -- the user is saying this slide's own
+        // profile is the wrong one -- so it displaces, which is what
+        // setSourceProfileOverride has always been able to do.
+        if (haveBytes && (supplied.isSlideOverride || !info.colorProfileInfo.present)) {
+            cm.setSourceProfileOverride(::slideio::ColorProfile(supplied.bytes));
         }
         outManagedScene = ::slideio::transformScene(scene, cm);
         return core::ColorManagementAvailability::Available;
@@ -557,7 +560,7 @@ std::string slideioLibraryVersion()
 
 SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
                                const std::string& driverId,
-                               std::vector<uint8_t> defaultProfileBytes)
+                               core::SuppliedColorProfile supplied)
     : m_filePath(filePath)
 {
     spdlog::info("SlideIOAdapter: opening slide '{}', scene {}, driver '{}'",
@@ -638,8 +641,24 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
     // After fluorescenceHint, not beside colorProfileInfo: the gate needs the
     // hint, and reading it before it is set would offer colour management on
     // fluorescence slides.
-    m_slideInfo.colorManagement = buildManagedScene(m_scene, m_slideInfo, defaultProfileBytes,
+    m_slideInfo.colorManagement = buildManagedScene(m_scene, m_slideInfo, supplied,
                                                     m_managedScene, m_slideInfo.colorManagementDetail);
+    // Mirrors the condition inside buildManagedScene exactly. Supplying bytes
+    // is not the same as using them: a default handed to a slide that embeds
+    // its own profile is ignored, and reporting that slide as shown through
+    // the default setting would be a lie the panel then tells the user.
+    const bool suppliedWasUsed =
+        !supplied.bytes.empty()
+        && (supplied.isSlideOverride || !m_slideInfo.colorProfileInfo.present)
+        && m_slideInfo.colorManagement == core::ColorManagementAvailability::Available;
+
+    if (suppliedWasUsed) {
+        m_slideInfo.colorProfileOrigin = supplied.isSlideOverride
+            ? core::ColorProfileOrigin::SlideOverride
+            : core::ColorProfileOrigin::DefaultSetting;
+        m_slideInfo.displacedEmbeddedProfile =
+            supplied.isSlideOverride && m_slideInfo.colorProfileInfo.present;
+    }
     m_slideInfo.isBrightfield = !fluorescenceHint && (
         (m_slideInfo.numChannels == 1) ||
         (m_slideInfo.numChannels == 3 && m_slideInfo.channelDataType == core::DataType::Byte));
@@ -771,7 +790,7 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
 
 SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& auxImageName,
                                const std::string& driverId,
-                               std::vector<uint8_t> defaultProfileBytes)
+                               core::SuppliedColorProfile supplied)
     : m_filePath(filePath)
 {
     spdlog::info("SlideIOAdapter: opening slide '{}', aux image '{}', driver '{}'",
@@ -840,8 +859,24 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
     // After fluorescenceHint, not beside colorProfileInfo: the gate needs the
     // hint, and reading it before it is set would offer colour management on
     // fluorescence slides.
-    m_slideInfo.colorManagement = buildManagedScene(m_scene, m_slideInfo, defaultProfileBytes,
+    m_slideInfo.colorManagement = buildManagedScene(m_scene, m_slideInfo, supplied,
                                                     m_managedScene, m_slideInfo.colorManagementDetail);
+    // Mirrors the condition inside buildManagedScene exactly. Supplying bytes
+    // is not the same as using them: a default handed to a slide that embeds
+    // its own profile is ignored, and reporting that slide as shown through
+    // the default setting would be a lie the panel then tells the user.
+    const bool suppliedWasUsed =
+        !supplied.bytes.empty()
+        && (supplied.isSlideOverride || !m_slideInfo.colorProfileInfo.present)
+        && m_slideInfo.colorManagement == core::ColorManagementAvailability::Available;
+
+    if (suppliedWasUsed) {
+        m_slideInfo.colorProfileOrigin = supplied.isSlideOverride
+            ? core::ColorProfileOrigin::SlideOverride
+            : core::ColorProfileOrigin::DefaultSetting;
+        m_slideInfo.displacedEmbeddedProfile =
+            supplied.isSlideOverride && m_slideInfo.colorProfileInfo.present;
+    }
     m_slideInfo.isBrightfield = !fluorescenceHint && (
         (m_slideInfo.numChannels == 1) ||
         (m_slideInfo.numChannels == 3 && m_slideInfo.channelDataType == core::DataType::Byte));
