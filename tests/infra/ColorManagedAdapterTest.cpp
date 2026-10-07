@@ -2,6 +2,7 @@
 
 #include "slideio/viewer/infra/SlideIOAdapter.h"
 #include "slideio/viewer/core/ColorManagement.h"
+#include "slideio/viewer/core/ColorProfileOverride.h"
 #include "slideio/viewer/core/Types.h"
 
 #include <algorithm>
@@ -103,7 +104,9 @@ TEST_CASE("A default profile does not displace a profile the slide embeds",
     const std::string path = imagePath("gdal/colors.png");
     if (!haveImage(path)) { SKIP("test image corpus not available"); }
 
-    std::vector<uint8_t> someOtherProfile(128, 0);  // never reaches SlideIO
+    core::SuppliedColorProfile someOtherProfile;
+    someOtherProfile.bytes.assign(128, 0);  // never reaches SlideIO
+    someOtherProfile.isSlideOverride = false;
 
     infra::SlideIOAdapter adapter(path, 0, "", someOtherProfile);
     adapter.setColorMode(core::ColorMode::Managed);
@@ -257,11 +260,112 @@ TEST_CASE("A configured default profile is reported as the bound profile",
     }
     REQUIRE_FALSE(profileBytes.empty());
 
-    infra::SlideIOAdapter adapter(slide, 0, "", profileBytes);
+    core::SuppliedColorProfile asDefault;
+    asDefault.bytes = profileBytes;
+    asDefault.isSlideOverride = false;
+
+    infra::SlideIOAdapter adapter(slide, 0, "", asDefault);
     REQUIRE(adapter.slideInfo().colorManagement == core::ColorManagementAvailability::Available);
 
     adapter.setColorMode(core::ColorMode::Managed);
     const core::ColorProfileInfo active = adapter.activeColorProfileInfo();
     REQUIRE(active.present);
     REQUIRE(active.source == core::ColorProfileSource::Supplied);
+}
+
+TEST_CASE("a per-slide override displaces an embedded profile",
+          "[infra][ColorManagement][override]")
+{
+    const std::string path = imagePath("svs/JP2K-33003-1.svs");
+    if (!haveImage(path)) { SKIP("test image corpus not available"); }
+
+    const std::string donorPath = imagePath("gdal/colors.png");
+    if (!haveImage(donorPath)) { SKIP("test image corpus not available"); }
+
+    // Borrow a profile that is valid and is demonstrably not the SVS's own.
+    infra::SlideIOAdapter donor(donorPath);
+    const std::vector<uint8_t> foreignProfile = donor.embeddedProfileBytes();
+    // Not a SKIP: if this slide stops carrying a profile, this test must fail
+    // loudly rather than quietly stop testing displacement.
+    REQUIRE_FALSE(foreignProfile.empty());
+
+    core::SuppliedColorProfile asDefault;
+    asDefault.bytes = foreignProfile;
+    asDefault.isSlideOverride = false;
+
+    core::SuppliedColorProfile asOverride;
+    asOverride.bytes = foreignProfile;
+    asOverride.isSlideOverride = true;
+
+    infra::SlideIOAdapter withDefault(path, 0, "", asDefault);
+    infra::SlideIOAdapter withOverride(path, 0, "", asOverride);
+
+    withDefault.setColorMode(core::ColorMode::Managed);
+    withOverride.setColorMode(core::ColorMode::Managed);
+
+    // The direct assertion: which profile actually got bound. Comparing pixels
+    // only infers displacement; this states it.
+    const core::ColorProfileInfo defaulted = withDefault.activeColorProfileInfo();
+    const core::ColorProfileInfo overridden = withOverride.activeColorProfileInfo();
+
+    // A default never displaces: the SVS keeps its own scanner profile.
+    REQUIRE(defaulted.present);
+    REQUIRE(defaulted.description != "GIMP built-in sRGB");
+
+    // An override does: the borrowed profile is what got bound.
+    REQUIRE(overridden.present);
+    REQUIRE(overridden.description == "GIMP built-in sRGB");
+}
+
+TEST_CASE("an override changes the pixels and the reported origin",
+          "[infra][ColorManagement][override]")
+{
+    const std::string path = imagePath("svs/JP2K-33003-1.svs");
+    if (!haveImage(path)) { SKIP("test image corpus not available"); }
+
+    const std::string donorPath = imagePath("gdal/colors.png");
+    if (!haveImage(donorPath)) { SKIP("test image corpus not available"); }
+
+    infra::SlideIOAdapter donor(donorPath);
+    const std::vector<uint8_t> foreignProfile = donor.embeddedProfileBytes();
+    REQUIRE_FALSE(foreignProfile.empty());
+
+    core::SuppliedColorProfile asDefault;
+    asDefault.bytes = foreignProfile;
+    asDefault.isSlideOverride = false;
+
+    core::SuppliedColorProfile asOverride;
+    asOverride.bytes = foreignProfile;
+    asOverride.isSlideOverride = true;
+
+    infra::SlideIOAdapter withDefault(path, 0, "", asDefault);
+    infra::SlideIOAdapter withOverride(path, 0, "", asOverride);
+
+    withDefault.setColorMode(core::ColorMode::Managed);
+    withOverride.setColorMode(core::ColorMode::Managed);
+
+    // Level 2 is this slide's coarsest pyramid level: one real tile, read fast.
+    const core::TileKey key(2, 0, 0, 0, 0, core::ColorMode::Managed);
+    const core::TileData viaEmbedded = withDefault.readTile(key);
+    const core::TileData viaOverride = withOverride.readTile(key);
+
+    REQUIRE_FALSE(viaEmbedded.isError());
+    REQUIRE_FALSE(viaOverride.isError());
+    REQUIRE(viaEmbedded.buffer().size() == viaOverride.buffer().size());
+
+    // Converting the Aperio profile to sRGB is a real transform; converting
+    // "GIMP built-in sRGB" to sRGB is near-identity. So the two reads must
+    // differ, and they differ in the informative direction.
+    REQUIRE(countDifferingBytes(viaEmbedded.buffer(), viaOverride.buffer()) > 0);
+
+    REQUIRE(withOverride.slideInfo().colorProfileOrigin
+            == core::ColorProfileOrigin::SlideOverride);
+    REQUIRE(withOverride.slideInfo().displacedEmbeddedProfile);
+
+    // The same bytes supplied as a mere default are never used on this slide,
+    // so the origin must stay with the slide's own profile and nothing is
+    // recorded as displaced.
+    REQUIRE(withDefault.slideInfo().colorProfileOrigin
+            == core::ColorProfileOrigin::Library);
+    REQUIRE_FALSE(withDefault.slideInfo().displacedEmbeddedProfile);
 }

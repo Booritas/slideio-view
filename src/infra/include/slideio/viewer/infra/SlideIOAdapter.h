@@ -1,5 +1,6 @@
 #pragma once
 
+#include "slideio/viewer/core/ColorProfileOverride.h"
 #include "slideio/viewer/core/ISlideSource.h"
 #include "slideio/viewer/core/LevelUnreliableRegistry.h"
 #include "slideio/viewer/core/Types.h"
@@ -35,14 +36,16 @@ class SlideIOAdapter : public core::ISlideSource
 public:
     // driverId selects a specific SlideIO driver (e.g., "SVS", "CZI"); pass "" to
     // let SlideIO auto-detect from the file content.
-    // defaultProfileBytes stands in for slides that embed no profile; it is
-    // ignored for slides that do. Empty means no default is configured.
+    // `supplied` carries the profile to use when the slide's own is absent or
+    // is being overridden, and says which of those two it is: a default stands
+    // in only for a slide that embeds nothing, while a per-slide override
+    // displaces whatever the slide embeds. Empty bytes mean neither is set.
     explicit SlideIOAdapter(const std::string& filePath, int sceneIndex = 0,
                              const std::string& driverId = "",
-                             std::vector<uint8_t> defaultProfileBytes = {});
+                             core::SuppliedColorProfile supplied = {});
     SlideIOAdapter(const std::string& filePath, const std::string& auxImageName,
                    const std::string& driverId = "",
-                   std::vector<uint8_t> defaultProfileBytes = {});
+                   core::SuppliedColorProfile supplied = {});
     ~SlideIOAdapter() override;
 
     static std::pair<std::vector<core::SceneInfo>, std::vector<core::SceneInfo>> enumerateScenes(
