@@ -42,6 +42,18 @@ private:
     // then nothing for the change not to apply to.
     void warnDefaultProfileAppliesToNewSlides();
 
+    void onSetSlideColorProfile();
+    void onClearSlideColorProfile();
+
+    // Rebuilds the whole profile policy -- the validated default plus every
+    // stored override -- and hands it to the viewport. Called at startup and
+    // whenever either half changes.
+    void applyColorProfilePolicy();
+
+    // Identity of the slide on screen, or empty when none is open or its
+    // scenes could not be enumerated.
+    std::string currentSlideId() const;
+
     struct Impl;
     std::unique_ptr<Impl> m_impl;
 };
