@@ -2,7 +2,6 @@
 
 #include "slideio/viewer/core/ColorProfileOverride.h"
 
-#include <QString>
 #include <memory>
 #include <optional>
 #include <string>
@@ -28,7 +27,7 @@ public:
 
     /// An explicit INI file. Tests use this so they never touch the user's
     /// real configuration.
-    explicit QSettingsColorProfileOverrideStore(const QString& iniFilePath);
+    explicit QSettingsColorProfileOverrideStore(const std::string& iniFilePath);
 
     ~QSettingsColorProfileOverrideStore() override;
 
