@@ -1,9 +1,12 @@
 #include "slideio/viewer/ui/MainWindow.h"
 #include "slideio/viewer/core/ColorManagement.h"
+#include "slideio/viewer/core/SlideId.h"
+#include "slideio/viewer/infra/QSettingsColorProfileOverrideStore.h"
 #include "slideio/viewer/ui/AboutDialog.h"
 #include "slideio/viewer/ui/AppPaths.h"
 #include "slideio/viewer/ui/AssociatedImageWindow.h"
 #include "slideio/viewer/ui/ChannelMixerPanel.h"
+#include "slideio/viewer/ui/ColorProfilePolicy.h"
 #include "slideio/viewer/ui/DriverFilters.h"
 #include "slideio/viewer/ui/LoadingOverlay.h"
 #include "slideio/viewer/ui/SceneThumbnailPanel.h"
@@ -55,6 +58,7 @@ namespace slideio::viewer::ui
 {
 
 namespace core = slideio::viewer::core;
+namespace infra = slideio::viewer::infra;
 
 struct MainWindow::Impl
 {
@@ -100,12 +104,20 @@ struct MainWindow::Impl
     QAction* colorManagementAction = nullptr;
     QAction* setDefaultProfileAction = nullptr;
     QAction* clearDefaultProfileAction = nullptr;
+    QAction* setSlideProfileAction = nullptr;
+    QAction* clearSlideProfileAction = nullptr;
     QAction* aboutAction = nullptr;
 
     // Why the configured default ICC profile cannot be used, if it cannot.
     // Empty when none is configured or it is fine. Shown instead of the
     // slide-centric reason, which would otherwise blame the slide.
     std::string defaultProfileProblem;
+
+    // The validated default profile bytes, cached so applyColorProfilePolicy
+    // can rebuild the whole policy without re-reading the file.
+    std::vector<uint8_t> defaultProfileBytes;
+
+    std::unique_ptr<infra::QSettingsColorProfileOverrideStore> overrideStore;
 
     void createActions()
     {
@@ -174,6 +186,16 @@ struct MainWindow::Impl
         clearDefaultProfileAction->setStatusTip("Stop assuming a default ICC profile");
         clearDefaultProfileAction->setEnabled(false);
 
+        setSlideProfileAction = new QAction("Set ICC Profile for This Slide…", owner);
+        setSlideProfileAction->setStatusTip(
+            "Choose an RGB ICC profile for the slide on screen");
+        setSlideProfileAction->setEnabled(false);
+
+        clearSlideProfileAction = new QAction("Clear ICC Profile for This Slide", owner);
+        clearSlideProfileAction->setStatusTip(
+            "Stop overriding this slide's color profile");
+        clearSlideProfileAction->setEnabled(false);
+
         aboutAction = new QAction("&About SlideIO Viewer...", owner);
         // On macOS this moves the entry into the application menu, where the
         // platform expects it, instead of leaving it under Help.
@@ -222,6 +244,9 @@ struct MainWindow::Impl
         viewMenu->addSeparator();
         viewMenu->addAction(setDefaultProfileAction);
         viewMenu->addAction(clearDefaultProfileAction);
+        viewMenu->addSeparator();
+        viewMenu->addAction(setSlideProfileAction);
+        viewMenu->addAction(clearSlideProfileAction);
 
         QMenu* helpMenu = owner->menuBar()->addMenu("&Help");
         helpMenu->addAction(aboutAction);
@@ -307,6 +332,11 @@ struct MainWindow::Impl
                           owner, &MainWindow::onSetDefaultColorProfile);
         QObject::connect(clearDefaultProfileAction, &QAction::triggered,
                           owner, &MainWindow::onClearDefaultColorProfile);
+
+        QObject::connect(setSlideProfileAction, &QAction::triggered,
+                         owner, &MainWindow::onSetSlideColorProfile);
+        QObject::connect(clearSlideProfileAction, &QAction::triggered,
+                         owner, &MainWindow::onClearSlideColorProfile);
 
         // Help actions. The dialog is built per invocation so that it picks up
         // the OpenGL strings once the viewport's context has come up, rather
@@ -394,6 +424,10 @@ struct MainWindow::Impl
                 const bool available =
                     info.colorManagement == core::ColorManagementAvailability::Available;
                 colorManagementAction->setEnabled(available);
+                setSlideProfileAction->setEnabled(viewportWidget->isSlideOpen());
+                clearSlideProfileAction->setEnabled(
+                    viewportWidget->isSlideOpen()
+                    && overrideStore->find(owner->currentSlideId()).has_value());
                 // A configured-but-unusable default profile is a fault in the
                 // setting, not in the slide. applyDefaultColorProfile dropped
                 // its bytes, so infra correctly sees no default and reports
@@ -402,7 +436,15 @@ struct MainWindow::Impl
                 std::string reason =
                     core::colorManagementUnavailableReason(info.colorManagement,
                                                            info.colorManagementDetail);
-                if (!available && !defaultProfileProblem.empty()) {
+                // Most specific problem first. An override the user set for
+                // this very slide explains the colours better than a global
+                // default does, and either explains them better than a message
+                // about what the slide does or does not embed.
+                const std::string overrideProblem =
+                    viewportWidget->lastColorProfileProblem();
+                if (!overrideProblem.empty()) {
+                    reason = overrideProblem;
+                } else if (!available && !defaultProfileProblem.empty()) {
                     reason = defaultProfileProblem;
                 }
                 // Both: the tooltip renders in the menu (viewMenu has
@@ -460,6 +502,8 @@ struct MainWindow::Impl
             metadataPanel->clear();
 
             colorManagementAction->setEnabled(false);
+            setSlideProfileAction->setEnabled(false);
+            clearSlideProfileAction->setEnabled(false);
             {
                 // As in the slide-opened handler: resetting the action to reflect
                 // "no slide open" is not a user action, so it must not fire
@@ -681,6 +725,7 @@ MainWindow::MainWindow(QWidget* parent)
     , m_impl(std::make_unique<Impl>())
 {
     m_impl->owner = this;
+    m_impl->overrideStore = std::make_unique<infra::QSettingsColorProfileOverrideStore>();
 
     setWindowTitle("SlideIO Viewer");
     setAcceptDrops(true);
@@ -956,11 +1001,129 @@ void MainWindow::applyDefaultColorProfile()
 
     m_impl->clearDefaultProfileAction->setEnabled(!path.isEmpty());
 
-    // Only the default half of the policy so far. Task 6 fills in the per-slide
-    // overrides from the store.
+    m_impl->defaultProfileBytes = std::move(bytes);
+    applyColorProfilePolicy();
+}
+
+void MainWindow::applyColorProfilePolicy()
+{
     ColorProfilePolicy policy;
-    policy.defaultBytes = std::move(bytes);
+    policy.defaultBytes = m_impl->defaultProfileBytes;
+    for (const auto& entry : m_impl->overrideStore->all()) {
+        policy.overridePathsBySlideId[entry.slideId] = entry.profilePath;
+    }
     m_impl->viewportWidget->setColorProfilePolicy(std::move(policy));
+}
+
+std::string MainWindow::currentSlideId() const
+{
+    if (!m_impl->viewportWidget->isSlideOpen()) {
+        return {};
+    }
+    const core::SlideInfo& info = m_impl->viewportWidget->slideInfo();
+    if (info.scenes.empty()) {
+        return {};
+    }
+    const std::optional<uint64_t> size =
+        slideContentSize(m_impl->viewportWidget->currentFilePath());
+    if (!size) {
+        return {};
+    }
+    return core::computeSlideId(info, *size);
+}
+
+void MainWindow::onSetSlideColorProfile()
+{
+    const std::string slideId = currentSlideId();
+    if (slideId.empty()) {
+        QMessageBox::warning(this, tr("Slide ICC Profile"),
+                             tr("This slide could not be identified, so a profile "
+                                "cannot be remembered for it."));
+        return;
+    }
+
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Select ICC Profile for This Slide"), QString(),
+        tr("ICC profiles (*.icc *.icm);;All files (*)"));
+    if (path.isEmpty()) {
+        return;
+    }
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        QMessageBox::warning(this, tr("Slide ICC Profile"),
+                             tr("Could not read %1.").arg(QDir::toNativeSeparators(path)));
+        return;
+    }
+    const QByteArray raw = file.readAll();
+    const std::vector<uint8_t> bytes(raw.begin(), raw.end());
+
+    const core::IccHeaderSummary summary = core::inspectIccHeader(bytes);
+    if (!summary.plausible) {
+        QMessageBox::warning(this, tr("Slide ICC Profile"),
+                             tr("%1 is not a valid ICC profile.")
+                                 .arg(QDir::toNativeSeparators(path)));
+        return;
+    }
+    if (summary.dataSpace != "RGB ") {
+        QMessageBox::warning(
+            this, tr("Slide ICC Profile"),
+            tr("%1 describes %2 data. Color management needs an RGB profile.")
+                .arg(QDir::toNativeSeparators(path),
+                     QString::fromStdString(summary.dataSpace).trimmed()));
+        return;
+    }
+
+    // An override displaces whatever the slide carries. When the slide carries
+    // its own characterisation, say so before replacing it: the result is a
+    // slide displayed through a profile its scanner did not produce.
+    const core::SlideInfo& info = m_impl->viewportWidget->slideInfo();
+    const bool displaces = info.colorProfileInfo.present;
+    if (displaces) {
+        const QString embedded = QString::fromStdString(info.colorProfileInfo.description);
+        const auto answer = QMessageBox::question(
+            this, tr("Slide ICC Profile"),
+            tr("This slide embeds its own color profile (%1). Overriding it displays "
+               "the slide through a profile the scanner did not produce.\n\nContinue?")
+                .arg(embedded.isEmpty() ? tr("unnamed") : embedded),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (answer != QMessageBox::Yes) {
+            return;
+        }
+    }
+
+    core::ColorProfileOverride entry;
+    entry.slideId = slideId;
+    entry.profilePath = path.toStdString();
+    entry.slideDisplayName =
+        QFileInfo(QString::fromStdString(m_impl->viewportWidget->currentFilePath()))
+            .fileName().toStdString();
+    entry.displacedEmbedded = displaces;
+    m_impl->overrideStore->set(entry);
+
+    applyColorProfilePolicy();
+
+    // An override has no effect in Raw mode, so a menu item that visibly did
+    // nothing would read as a bug. Turning it on is what the user asked for in
+    // substance.
+    if (!m_impl->colorManagementAction->isChecked()) {
+        m_impl->colorManagementAction->setChecked(true);
+    }
+
+    m_impl->viewportWidget->reopenCurrentScene();
+}
+
+void MainWindow::onClearSlideColorProfile()
+{
+    const std::string slideId = currentSlideId();
+    if (slideId.empty()) {
+        return;
+    }
+
+    m_impl->overrideStore->remove(slideId);
+    applyColorProfilePolicy();
+    // Colour management stays as the user left it; only the profile changes.
+    m_impl->viewportWidget->reopenCurrentScene();
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
