@@ -63,6 +63,26 @@ void addRow(QTreeWidget* tree, const QString& key, const QString& value)
 
 } // namespace
 
+const char* colorProfileOriginName(core::ColorProfileOrigin origin)
+{
+    switch (origin) {
+    case core::ColorProfileOrigin::Library:        return "Slide";
+    case core::ColorProfileOrigin::DefaultSetting: return "Default setting";
+    case core::ColorProfileOrigin::SlideOverride:  return "Per-slide override";
+    }
+    return "Slide";
+}
+
+std::string displacedProfileNote(const core::SlideInfo& info)
+{
+    if (!info.displacedEmbeddedProfile) {
+        return {};
+    }
+    const std::string embedded =
+        info.colorProfileInfo.description.empty() ? "unnamed" : info.colorProfileInfo.description;
+    return "displaced: " + embedded;
+}
+
 struct SlidePropertiesPanel::Impl
 {
     QTreeWidget* tree = nullptr;
@@ -216,15 +236,20 @@ void SlidePropertiesPanel::setSlideInfo(const core::SlideInfo& info)
     // Colour profile. A slide with no usable ICC profile still gets a row: the
     // absence is the point, because it tells the reader the colours on screen
     // are raw scanner RGB rather than colorimetrically defined.
-    rebuildColorProfileRows(info.colorProfileInfo);
+    rebuildColorProfileRows(info.colorProfileInfo, info.colorProfileOrigin,
+                            info.displacedEmbeddedProfile);
 }
 
-void SlidePropertiesPanel::setActiveColorProfile(const core::ColorProfileInfo& info)
+void SlidePropertiesPanel::setActiveColorProfile(const core::ColorProfileInfo& info,
+                                                  core::ColorProfileOrigin origin,
+                                                  bool displacedEmbedded)
 {
-    rebuildColorProfileRows(info);
+    rebuildColorProfileRows(info, origin, displacedEmbedded);
 }
 
-void SlidePropertiesPanel::rebuildColorProfileRows(const core::ColorProfileInfo& info)
+void SlidePropertiesPanel::rebuildColorProfileRows(const core::ColorProfileInfo& info,
+                                                    core::ColorProfileOrigin origin,
+                                                    bool displacedEmbedded)
 {
     // Remove any existing top-level "Color profile" item first, so repeated
     // toggles do not stack duplicate groups in the panel.
@@ -255,6 +280,21 @@ void SlidePropertiesPanel::rebuildColorProfileRows(const core::ColorProfileInfo&
 
         addChild(QStringLiteral("Source"),
                  QString::fromLatin1(core::colorProfileSourceName(info.source)));
+
+        // ColorProfileSource reports both a default and an override as
+        // "Supplied", so the library's own answer cannot distinguish them.
+        // This row can.
+        addChild(QStringLiteral("Origin"),
+                 QString::fromLatin1(colorProfileOriginName(origin)));
+
+        core::SlideInfo displacedCheck;
+        displacedCheck.colorProfileInfo = info;
+        displacedCheck.displacedEmbeddedProfile = displacedEmbedded;
+        const std::string displaced = displacedProfileNote(displacedCheck);
+        if (!displaced.empty()) {
+            addChild(QStringLiteral("Embedded"), QString::fromStdString(displaced));
+        }
+
         addChild(QStringLiteral("Description"), orUnknown(info.description));
         addChild(QStringLiteral("Manufacturer"), orUnknown(info.manufacturer));
         addChild(QStringLiteral("Model"), orUnknown(info.model));
