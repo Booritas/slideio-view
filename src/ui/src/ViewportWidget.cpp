@@ -33,6 +33,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <limits>
 #include <thread>
 #include <unordered_map>
@@ -59,6 +60,11 @@ struct SceneOpenResult
     std::shared_ptr<core::TilePyramid> pyramid;
     std::shared_ptr<infra::LruTileCache> tileCache;
     QImage thumbnail;
+
+    // Why a configured override could not be used, if it could not. Empty
+    // otherwise. Surfaced like defaultProfileProblem, so the user is never
+    // told their slide is at fault for a problem in their own setting.
+    std::string colorProfileProblem;
 };
 } // namespace slideio::viewer::ui
 
@@ -1153,7 +1159,7 @@ using slideio::viewer::ui::SceneOpenResult;
 SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
                               const std::string& driverId,
                               std::function<void(QString)> statusCallback = {},
-                              std::vector<uint8_t> defaultProfileBytes = {})
+                              slideio::viewer::core::SuppliedColorProfile supplied = {})
 {
     namespace core = slideio::viewer::core;
     namespace infra = slideio::viewer::infra;
@@ -1161,8 +1167,7 @@ SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
     r.filePath = filePath;
     try {
         r.slideSource = std::make_shared<infra::SlideIOAdapter>(
-            filePath, sceneIndex, driverId,
-            core::SuppliedColorProfile{std::move(defaultProfileBytes), false});
+            filePath, sceneIndex, driverId, std::move(supplied));
         {
             r.slideInfo = r.slideSource->slideInfo();
             auto levels = r.slideSource->levels();
@@ -1207,7 +1212,7 @@ SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
 SceneOpenResult openAuxImageSync(const std::string& filePath, const std::string& auxImageName,
                                  const std::string& driverId,
                                  std::function<void(QString)> statusCallback = {},
-                                 std::vector<uint8_t> defaultProfileBytes = {})
+                                 slideio::viewer::core::SuppliedColorProfile supplied = {})
 {
     namespace core = slideio::viewer::core;
     namespace infra = slideio::viewer::infra;
@@ -1216,8 +1221,7 @@ SceneOpenResult openAuxImageSync(const std::string& filePath, const std::string&
     r.isAuxImage = true;
     try {
         r.slideSource = std::make_shared<infra::SlideIOAdapter>(
-            filePath, auxImageName, driverId,
-            core::SuppliedColorProfile{std::move(defaultProfileBytes), false});
+            filePath, auxImageName, driverId, std::move(supplied));
         {
             r.slideInfo = r.slideSource->slideInfo();
             auto levels = r.slideSource->levels();
@@ -1307,10 +1311,18 @@ struct ViewportWidget::Impl
     int currentZSlice = 0;
     int currentTFrame = 0;
 
-    // Bytes of the profile to assume for slides embedding none, set by
-    // MainWindow (from QSettings, on the UI thread) before a slide is opened.
-    // Captured by value into the background open threads below.
-    std::vector<uint8_t> defaultColorProfile;
+    // Snapshotted by MainWindow on the UI thread, captured by value into the
+    // background open threads below.
+    ColorProfilePolicy colorProfilePolicy;
+
+    // Why a configured override could not be used on the slide now showing.
+    // Installed from the winning open result, so a problem belonging to an
+    // open that lost is discarded with the rest of that result.
+    std::string colorProfileProblem;
+
+    // What is currently displayed, so reopenCurrentScene can rebuild it.
+    int currentSceneIndex = 0;
+    std::string currentAuxImageName; // empty unless an aux image is shown
 
     // Async open: every slide-open call increments openOpId. Background workers
     // capture the id at start and finalize-on-UI checks it; mismatch means the
@@ -1843,6 +1855,8 @@ void ViewportWidget::openSlide(const std::string& filePath, const std::string& d
     closeSlide();
     m_impl->currentFilePath = filePath;
     m_impl->currentDriverId = driverId;
+    m_impl->currentSceneIndex = 0;
+    m_impl->currentAuxImageName.clear();
     const uint64_t opId = ++m_impl->openOpId;
 
     emit loadingStarted(slideDisplayName(QString::fromStdString(filePath)));
@@ -1853,17 +1867,38 @@ void ViewportWidget::openSlide(const std::string& filePath, const std::string& d
         }, Qt::QueuedConnection);
     };
 
-    std::vector<uint8_t> defaultProfileBytes = m_impl->defaultColorProfile;
-    std::thread([this, opId, filePath, driverId, statusCallback, defaultProfileBytes]() {
-        SceneOpenResult result = openSceneSync(filePath, 0, driverId, statusCallback, defaultProfileBytes);
-        // Always enumerate scenes so the scene panel can populate, even if scene 0 worked.
+    ColorProfilePolicy policy = m_impl->colorProfilePolicy;
+    std::thread([this, opId, filePath, driverId, statusCallback, policy]() {
+        // Enumerated before the scene is opened, not after: the slide's
+        // identity is derived from this list, and the adapter needs the
+        // profile that identity selects at construction time. The scene panel
+        // still gets the same list it always did.
+        std::vector<core::SceneInfo> scenes;
+        std::vector<core::SceneInfo> auxImages;
         try {
             auto enumResult = infra::SlideIOAdapter::enumerateScenes(filePath, driverId);
-            result.scenes = std::move(enumResult.first);
-            result.auxImages = std::move(enumResult.second);
+            scenes = std::move(enumResult.first);
+            auxImages = std::move(enumResult.second);
         } catch (const std::exception& ex) {
             spdlog::warn("openSlide: failed to enumerate scenes: {}", ex.what());
         }
+
+        uint64_t fileSize = 0;
+        try {
+            fileSize = static_cast<uint64_t>(std::filesystem::file_size(filePath));
+        } catch (const std::exception& ex) {
+            spdlog::warn("openSlide: failed to size '{}': {}", filePath, ex.what());
+        }
+
+        std::string problem;
+        const core::SuppliedColorProfile supplied =
+            resolveColorProfile(policy, scenes, fileSize, problem);
+
+        SceneOpenResult result = openSceneSync(filePath, 0, driverId, statusCallback, supplied);
+        result.scenes = std::move(scenes);
+        result.auxImages = std::move(auxImages);
+        result.colorProfileProblem = std::move(problem);
+
         QMetaObject::invokeMethod(this,
             [this, opId, r = std::move(result)]() mutable {
                 installSceneOpenResult(opId, std::move(r));
@@ -2065,9 +2100,25 @@ QImage ViewportWidget::loadAuxImage(const std::string& auxImageName)
 void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
                                const std::string& driverId)
 {
+    // The scene list on slideInfo describes whichever file was open last. If
+    // this open targets a different one, that list is not this slide's and must
+    // not be used to identify it -- an identity computed from another slide's
+    // geometry could match that slide's stored override. An empty list is the
+    // honest input here, and resolveColorProfile already declines to look up an
+    // override for one.
+    //
+    // Read before closeSlide() for clarity about which open it describes;
+    // closeSlide leaves slideInfo intact, so the point is the file match, not
+    // the ordering.
+    const std::vector<core::SceneInfo> scenesForIdentity =
+        (filePath == m_impl->slideInfo.filePath) ? m_impl->slideInfo.scenes
+                                                 : std::vector<core::SceneInfo>{};
+
     closeSlide();
     m_impl->currentFilePath = filePath;
     m_impl->currentDriverId = driverId;
+    m_impl->currentSceneIndex = sceneIndex;
+    m_impl->currentAuxImageName.clear();
     const uint64_t opId = ++m_impl->openOpId;
 
     QString displayName = QString::fromStdString(filePath);
@@ -2082,9 +2133,21 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
         }, Qt::QueuedConnection);
     };
 
-    std::vector<uint8_t> defaultProfileBytes = m_impl->defaultColorProfile;
-    std::thread([this, opId, filePath, sceneIndex, driverId, statusCallback, defaultProfileBytes]() {
-        SceneOpenResult result = openSceneSync(filePath, sceneIndex, driverId, statusCallback, defaultProfileBytes);
+    // Resolved here rather than on the open thread: the scene list is already
+    // known for this file, so the thread has nothing left to enumerate.
+    uint64_t fileSize = 0;
+    try {
+        fileSize = static_cast<uint64_t>(std::filesystem::file_size(filePath));
+    } catch (const std::exception& ex) {
+        spdlog::warn("openScene: failed to size '{}': {}", filePath, ex.what());
+    }
+    std::string problem;
+    const core::SuppliedColorProfile supplied = resolveColorProfile(
+        m_impl->colorProfilePolicy, scenesForIdentity, fileSize, problem);
+
+    std::thread([this, opId, filePath, sceneIndex, driverId, statusCallback, supplied, problem]() {
+        SceneOpenResult result = openSceneSync(filePath, sceneIndex, driverId, statusCallback, supplied);
+        result.colorProfileProblem = problem;
         QMetaObject::invokeMethod(this,
             [this, opId, r = std::move(result)]() mutable {
                 installSceneOpenResult(opId, std::move(r));
@@ -2125,9 +2188,20 @@ void ViewportWidget::closeSlide()
 void ViewportWidget::openAuxImage(const std::string& filePath, const std::string& auxImageName,
                                   const std::string& driverId)
 {
+    // The scene list on slideInfo describes whichever file was open last. If
+    // this open targets a different one, that list is not this slide's and must
+    // not be used to identify it -- an identity computed from another slide's
+    // geometry could match that slide's stored override. An empty list is the
+    // honest input here, and resolveColorProfile already declines to look up an
+    // override for one.
+    const std::vector<core::SceneInfo> scenesForIdentity =
+        (filePath == m_impl->slideInfo.filePath) ? m_impl->slideInfo.scenes
+                                                 : std::vector<core::SceneInfo>{};
+
     closeSlide();
     m_impl->currentFilePath = filePath;
     m_impl->currentDriverId = driverId;
+    m_impl->currentAuxImageName = auxImageName;
     const uint64_t opId = ++m_impl->openOpId;
 
     QString displayName = QString::fromStdString(filePath);
@@ -2142,10 +2216,22 @@ void ViewportWidget::openAuxImage(const std::string& filePath, const std::string
         }, Qt::QueuedConnection);
     };
 
-    std::vector<uint8_t> defaultProfileBytes = m_impl->defaultColorProfile;
-    std::thread([this, opId, filePath, auxImageName, driverId, statusCallback, defaultProfileBytes]() {
+    // Resolved here rather than on the open thread: the scene list is already
+    // known for this file, so the thread has nothing left to enumerate.
+    uint64_t fileSize = 0;
+    try {
+        fileSize = static_cast<uint64_t>(std::filesystem::file_size(filePath));
+    } catch (const std::exception& ex) {
+        spdlog::warn("openAuxImage: failed to size '{}': {}", filePath, ex.what());
+    }
+    std::string problem;
+    const core::SuppliedColorProfile supplied = resolveColorProfile(
+        m_impl->colorProfilePolicy, scenesForIdentity, fileSize, problem);
+
+    std::thread([this, opId, filePath, auxImageName, driverId, statusCallback, supplied, problem]() {
         SceneOpenResult result = openAuxImageSync(filePath, auxImageName, driverId, statusCallback,
-                                                   defaultProfileBytes);
+                                                  supplied);
+        result.colorProfileProblem = problem;
         QMetaObject::invokeMethod(this,
             [this, opId, r = std::move(result)]() mutable {
                 installSceneOpenResult(opId, std::move(r));
@@ -2184,6 +2270,7 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
         carriedAuxImages = m_impl->slideInfo.auxImages;
     }
 
+    m_impl->colorProfileProblem = std::move(result.colorProfileProblem);
     m_impl->slideSource = std::move(result.slideSource);
     m_impl->tileCache = std::move(result.tileCache);
     m_impl->pyramid = std::move(result.pyramid);
@@ -2346,9 +2433,34 @@ void ViewportWidget::setChannelSettings(const std::vector<core::ChannelInfo>& ch
     }
 }
 
-void ViewportWidget::setDefaultColorProfile(std::vector<uint8_t> bytes)
+void ViewportWidget::setColorProfilePolicy(ColorProfilePolicy policy)
 {
-    m_impl->defaultColorProfile = std::move(bytes);
+    m_impl->colorProfilePolicy = std::move(policy);
+}
+
+// Why a configured override could not be used on the slide now showing, if it
+// could not. Empty when none was configured or it was fine.
+const std::string& ViewportWidget::lastColorProfileProblem() const
+{
+    return m_impl->colorProfileProblem;
+}
+
+void ViewportWidget::reopenCurrentScene()
+{
+    if (!m_impl->slideOpen || m_impl->currentFilePath.empty()) {
+        return;
+    }
+
+    const std::string filePath = m_impl->currentFilePath;
+    const std::string driverId = m_impl->currentDriverId;
+    const std::string auxName = m_impl->currentAuxImageName;
+    const int sceneIndex = m_impl->currentSceneIndex;
+
+    if (!auxName.empty()) {
+        openAuxImage(filePath, auxName, driverId);
+    } else {
+        openScene(filePath, sceneIndex, driverId);
+    }
 }
 
 void ViewportWidget::setColorMode(core::ColorMode mode)
