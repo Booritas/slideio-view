@@ -11,6 +11,7 @@
 #include "slideio/viewer/ui/LoadingOverlay.h"
 #include "slideio/viewer/ui/SceneThumbnailPanel.h"
 #include "slideio/viewer/ui/SlidePropertiesPanel.h"
+#include "slideio/viewer/ui/SlideProfilesDialog.h"
 #include "slideio/viewer/ui/MetadataPanel.h"
 #include "slideio/viewer/ui/MinimapWidget.h"
 #include "slideio/viewer/ui/StatusBarManager.h"
@@ -106,6 +107,7 @@ struct MainWindow::Impl
     QAction* clearDefaultProfileAction = nullptr;
     QAction* setSlideProfileAction = nullptr;
     QAction* clearSlideProfileAction = nullptr;
+    QAction* manageSlideProfilesAction = nullptr;
     QAction* aboutAction = nullptr;
 
     // Why the configured default ICC profile cannot be used, if it cannot.
@@ -196,6 +198,10 @@ struct MainWindow::Impl
             "Stop overriding this slide's color profile");
         clearSlideProfileAction->setEnabled(false);
 
+        manageSlideProfilesAction = new QAction("Manage Slide ICC Profiles…", owner);
+        manageSlideProfilesAction->setStatusTip(
+            "See and remove stored per-slide color profile overrides");
+
         aboutAction = new QAction("&About SlideIO Viewer...", owner);
         // On macOS this moves the entry into the application menu, where the
         // platform expects it, instead of leaving it under Help.
@@ -247,6 +253,7 @@ struct MainWindow::Impl
         viewMenu->addSeparator();
         viewMenu->addAction(setSlideProfileAction);
         viewMenu->addAction(clearSlideProfileAction);
+        viewMenu->addAction(manageSlideProfilesAction);
 
         QMenu* helpMenu = owner->menuBar()->addMenu("&Help");
         helpMenu->addAction(aboutAction);
@@ -337,6 +344,25 @@ struct MainWindow::Impl
                          owner, &MainWindow::onSetSlideColorProfile);
         QObject::connect(clearSlideProfileAction, &QAction::triggered,
                          owner, &MainWindow::onClearSlideColorProfile);
+
+        QObject::connect(manageSlideProfilesAction, &QAction::triggered, owner, [this]() {
+            const std::string openSlideId = owner->currentSlideId();
+            const bool hadOverride =
+                !openSlideId.empty() && overrideStore->find(openSlideId).has_value();
+
+            SlideProfilesDialog dialog(*overrideStore, owner);
+            QObject::connect(&dialog, &SlideProfilesDialog::overridesChanged, owner,
+                [this, openSlideId, hadOverride]() {
+                    owner->applyColorProfilePolicy();
+                    // Reopening unconditionally would reload the user's slide for
+                    // no reason whenever an unrelated entry was removed; only do
+                    // it when the slide on screen just lost its own entry.
+                    if (hadOverride && !overrideStore->find(openSlideId).has_value()) {
+                        viewportWidget->reopenCurrentScene();
+                    }
+                });
+            dialog.exec();
+        });
 
         // Help actions. The dialog is built per invocation so that it picks up
         // the OpenGL strings once the viewport's context has come up, rather
