@@ -130,6 +130,31 @@ TEST_CASE("computeSlideId tolerates an empty scene vector", "[core][SlideId]")
     REQUIRE(id != computeSlideId(twoScenes(), 4096));
 }
 
+TEST_CASE("computeSlideId is pinned against a hardcoded hex string", "[core][SlideId]")
+{
+    // This test exists to FAIL the moment the encoding changes -- not to check
+    // a property of it. computeSlideId's output is now a QSettings key for
+    // stored per-slide ICC overrides, and Stage 3 plans to embed it in
+    // annotation files, so it is a persistence format, not an internal detail.
+    // Every other case in this file checks relative properties (stability,
+    // uniqueness, which fields matter) that stay green across a change to
+    // appendField's separator or fnv1a64 itself; none of them would catch one.
+    // This one hardcodes the actual string, so it will.
+    //
+    // If you are changing appendField, fnv1a64, or the field order/set
+    // deliberately: you must also ship a migration for stored QSettings
+    // overrides and any annotation files that already embed the old id, and
+    // THEN update the hardcoded value below -- never update it just to make
+    // this test pass again.
+    const std::vector<SceneInfo> scenes{
+        makeScene(0, 95000, 73000, 3),   // a realistic whole-slide scene
+        makeScene(1, 4096, 3072, 3),     // a second scene of different geometry
+    };
+    constexpr uint64_t fileSizeBytes = 3'250'000'000ULL; // ~3.25 GB, a realistic SVS
+
+    REQUIRE(computeSlideId(scenes, fileSizeBytes) == "ab0c97a9daa19811");
+}
+
 TEST_CASE("computeSlideId does not collide across realistic slides", "[core][SlideId]")
 {
     // Review Focus 4: pins the collision surface so it cannot silently widen.
