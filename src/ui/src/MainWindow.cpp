@@ -129,6 +129,15 @@ struct MainWindow::Impl
     // can rebuild the whole policy without re-reading the file.
     std::vector<uint8_t> defaultProfileBytes;
 
+    // Slide the user has just nominated an ICC override for, awaiting the
+    // reopen that will say whether the nominated profile actually binds.
+    // Empty when nothing is pending. Carries the slide id rather than a bare
+    // flag so an open that beats the reopen -- the user picking a profile and
+    // then opening a different slide -- cannot turn colour management on for
+    // the wrong slide. Consumed by the slide-opened handler, which clears it
+    // on the first open it sees, matched or not.
+    std::string pendingColorManagementEnableSlideId;
+
     std::unique_ptr<infra::QSettingsColorProfileOverrideStore> overrideStore;
 
     void createActions()
@@ -542,6 +551,29 @@ struct MainWindow::Impl
                     info.colorProfileOrigin, info.displacedEmbeddedProfile,
                     info.colorProfileInfo.description,
                     ctrl ? ctrl->colorMode() : core::ColorMode::Raw);
+
+                // An override the user set just before this open asked, in
+                // substance, for colour management to be on -- but only if the
+                // profile they nominated works, which nothing could know until
+                // this reopen reported it. Taken and cleared here whether or
+                // not it matches and whether or not it is applied, so a record
+                // left behind by a reopen that never arrived cannot reach a
+                // later slide.
+                const std::string pendingEnableSlideId = pendingColorManagementEnableSlideId;
+                pendingColorManagementEnableSlideId.clear();
+                // Deliberately NOT under the blocker above: this one is the
+                // user's own action arriving late, so onColorManagementToggled
+                // must run and write the global preference exactly as a click
+                // on the menu item would. Every condition is a fail-closed
+                // guard -- a profile that did not bind leaves `available`
+                // false, and a different slide having opened in the meantime
+                // leaves the ids unequal; either way nothing is written and
+                // the user can still turn it on themselves.
+                if (!pendingEnableSlideId.empty() && available
+                    && pendingEnableSlideId == owner->currentSlideId()
+                    && !colorManagementAction->isChecked()) {
+                    colorManagementAction->setChecked(true);
+                }
 
                 metadataPanel->setSlideInfo(info);
                 // No thumbnail will arrive for a slide with no downsampled
@@ -1139,10 +1171,6 @@ void MainWindow::onSetSlideColorProfile()
     // slide displayed through a profile its scanner did not produce.
     const core::SlideInfo& info = m_impl->viewportWidget->slideInfo();
     const bool displaces = info.colorProfileInfo.present;
-    // Copied out rather than read back off `info` further down: the store write
-    // and the policy rebuild below sit between here and the use, and a value
-    // read once cannot be invalidated by what they touch.
-    const core::ColorManagementAvailability availability = info.colorManagement;
     if (displaces) {
         const QString embedded = QString::fromStdString(info.colorProfileInfo.description);
         const auto answer = QMessageBox::question(
@@ -1168,24 +1196,21 @@ void MainWindow::onSetSlideColorProfile()
     applyColorProfilePolicy();
 
     // An override has no effect in Raw mode, so a menu item that visibly did
-    // nothing would read as a bug. Turning it on is what the user asked for in
-    // substance.
+    // nothing would read as a bug. Turning colour management on is what the
+    // user asked for in substance -- but not here, and not yet.
     //
-    // Guarded on the override being able to apply at all, because setChecked()
-    // emits toggled() even on a disabled action and onColorManagementToggled
-    // writes the global preference to QSettings. Without the guard, nominating
-    // a profile on a slide that refuses ICC conversion would silently flip the
-    // user's setting for every slide they opened afterwards. The enablement in
-    // the slide-opened handler should already make this unreachable; it is
-    // repeated here because the two are edited in different places.
+    // setChecked() emits toggled() even on a disabled action, and
+    // onColorManagementToggled writes the global preference to QSettings. At
+    // this point nobody knows whether the nominated profile works: validation
+    // at pick time inspects the ICC header only, and a structurally sound
+    // header can still be refused by lcms2 at bind time. Enabling now would
+    // flip the user's setting for every slide they open afterwards on the
+    // strength of a profile that is about to fail -- and the slide-opened
+    // handler, which syncs the action under a signal blocker, would then
+    // uncheck the action without ever undoing the write.
     //
-    // Deliberately not the action's own enabled state: on a slide that embeds
-    // no profile, colour management is disabled until this very override
-    // supplies one, and that is the case where turning it on matters most.
-    if (core::slideProfileOverrideCanApply(availability)
-        && !m_impl->colorManagementAction->isChecked()) {
-        m_impl->colorManagementAction->setChecked(true);
-    }
+    // So record the intent against this slide and let the reopen below decide.
+    m_impl->pendingColorManagementEnableSlideId = slideId;
 
     m_impl->viewportWidget->reopenCurrentScene();
 }
