@@ -215,3 +215,55 @@ TEST_CASE("defaultProfileProblemText is empty when the default profile is fine",
 {
     REQUIRE(defaultProfileProblemText(DefaultProfileStatus::Ok, "p.icc").empty());
 }
+
+TEST_CASE("slideProfileProblemText names the slide's own profile and where to repair it",
+          "[core][ColorManagement]")
+{
+    // Review Finding 1. A failed per-slide override was reported in the default
+    // profile's words, sending the user to a setting they may never have
+    // touched while the broken entry sat in the manage dialog.
+    const std::string path = "D:/profiles/slide.icc";
+    for (auto status : {DefaultProfileStatus::Unreadable,
+                        DefaultProfileStatus::NotAProfile,
+                        DefaultProfileStatus::NotRgb}) {
+        const std::string text = slideProfileProblemText(status, path);
+        REQUIRE_FALSE(text.empty());
+        REQUIRE(text.find(path) != std::string::npos);
+        REQUIRE(text.find("this slide") != std::string::npos);
+        REQUIRE(text.find("Manage Slide ICC Profiles") != std::string::npos);
+        // The repair is in the dialog, so the message must not send the user to
+        // the default-profile setting instead.
+        REQUIRE(text.find("default") == std::string::npos);
+    }
+}
+
+TEST_CASE("slideProfileProblemText distinguishes the three failures",
+          "[core][ColorManagement]")
+{
+    const std::string path = "p.icc";
+    const std::string unreadable = slideProfileProblemText(DefaultProfileStatus::Unreadable, path);
+    const std::string notProfile = slideProfileProblemText(DefaultProfileStatus::NotAProfile, path);
+    const std::string notRgb = slideProfileProblemText(DefaultProfileStatus::NotRgb, path);
+    REQUIRE(unreadable != notProfile);
+    REQUIRE(notProfile != notRgb);
+    REQUIRE(unreadable != notRgb);
+}
+
+TEST_CASE("slideProfileProblemText is empty when the slide's profile is fine",
+          "[core][ColorManagement]")
+{
+    REQUIRE(slideProfileProblemText(DefaultProfileStatus::Ok, "p.icc").empty());
+}
+
+TEST_CASE("slideProfileProblemText says something other than defaultProfileProblemText",
+          "[core][ColorManagement]")
+{
+    // The two must stay distinguishable: the bug was one standing in for the
+    // other, and a copy-paste that let them converge would restore it silently.
+    const std::string path = "p.icc";
+    for (auto status : {DefaultProfileStatus::Unreadable,
+                        DefaultProfileStatus::NotAProfile,
+                        DefaultProfileStatus::NotRgb}) {
+        REQUIRE(slideProfileProblemText(status, path) != defaultProfileProblemText(status, path));
+    }
+}

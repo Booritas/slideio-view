@@ -102,4 +102,22 @@ std::string defaultProfileProblemText(DefaultProfileStatus status, const std::st
     return {};
 }
 
+std::string slideProfileProblemText(DefaultProfileStatus status, const std::string& path)
+{
+    switch (status) {
+    case DefaultProfileStatus::Ok:
+        return {};
+    case DefaultProfileStatus::Unreadable:
+        return "The ICC profile set for this slide, " + path + ", could not be read."
+               " Set a new one, or remove it in Manage Slide ICC Profiles.";
+    case DefaultProfileStatus::NotAProfile:
+        return "The ICC profile set for this slide, " + path + ", is no longer a valid"
+               " ICC profile. Set a new one, or remove it in Manage Slide ICC Profiles.";
+    case DefaultProfileStatus::NotRgb:
+        return "The ICC profile set for this slide, " + path + ", no longer describes"
+               " RGB data. Set a new one, or remove it in Manage Slide ICC Profiles.";
+    }
+    return {};
+}
+
 } // namespace slideio::viewer::core
