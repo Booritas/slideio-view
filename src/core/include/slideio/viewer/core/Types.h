@@ -218,6 +218,18 @@ enum class ColorProfileSource
     Supplied,   ///< handed to SlideIO by the caller, not found in the file
 };
 
+/// Where the profile actually in use came from, as the viewer sees it.
+///
+/// Distinct from ColorProfileSource, which mirrors slideio::ColorProfileSource
+/// and reports both a global default and a per-slide override as `Supplied` --
+/// the library has no reason to tell them apart, and the panel must.
+enum class ColorProfileOrigin
+{
+    Library,        ///< the slide's own profile, or SlideIO's assumption
+    DefaultSetting, ///< the global default profile stood in
+    SlideOverride,  ///< a profile the user chose for this slide
+};
+
 /// Colour space of ICC profile data. Mirrors slideio::IccColorSpace, and is
 /// unrelated to the channel colours above.
 enum class IccColorSpace { Unknown, Gray, RGB, CMYK, Lab, XYZ, YCbCr };
@@ -301,6 +313,11 @@ struct SlideInfo
     ColorProfileInfo colorProfileInfo; // populated from slideio::Scene::getColorProfileInfo()
     ColorManagementAvailability colorManagement = ColorManagementAvailability::NotColorimetric;
     std::string colorManagementDetail;  // SlideIO's message when colorManagement == BindFailed
+    ColorProfileOrigin colorProfileOrigin = ColorProfileOrigin::Library;
+    // True when a per-slide override is in use on a slide that embeds its own
+    // profile. The panel says so, so a slide shown through a non-native profile
+    // never looks native.
+    bool displacedEmbeddedProfile = false;
     // Surfaced because isBrightfield is the wrong gate for ICC conversion in both
     // directions: it is false for 16-bit RGB brightfield, which ColorManagement
     // supports, and this hint is what separates 3x8-bit fluorescence from brightfield.
