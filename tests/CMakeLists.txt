@@ -25,6 +25,7 @@ add_executable(slideio-viewer-infra-tests
     infra/LruTileCacheTest.cpp
     infra/TileLoadSchedulerTest.cpp
     infra/ColorManagedAdapterTest.cpp
+    infra/QSettingsColorProfileOverrideStoreTest.cpp
 )
 
 target_link_libraries(slideio-viewer-infra-tests
@@ -64,7 +65,7 @@ if(WIN32)
         set_tests_properties(ui-tests PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:${_slideio_bin_dir};PATH=path_list_prepend:${_qt_bin_dir}")
         set_tests_properties(infra-tests PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:${_slideio_bin_dir}")
+            "PATH=path_list_prepend:${_slideio_bin_dir};PATH=path_list_prepend:${_qt_bin_dir}")
     else()
         message(WARNING
             "CMake < 3.22: the ui-tests and infra-tests targets cannot have their PATH set up "
