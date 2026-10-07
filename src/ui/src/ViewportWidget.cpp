@@ -2107,6 +2107,12 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
     // honest input here, and resolveColorProfile already declines to look up an
     // override for one.
     //
+    // Computed here because it reads m_impl->slideInfo, which is UI-thread
+    // state; captured by value into the worker below. The resolve itself must
+    // NOT happen here: it opens the override's profile file, and an override
+    // pointing at an unreachable share would block the UI thread for the
+    // filesystem timeout.
+    //
     // Read before closeSlide() for clarity about which open it describes;
     // closeSlide leaves slideInfo intact, so the point is the file match, not
     // the ordering.
@@ -2133,21 +2139,23 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
         }, Qt::QueuedConnection);
     };
 
-    // Resolved here rather than on the open thread: the scene list is already
-    // known for this file, so the thread has nothing left to enumerate.
-    uint64_t fileSize = 0;
-    try {
-        fileSize = static_cast<uint64_t>(std::filesystem::file_size(filePath));
-    } catch (const std::exception& ex) {
-        spdlog::warn("openScene: failed to size '{}': {}", filePath, ex.what());
-    }
-    std::string problem;
-    const core::SuppliedColorProfile supplied = resolveColorProfile(
-        m_impl->colorProfilePolicy, scenesForIdentity, fileSize, problem);
+    ColorProfilePolicy policy = m_impl->colorProfilePolicy;
+    std::thread([this, opId, filePath, sceneIndex, driverId, statusCallback,
+                 policy, scenesForIdentity]() {
+        uint64_t fileSize = 0;
+        try {
+            fileSize = static_cast<uint64_t>(std::filesystem::file_size(filePath));
+        } catch (const std::exception& ex) {
+            spdlog::warn("openScene: failed to size '{}': {}", filePath, ex.what());
+        }
 
-    std::thread([this, opId, filePath, sceneIndex, driverId, statusCallback, supplied, problem]() {
-        SceneOpenResult result = openSceneSync(filePath, sceneIndex, driverId, statusCallback, supplied);
-        result.colorProfileProblem = problem;
+        std::string problem;
+        const core::SuppliedColorProfile supplied =
+            resolveColorProfile(policy, scenesForIdentity, fileSize, problem);
+
+        SceneOpenResult result = openSceneSync(filePath, sceneIndex, driverId,
+                                               statusCallback, supplied);
+        result.colorProfileProblem = std::move(problem);
         QMetaObject::invokeMethod(this,
             [this, opId, r = std::move(result)]() mutable {
                 installSceneOpenResult(opId, std::move(r));
@@ -2194,6 +2202,12 @@ void ViewportWidget::openAuxImage(const std::string& filePath, const std::string
     // geometry could match that slide's stored override. An empty list is the
     // honest input here, and resolveColorProfile already declines to look up an
     // override for one.
+    //
+    // Computed here because it reads m_impl->slideInfo, which is UI-thread
+    // state; captured by value into the worker below. The resolve itself must
+    // NOT happen here: it opens the override's profile file, and an override
+    // pointing at an unreachable share would block the UI thread for the
+    // filesystem timeout.
     const std::vector<core::SceneInfo> scenesForIdentity =
         (filePath == m_impl->slideInfo.filePath) ? m_impl->slideInfo.scenes
                                                  : std::vector<core::SceneInfo>{};
@@ -2216,22 +2230,23 @@ void ViewportWidget::openAuxImage(const std::string& filePath, const std::string
         }, Qt::QueuedConnection);
     };
 
-    // Resolved here rather than on the open thread: the scene list is already
-    // known for this file, so the thread has nothing left to enumerate.
-    uint64_t fileSize = 0;
-    try {
-        fileSize = static_cast<uint64_t>(std::filesystem::file_size(filePath));
-    } catch (const std::exception& ex) {
-        spdlog::warn("openAuxImage: failed to size '{}': {}", filePath, ex.what());
-    }
-    std::string problem;
-    const core::SuppliedColorProfile supplied = resolveColorProfile(
-        m_impl->colorProfilePolicy, scenesForIdentity, fileSize, problem);
+    ColorProfilePolicy policy = m_impl->colorProfilePolicy;
+    std::thread([this, opId, filePath, auxImageName, driverId, statusCallback,
+                 policy, scenesForIdentity]() {
+        uint64_t fileSize = 0;
+        try {
+            fileSize = static_cast<uint64_t>(std::filesystem::file_size(filePath));
+        } catch (const std::exception& ex) {
+            spdlog::warn("openAuxImage: failed to size '{}': {}", filePath, ex.what());
+        }
 
-    std::thread([this, opId, filePath, auxImageName, driverId, statusCallback, supplied, problem]() {
-        SceneOpenResult result = openAuxImageSync(filePath, auxImageName, driverId, statusCallback,
-                                                  supplied);
-        result.colorProfileProblem = problem;
+        std::string problem;
+        const core::SuppliedColorProfile supplied =
+            resolveColorProfile(policy, scenesForIdentity, fileSize, problem);
+
+        SceneOpenResult result = openAuxImageSync(filePath, auxImageName, driverId,
+                                                  statusCallback, supplied);
+        result.colorProfileProblem = std::move(problem);
         QMetaObject::invokeMethod(this,
             [this, opId, r = std::move(result)]() mutable {
                 installSceneOpenResult(opId, std::move(r));
