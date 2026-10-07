@@ -45,6 +45,11 @@ std::string colorManagementUnavailableReason(ColorManagementAvailability availab
     return {};
 }
 
+bool slideProfileOverrideCanApply(ColorManagementAvailability availability)
+{
+    return availability != ColorManagementAvailability::NotColorimetric;
+}
+
 IccHeaderSummary inspectIccHeader(const std::vector<uint8_t>& bytes)
 {
     IccHeaderSummary summary;

@@ -45,6 +45,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace
@@ -53,6 +54,15 @@ constexpr int kMaxRecentFiles = 10;
 const QString kRecentFilesKey = "recentFiles";
 constexpr auto kDefaultProfileKey = "color/defaultSourceProfile";
 constexpr auto kColorManagementKey = "view/colorManagement";
+
+// What these two actions do, held in one place because the slide-opened handler
+// restores them after a problem has temporarily displaced them. std::string
+// rather than a literal so they can stand in a conditional beside the
+// problem text they alternate with.
+const std::string kColorManagementDescription =
+    "Convert slide colours to sRGB via its ICC profile";
+const std::string kSetSlideProfileDescription =
+    "Choose an RGB ICC profile for the slide on screen";
 } // anonymous namespace
 
 namespace slideio::viewer::ui
@@ -189,8 +199,7 @@ struct MainWindow::Impl
         clearDefaultProfileAction->setEnabled(false);
 
         setSlideProfileAction = new QAction("Set ICC Profile for This Slide…", owner);
-        setSlideProfileAction->setStatusTip(
-            "Choose an RGB ICC profile for the slide on screen");
+        setSlideProfileAction->setStatusTip(QString::fromStdString(kSetSlideProfileDescription));
         setSlideProfileAction->setEnabled(false);
 
         clearSlideProfileAction = new QAction("Clear ICC Profile for This Slide", owner);
@@ -450,7 +459,22 @@ struct MainWindow::Impl
                 const bool available =
                     info.colorManagement == core::ColorManagementAvailability::Available;
                 colorManagementAction->setEnabled(available);
-                setSlideProfileAction->setEnabled(viewportWidget->isSlideOpen());
+                // Gated on whether an override could ever apply to this slide,
+                // not merely on a slide being open. On a fluorescence slide ICC
+                // conversion is refused outright, so storing one would record an
+                // entry that reads as configured and can never take effect.
+                //
+                // Not gated on `available`: a brightfield slide that embeds no
+                // profile reports NoProfile, and that is the case the feature
+                // exists for -- supplying the profile is what makes colour
+                // management available at the next open.
+                const bool overrideCanApply =
+                    core::slideProfileOverrideCanApply(info.colorManagement);
+                setSlideProfileAction->setEnabled(viewportWidget->isSlideOpen() && overrideCanApply);
+                // Clear stays enabled on the existence of an entry alone. A user
+                // may hold an override stored before that gate existed, and
+                // removing a setting must never be blocked by the very condition
+                // that made the setting useless.
                 clearSlideProfileAction->setEnabled(
                     viewportWidget->isSlideOpen()
                     && overrideStore->find(owner->currentSlideId()).has_value());
@@ -459,27 +483,42 @@ struct MainWindow::Impl
                 // its bytes, so infra correctly sees no default and reports
                 // NoProfile; say what actually went wrong rather than letting
                 // that stand as "no default profile is set".
-                std::string reason =
+                const std::string availabilityReason =
                     core::colorManagementUnavailableReason(info.colorManagement,
                                                            info.colorManagementDetail);
+                std::string unavailableReason = availabilityReason;
+                if (!available && !defaultProfileProblem.empty()) {
+                    unavailableReason = defaultProfileProblem;
+                }
                 // Most specific problem first. An override the user set for
                 // this very slide explains the colours better than a global
                 // default does, and either explains them better than a message
                 // about what the slide does or does not embed.
                 const std::string overrideProblem =
                     viewportWidget->lastColorProfileProblem();
-                if (!overrideProblem.empty()) {
-                    reason = overrideProblem;
-                } else if (!available && !defaultProfileProblem.empty()) {
-                    reason = defaultProfileProblem;
-                }
-                // Both: the tooltip renders in the menu (viewMenu has
-                // setToolTipsVisible), the status tip in the status bar on
-                // hover, which is what every other action here uses.
+                const std::string reason =
+                    overrideProblem.empty() ? unavailableReason : overrideProblem;
+                // The two tips carry different things on purpose. The tooltip
+                // renders in the menu (viewMenu has setToolTipsVisible) and is
+                // where a problem belongs; the status tip is the action's
+                // description, which a broken override on an otherwise fine
+                // slide must not cost the user. Only when colour management is
+                // unavailable -- when there is no behaviour left to describe --
+                // does the status tip give up the description for the reason.
                 colorManagementAction->setToolTip(QString::fromStdString(reason));
                 colorManagementAction->setStatusTip(QString::fromStdString(
-                    reason.empty() ? std::string("Convert slide colours to sRGB via its ICC profile")
-                                   : reason));
+                    (available || reason.empty()) ? kColorManagementDescription : reason));
+                // Disabled above for exactly the reason the slide is not
+                // colorimetric, so say so in the same words rather than
+                // inventing a second explanation of the same fact. The raw
+                // availability reason, not unavailableReason: a broken default
+                // profile is not why this action is disabled.
+                setSlideProfileAction->setToolTip(QString::fromStdString(
+                    overrideCanApply ? std::string() : availabilityReason));
+                setSlideProfileAction->setStatusTip(QString::fromStdString(
+                    (overrideCanApply || availabilityReason.empty())
+                        ? kSetSlideProfileDescription
+                        : availabilityReason));
 
                 QSettings settings;
                 const bool wanted = available
@@ -1095,6 +1134,10 @@ void MainWindow::onSetSlideColorProfile()
     // slide displayed through a profile its scanner did not produce.
     const core::SlideInfo& info = m_impl->viewportWidget->slideInfo();
     const bool displaces = info.colorProfileInfo.present;
+    // Copied out rather than read back off `info` further down: the store write
+    // and the policy rebuild below sit between here and the use, and a value
+    // read once cannot be invalidated by what they touch.
+    const core::ColorManagementAvailability availability = info.colorManagement;
     if (displaces) {
         const QString embedded = QString::fromStdString(info.colorProfileInfo.description);
         const auto answer = QMessageBox::question(
@@ -1122,7 +1165,20 @@ void MainWindow::onSetSlideColorProfile()
     // An override has no effect in Raw mode, so a menu item that visibly did
     // nothing would read as a bug. Turning it on is what the user asked for in
     // substance.
-    if (!m_impl->colorManagementAction->isChecked()) {
+    //
+    // Guarded on the override being able to apply at all, because setChecked()
+    // emits toggled() even on a disabled action and onColorManagementToggled
+    // writes the global preference to QSettings. Without the guard, nominating
+    // a profile on a slide that refuses ICC conversion would silently flip the
+    // user's setting for every slide they opened afterwards. The enablement in
+    // the slide-opened handler should already make this unreachable; it is
+    // repeated here because the two are edited in different places.
+    //
+    // Deliberately not the action's own enabled state: on a slide that embeds
+    // no profile, colour management is disabled until this very override
+    // supplies one, and that is the case where turning it on matters most.
+    if (core::slideProfileOverrideCanApply(availability)
+        && !m_impl->colorManagementAction->isChecked()) {
         m_impl->colorManagementAction->setChecked(true);
     }
 

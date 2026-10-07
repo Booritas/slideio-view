@@ -27,6 +27,22 @@ bool isColorimetricForIcc(int numChannels, DataType dataType, bool fluorescenceH
 std::string colorManagementUnavailableReason(ColorManagementAvailability availability,
                                              const std::string& detail);
 
+/// Whether nominating an ICC profile for one slide could ever change how that
+/// slide is displayed.
+///
+/// False only for NotColorimetric. Those channels are intensities rather than
+/// colour, and the viewer refuses to transform them whatever profile it is
+/// handed, so an override stored against such a slide is an entry that reads
+/// everywhere as configured and can never apply.
+///
+/// NoProfile is deliberately true: a slide that embeds nothing, with no default
+/// to stand in, is precisely the case a per-slide override exists for, and
+/// supplying one is what makes colour management available at the next open.
+/// Gating on Available instead would make the feature unreachable for exactly
+/// the slides that need it. BindFailed likewise -- a different profile may bind
+/// where the present one did not.
+bool slideProfileOverrideCanApply(ColorManagementAvailability availability);
+
 /// The fields of an ICC profile header this application reads.
 struct IccHeaderSummary
 {
