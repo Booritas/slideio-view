@@ -267,3 +267,27 @@ TEST_CASE("slideProfileProblemText says something other than defaultProfileProbl
         REQUIRE(slideProfileProblemText(status, path) != defaultProfileProblemText(status, path));
     }
 }
+
+TEST_CASE("a per-slide override is refused only where ICC conversion is",
+          "[core][ColorManagement]")
+{
+    // Review Finding 4. The action that stores an override must be disabled on
+    // a fluorescence slide: setting one there writes an entry that reads as
+    // configured and can never apply.
+    REQUIRE_FALSE(slideProfileOverrideCanApply(ColorManagementAvailability::NotColorimetric));
+}
+
+TEST_CASE("a per-slide override stays available for a slide that embeds nothing",
+          "[core][ColorManagement]")
+{
+    // The case the whole feature exists for, and the reason this predicate is
+    // not simply `availability == Available`. A brightfield slide with no
+    // embedded profile and no default configured reports NoProfile; supplying
+    // the profile is what makes colour management available at the next open,
+    // so gating on Available would make the feature unreachable for exactly
+    // the slides that need it. BindFailed likewise: another profile may bind
+    // where the present one did not.
+    REQUIRE(slideProfileOverrideCanApply(ColorManagementAvailability::NoProfile));
+    REQUIRE(slideProfileOverrideCanApply(ColorManagementAvailability::BindFailed));
+    REQUIRE(slideProfileOverrideCanApply(ColorManagementAvailability::Available));
+}
