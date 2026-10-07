@@ -37,7 +37,11 @@ properties panel. That work supplies the `present` flag this feature gates on.
   sRGB. The other `ColorTarget` values produce `DT_Float32` blocks the render
   path cannot consume.
 - **No per-slide profile override.** One global default only. Per-slide
-  assignment can be added later if the workflow needs it.
+  assignment can be added later if the workflow needs it. *Retired 2026-10-07:
+  see `2026-10-07-per-slide-color-profile-design.md`. The reasoning that kept
+  this out of scope at the time -- one global setting covers a scanner that
+  embeds nothing for its whole output -- is still worth reading; the later
+  feature only adds the one case it left unserved.*
 - **No exposed rendering intent or black-point compensation.** SlideIO's defaults
   (relative colorimetric, BPC on) are used and not surfaced.
 
