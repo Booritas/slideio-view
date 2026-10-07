@@ -107,4 +107,23 @@ core::SuppliedColorProfile resolveColorProfile(const ColorProfilePolicy& policy,
     return supplied;
 }
 
+core::SuppliedColorProfile resolveColorProfileForOpen(const ColorProfilePolicy& policy,
+                                                      const std::vector<core::SceneInfo>& scenes,
+                                                      uint64_t fileSizeBytes,
+                                                      std::string& outProblem)
+{
+    const core::SuppliedColorProfile supplied =
+        resolveColorProfile(policy, scenes, fileSizeBytes, outProblem);
+    if (scenes.empty()) {
+        // resolveColorProfile declined the lookup and left outProblem empty --
+        // correctly, since passing it an empty vector is indistinguishable from
+        // "enumeration legitimately found nothing" from inside that function.
+        // Only the caller knows this one means "could not identify the slide",
+        // so only the caller can say so.
+        outProblem = "This slide could not be identified, so any color profile "
+                     "saved for it was not applied.";
+    }
+    return supplied;
+}
+
 } // namespace slideio::viewer::ui
