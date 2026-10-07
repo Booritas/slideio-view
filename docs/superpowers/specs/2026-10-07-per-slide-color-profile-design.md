@@ -432,9 +432,14 @@ silently different from what the user asked for.
 - An empty `scenes` vector yields a stable ID rather than throwing or returning
   an empty string — `enumerateScenes` returns empty on a file it cannot read,
   and a lookup miss is the correct outcome, not a crash during open.
-- Precedence resolution, against a fake `IColorProfileOverrideStore`: override
-  beats embedded beats default beats nothing, with a bad override falling
-  through to embedded while reporting its problem.
+- `ColorProfileOverrideTest.cpp` covers the fake store itself (round-trip,
+  removal, a miss reporting empty) and a supplied profile's default of not
+  displacing. It does not cover precedence: precedence is not implemented
+  against `IColorProfileOverrideStore` at all — `ui::resolveColorProfile` takes
+  a plain `ColorProfilePolicy` (a path already chosen per slide id by
+  `MainWindow`), so there is nothing here for a fake store to exercise. The
+  precedence tests live where the precedence actually is, listed under `ui` and
+  `infra` below.
 
 **`infra`:**
 
@@ -445,13 +450,26 @@ silently different from what the user asked for.
 - `ColorManagedAdapterTest.cpp` gains the displacement case: a slide that embeds
   a profile, opened with `isSlideOverride = true`, reads pixels converted
   through the supplied profile rather than the embedded one — against the image
-  corpus that test already uses.
+  corpus that test already uses. The same file covers precedence directly: a
+  default does not displace an embedded profile, but an override does, and the
+  reported origin follows whichever one won.
 
 **`ui`:**
 
-- The warning appears only when the slide embeds a profile, and cancelling it
-  stores nothing.
-- Setting an override on a slide with colour management off turns it on.
+- `ColorProfilePolicyTest.cpp` covers `resolveColorProfile`'s precedence (no
+  override falls back to the default; a matching override wins and is marked as
+  one; an override for a different slide, or looked up against an empty scene
+  list, never applies; an unreadable or non-RGB override falls back and reports
+  why) and `slideContentSize`'s directory-summing behaviour. It also covers
+  `resolveColorProfileForOpen`: an unidentifiable slide reports why rather than
+  silently dropping a stored override, and the wrapper agrees with
+  `resolveColorProfile` when identity succeeds.
+- The warning dialog (`SlideProfilesDialog`, the set/clear menu flow) and the
+  colour-management-off-to-on transition on setting an override are Qt dialog
+  flow, deliberately verified by hand rather than by an automated test in this
+  plan, not an oversight. (This section previously listed two automated tests
+  for them that were never written and were never meant to be — the wording
+  has been corrected to match.)
 
 ## 11. Sequencing
 
