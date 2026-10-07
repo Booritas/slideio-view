@@ -1316,6 +1316,14 @@ struct ViewportWidget::Impl
     bool slideOpen = false;
     std::string currentFilePath;
     std::string currentDriverId;  // empty for auto-detect
+    // The driver the *file* was opened with, recorded by openSlide, which is the
+    // only entry point that opens a file for the first time. currentDriverId
+    // cannot serve: openScene and openAuxImage overwrite it with whatever their
+    // caller passed, and the scene-thumbnail click site passes nothing, so it
+    // reverts to auto-detect the moment the user switches scene. Auto-detection
+    // is unreliable for directory slides (DICOM studies are opened with an
+    // explicit "DCM"), so reopenCurrentScene reads this instead.
+    std::string fileDriverId;     // empty for auto-detect
     int currentZSlice = 0;
     int currentTFrame = 0;
 
@@ -1869,6 +1877,10 @@ void ViewportWidget::openSlide(const std::string& filePath, const std::string& d
     closeSlide();
     m_impl->currentFilePath = filePath;
     m_impl->currentDriverId = driverId;
+    // This is where the file itself is opened, so this is where the driver the
+    // user (or the CLI, or a drop) chose for it is recorded. Nothing downstream
+    // overwrites it; see the field's declaration.
+    m_impl->fileDriverId = driverId;
     m_impl->currentSceneIndex = 0;
     m_impl->currentAuxImageName.clear();
     const uint64_t opId = ++m_impl->openOpId;
@@ -2526,7 +2538,11 @@ void ViewportWidget::reopenCurrentScene()
     }
 
     const std::string filePath = m_impl->currentFilePath;
-    const std::string driverId = m_impl->currentDriverId;
+    // The file's own driver, not currentDriverId: clicking a scene thumbnail
+    // reopens through openScene with no driver id, which leaves currentDriverId
+    // empty. Reopening a DICOM study on auto-detect after that would change the
+    // driver underneath a user who only asked to change a colour profile.
+    const std::string driverId = m_impl->fileDriverId;
     const std::string auxName = m_impl->currentAuxImageName;
     const int sceneIndex = m_impl->currentSceneIndex;
 
