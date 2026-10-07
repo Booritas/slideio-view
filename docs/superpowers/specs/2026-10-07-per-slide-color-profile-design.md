@@ -62,38 +62,67 @@ the layer requires.
 /// NOT cryptographic and NOT tamper-evident. It identifies a slide for the
 /// user's own stored settings; nothing authenticates against it. A consumer
 /// must never treat a matching ID as proof of provenance.
+std::string computeSlideId(const std::vector<SceneInfo>& scenes, uint64_t fileSizeBytes);
+
+/// Convenience overload. Delegates to the one above, so a slide identified
+/// before it is opened and the same slide identified afterwards agree by
+/// construction rather than by two call sites staying in step.
 std::string computeSlideId(const SlideInfo& info, uint64_t fileSizeBytes);
 ```
 
 The hash input concatenates, in this fixed order:
 
 ```
-fileSizeBytes, driverId, scenes.size(),
+fileSizeBytes, scenes.size(),
 then for each entry of scenes, in index order:
     index, width, height, numChannels
 ```
 
 Fields are separated by `\x1F` (ASCII unit separator), which cannot occur in any
-of them. Without a separator, `driverId` "SVS" with width 100 and "SVS1" with
-width 00 would hash alike.
+of them. Without a separator, width 1 with height 00 and width 10 with height 0
+would hash alike.
+
+**`driverId` is deliberately not an input**, for two independent reasons. It is
+unresolved before the slide is opened — `""` means auto-detect, and the resolved
+name appears only on the `SlideInfo` that opening produces — so including it
+would make the identity unavailable at the moment it is needed (see
+"Resolution" below). And a file opened by auto-detection and the same file
+opened with its driver named explicitly are the same slide; keying them to two
+IDs would silently lose an override when the user picks a driver by hand.
 
 **Every input is file-level, not scene-level.** This is what makes the ID the
 same from whichever scene of a multi-scene file happens to be open, as the
 per-scene non-goal above requires. `SlideInfo::scenes` holds the geometry of
-every scene in the file and is populated identically no matter which one was
-opened, so the open scene's own `width`, `height`, `numChannels`,
-`channelDataType`, `numZoomLevels`, `numZSlices`, `numTFrames`, `resolutionX`
-and `resolutionY` are all deliberately excluded — each of them varies by scene
-and would key a multi-scene file to several different IDs.
+every scene in the file, so the open scene's own `width`, `height`,
+`numChannels`, `channelDataType`, `numZoomLevels`, `numZSlices`, `numTFrames`,
+`resolutionX` and `resolutionY` are all deliberately excluded — each of them
+varies by scene and would key a multi-scene file to several different IDs.
 
 The cost is that pixel resolution, a good discriminator, cannot contribute.
 `fileSizeBytes` carries that weight instead: two distinct slides with
-byte-identical sizes, the same driver, and an identical scene-geometry table are
-not a case that arises outside deliberate construction.
+byte-identical sizes and an identical scene-geometry table are not a case that
+arises outside deliberate construction.
 
-Every input is on `SlideInfo` today and none requires reading driver-specific
-metadata. No input is floating-point, so there is no cross-platform formatting
-question to settle.
+No input is floating-point, so there is no cross-platform formatting question to
+settle.
+
+### Resolution: where the ID comes from, and when
+
+The identity is needed *before* the adapter is constructed, because the adapter
+takes the profile bytes in its constructor. The inputs are therefore restricted
+to what `SlideIOAdapter::enumerateScenes(filePath, driverId)` returns, which is
+exactly the `SceneInfo` vector the primitive overload takes, plus the file size
+from the filesystem. No slide needs to be opened for the viewer's own purposes
+to compute an ID.
+
+Today `ViewportWidget::openSlide` calls `enumerateScenes` *after*
+`openSceneSync`, purely because the scene panel is the only consumer. Those two
+calls swap order, so enumeration — which already happens on every open — feeds
+the override lookup. This adds no file open: it moves one that is already there.
+
+`ViewportWidget::openScene` and `openAuxImage` need no reordering; they run on a
+file whose `SlideInfo::scenes` is already populated, so the ID is computable on
+the UI thread before the worker starts.
 
 ### Divergence from `03-software-architecture-and-design.md` §9.1
 
@@ -200,8 +229,24 @@ and `bool displacedEmbeddedProfile = false;` beside the existing
 
 `QSettingsColorProfileOverrideStore` implements `IColorProfileOverrideStore`
 against `QSettings`, under `color/slideProfiles/<slideId>`, each entry holding
-`profilePath`, `slideDisplayName` and `displacedEmbedded`. Infra already links
-`Qt6::Core`, so this adds no dependency.
+`profilePath`, `slideDisplayName` and `displacedEmbedded`.
+
+**This adds Qt to a layer that currently has none.** `src/infra/CMakeLists.txt`
+links `slideio-viewer-core`, `SlideIO::*` and `spdlog` only — `Qt6::Core` is
+*not* among them, notwithstanding the target table in `CLAUDE.md`, which
+describes the intended architecture rather than the built one. Implementation
+adds `Qt6::Core` to that target, and adds the Qt bin directory to the
+`infra-tests` `ENVIRONMENT_MODIFICATION` in `tests/CMakeLists.txt`, which today
+prepends only the SlideIO directory and would leave the test binary unable to
+find the Qt DLLs on Windows.
+
+The store takes an explicit settings file in tests so they never touch the
+user's real configuration:
+
+```cpp
+QSettingsColorProfileOverrideStore();                      // the application's settings
+explicit QSettingsColorProfileOverrideStore(const QString& iniFilePath); // tests
+```
 
 **No automatic pruning.** An entry is a few hundred bytes; ten thousand is about
 2 MB of settings, and no realistic library approaches that. Every entry is a
@@ -235,7 +280,46 @@ Nothing else in the tile path changes. `TileKey`'s `ColorMode` keeps its two
 values, cache identity is untouched, and the reopen that applies an override
 discards the old adapter and its tiles anyway.
 
-## 7. `ui` — menu and behaviour
+## 7. `ui` — resolving the profile at open
+
+Resolution happens on the background open thread, because that is where the
+adapter is built. It must therefore touch neither `QSettings` nor any MainWindow
+state, both of which belong to the UI thread.
+
+`ViewportWidget::setDefaultColorProfile(std::vector<uint8_t>)` is replaced by a
+snapshot of the whole policy, which MainWindow rebuilds on the UI thread
+whenever the default or the override set changes, and which the open threads
+capture by value exactly as they capture `defaultProfileBytes` today:
+
+```cpp
+struct ColorProfilePolicy
+{
+    std::vector<uint8_t> defaultBytes;  ///< already validated; empty if none
+    std::unordered_map<std::string, std::string> overridePathsBySlideId;
+};
+
+void ViewportWidget::setColorProfilePolicy(ColorProfilePolicy policy);
+```
+
+Inside the worker, resolution is pure computation plus one file read:
+
+1. `computeSlideId(scenes, fileSizeBytes)`.
+2. Look the ID up in `overridePathsBySlideId`. No entry: use
+   `SuppliedColorProfile{defaultBytes, false}` — today's behaviour exactly.
+3. An entry: read the file and validate it with `inspectIccHeader` /
+   `classifyDefaultProfile`. Good, use `SuppliedColorProfile{bytes, true}`.
+   Bad, fall back to `{defaultBytes, false}` and record the problem text.
+
+`SceneOpenResult` gains `std::string colorProfileProblem`, carried back to the
+UI thread by the existing `installSceneOpenResult` path and surfaced the way
+`defaultProfileProblem` already is. Reading an ICC file is a few hundred
+kilobytes at most and happens once per open, off the UI thread.
+
+Holding override paths rather than bytes keeps the snapshot small when a user
+has many overrides, and means a profile edited on disk takes effect at the next
+slide open rather than at the next restart.
+
+## 8. `ui` — menu and behaviour
 
 Three actions in the View menu, beside the existing default-profile pair:
 
@@ -276,7 +360,7 @@ rows where `displacedEmbedded` is set. Buttons: Remove, Remove All. Removal
 affects stored settings only; a slide currently open is reopened if its own
 entry was removed.
 
-## 8. Error handling
+## 9. Error handling
 
 A stored override path can go stale exactly as the default can, and is treated
 the same way: revalidated on every load, never handed to SlideIO when bad, and
@@ -293,7 +377,7 @@ Fallback on a bad override follows the precedence list: embedded, then default,
 then nothing — with the problem text visible, so the colours on screen are never
 silently different from what the user asked for.
 
-## 9. Testing
+## 10. Testing
 
 **`core`, no Qt:**
 
@@ -309,6 +393,12 @@ silently different from what the user asked for.
   ordering is rejected by construction, since each entry contributes its own
   `index`.
 - No pair collides across a fixture table of realistic `SlideInfo` values.
+- The two overloads agree: `computeSlideId(info, size)` equals
+  `computeSlideId(info.scenes, size)` for the same inputs. This is what makes a
+  pre-open identity and a post-open identity the same string.
+- An empty `scenes` vector yields a stable ID rather than throwing or returning
+  an empty string — `enumerateScenes` returns empty on a file it cannot read,
+  and a lookup miss is the correct outcome, not a crash during open.
 - Precedence resolution, against a fake `IColorProfileOverrideStore`: override
   beats embedded beats default beats nothing, with a bad override falling
   through to embedded while reporting its problem.
@@ -330,19 +420,25 @@ silently different from what the user asked for.
   stores nothing.
 - Setting an override on a slide with colour management off turns it on.
 
-## 10. Sequencing
+## 11. Sequencing
 
 1. `core`: `computeSlideId` with its tests.
 2. `core`: `ColorProfileOverride`, `IColorProfileOverrideStore`,
    `SuppliedColorProfile`, `ColorProfileOrigin`, `SlideInfo` fields.
-3. `infra`: `QSettingsColorProfileOverrideStore` with its tests.
+3. `infra`: `Qt6::Core` on the target, the Qt bin directory on the `infra-tests`
+   PATH, and `QSettingsColorProfileOverrideStore` with its tests.
 4. `infra`: the `buildManagedScene` condition and the constructor signatures.
-5. `ui`: set and clear actions, the warning, the reopen.
-6. `ui`: properties panel origin rows.
-7. `ui`: manage dialog.
-8. Update `03-software-architecture-and-design.md` §9.1 to the implemented
+5. `ui`: `ColorProfilePolicy`, `setColorProfilePolicy`, the worker-thread
+   resolution, the `enumerateScenes` reordering in `openSlide`, and
+   `reopenCurrentScene`.
+6. `ui`: set and clear actions, the warning, the colour-management auto-enable.
+7. `ui`: properties panel origin rows.
+8. `ui`: manage dialog.
+9. Update `03-software-architecture-and-design.md` §9.1 to the implemented
    identity scheme, and the colour management design's "No per-slide profile
    override" non-goal, which this feature retires.
 
-Steps 1-4 are invisible to the user; step 5 is the first that changes
-behaviour.
+Steps 1-5 are invisible to the user; step 6 is the first that changes
+behaviour. Step 5 is the riskiest: it reorders work inside the open path that
+every slide takes, so its regression surface is every format, not only the ones
+with profiles.
