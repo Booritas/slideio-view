@@ -9,6 +9,7 @@ add_library(slideio-viewer-core STATIC
     src/TileSampling.cpp
     src/ColorProfileInfo.cpp
     src/ColorManagement.cpp
+    src/SlideId.cpp
 )
 
 target_include_directories(slideio-viewer-core PUBLIC

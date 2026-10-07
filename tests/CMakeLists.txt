@@ -10,6 +10,7 @@ add_executable(slideio-viewer-core-tests
     core/TileSamplingTest.cpp
     core/ColorProfileInfoTest.cpp
     core/ColorManagementTest.cpp
+    core/SlideIdTest.cpp
 )
 
 target_link_libraries(slideio-viewer-core-tests
