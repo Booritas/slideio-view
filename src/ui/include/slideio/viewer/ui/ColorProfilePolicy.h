@@ -78,4 +78,14 @@ core::SuppliedColorProfile resolveColorProfileForOpen(const ColorProfilePolicy& 
                                                       uint64_t fileSizeBytes,
                                                       std::string& outProblem);
 
+/// Acknowledges removing the per-slide override. The slide is reopened
+/// immediately, so there is no caveat to add.
+std::string clearedSlideProfileMessage();
+
+/// Acknowledges removing the global default. `slideOpen` adds the note that the
+/// change does not reach the slide on screen until it is reopened -- the default
+/// is consumed only where an adapter is constructed, so an already-open slide
+/// keeps the binding it was opened with.
+std::string clearedDefaultProfileMessage(bool slideOpen);
+
 } // namespace slideio::viewer::ui

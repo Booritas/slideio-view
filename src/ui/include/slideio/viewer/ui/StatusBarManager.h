@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QString>
 
 class QLabel;
 class QProgressBar;
@@ -23,6 +24,10 @@ public:
     void updateMagnification(double scale, double baseMagnification);
     void setLoading(bool loading);
     void setColorManaged(bool managed);
+
+    /// Shows `text` in the status bar's left area for a few seconds. The
+    /// permanent indicators are unaffected.
+    void showTransientMessage(const QString& text);
 
 private:
     QStatusBar* m_statusBar;

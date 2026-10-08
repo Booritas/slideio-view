@@ -1066,7 +1066,8 @@ void MainWindow::onClearDefaultColorProfile()
     QSettings settings;
     settings.remove(kDefaultProfileKey);
     applyDefaultColorProfile();
-    warnDefaultProfileAppliesToNewSlides();
+    m_impl->statusBarManager->showTransientMessage(QString::fromStdString(
+        clearedDefaultProfileMessage(!m_impl->viewportWidget->currentFilePath().empty())));
 }
 
 // The default profile is only consumed where an adapter is constructed, so a
@@ -1226,6 +1227,8 @@ void MainWindow::onClearSlideColorProfile()
     applyColorProfilePolicy();
     // Colour management stays as the user left it; only the profile changes.
     m_impl->viewportWidget->reopenCurrentScene();
+    m_impl->statusBarManager->showTransientMessage(
+        QString::fromStdString(clearedSlideProfileMessage()));
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)

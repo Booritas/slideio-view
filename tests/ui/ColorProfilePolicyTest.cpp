@@ -355,3 +355,26 @@ TEST_CASE("the DICOM study fixture sizes to its contents, not its directory entr
     // directory entry, which is at most a few kilobytes.
     REQUIRE(*size > 1024 * 1024);
 }
+
+TEST_CASE("clearedSlideProfileMessage acknowledges without a reopen caveat", "[ui][ColorProfilePolicy]")
+{
+    const std::string message = ui::clearedSlideProfileMessage();
+    REQUIRE_FALSE(message.empty());
+    REQUIRE(message.find("slide") != std::string::npos);
+    REQUIRE(message.find("eopen") == std::string::npos);
+}
+
+TEST_CASE("clearedDefaultProfileMessage adds the reopen note only when a slide is open",
+          "[ui][ColorProfilePolicy]")
+{
+    const std::string noSlide = ui::clearedDefaultProfileMessage(false);
+    const std::string withSlide = ui::clearedDefaultProfileMessage(true);
+
+    REQUIRE_FALSE(noSlide.empty());
+    REQUIRE(noSlide.find("default") != std::string::npos);
+    REQUIRE(noSlide.find("eopen") == std::string::npos);
+
+    REQUIRE(withSlide.find("default") != std::string::npos);
+    REQUIRE(withSlide.find("Reopen") != std::string::npos);
+    REQUIRE(withSlide.compare(0, noSlide.size(), noSlide) == 0);
+}
