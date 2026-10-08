@@ -1,8 +1,20 @@
 # Help system — design
 
 **Date:** 2026-10-08
-**Status:** Proposed
+**Status:** Deferred (2026-10-08)
 **Base:** `main` @ `4641e53`
+
+> **Deferred, and superseded in part.** After this was written the decision moved to
+> hosted documentation — the approach rejected in §1.1 — on a Read the Docs site in a
+> separate repository, with the delivery question left open for later. Treat §1.1,
+> §4.1, §4.2, §6, and the resource-resolution parts of §8 as describing a path not
+> taken.
+>
+> What remains valid regardless of delivery: **§3 (`ActionReason` and the five
+> unexplained disabled actions)**, which has no dependency on how help is delivered,
+> and **§4.4**, the colour-management content design — the precedence table, the
+> quote-the-UI-verbatim rule, and the Regulatory flag on the "can I trust this colour"
+> paragraph.
 
 ## Goal
 
