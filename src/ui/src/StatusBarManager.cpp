@@ -9,6 +9,11 @@
 namespace slideio::viewer::ui
 {
 
+namespace
+{
+constexpr int kTransientMessageTimeoutMs = 4000;
+}
+
 StatusBarManager::StatusBarManager(QObject* parent)
     : QObject(parent)
     , m_statusBar(nullptr)
@@ -101,6 +106,13 @@ void StatusBarManager::setColorManaged(bool managed)
     }
     m_colorLabel->setText(managed ? QStringLiteral("sRGB") : QString());
     m_colorLabel->setVisible(managed);
+}
+
+void StatusBarManager::showTransientMessage(const QString& text)
+{
+    if (m_statusBar) {
+        m_statusBar->showMessage(text, kTransientMessageTimeoutMs);
+    }
 }
 
 } // namespace slideio::viewer::ui

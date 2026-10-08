@@ -137,4 +137,18 @@ core::SuppliedColorProfile resolveColorProfileForOpen(const ColorProfilePolicy& 
     return supplied;
 }
 
+std::string clearedSlideProfileMessage()
+{
+    return "Cleared the color profile for this slide.";
+}
+
+std::string clearedDefaultProfileMessage(bool slideOpen)
+{
+    std::string message = "Cleared the default color profile.";
+    if (slideOpen) {
+        message += " Reopen the current slide for the change to affect it.";
+    }
+    return message;
+}
+
 } // namespace slideio::viewer::ui
