@@ -13,8 +13,15 @@ fi
 
 BUILD_TYPE_LOWER=$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')
 
+# The Mac profiles without a suffix are Apple Silicon; an Intel Mac takes the
+# -x86_64 pair. The other platforms have one architecture each.
+PROFILE_SUFFIX=""
+if [ "$OS_NAME" = "Mac" ] && [ "$(uname -m)" = "x86_64" ]; then
+    PROFILE_SUFFIX="-x86_64"
+fi
+
 # Conan profile path (override via CONAN_PROFIlE env var)
-: "${CONAN_PROFIlE:=conan/profiles/${OS_NAME}/${BUILD_TYPE_LOWER}}"
+: "${CONAN_PROFIlE:=conan/profiles/${OS_NAME}/${BUILD_TYPE_LOWER}${PROFILE_SUFFIX}}"
 
 # Generator/layout/path defaults per platform.
 # Windows uses VS multi-config (flat build dir, --config required).

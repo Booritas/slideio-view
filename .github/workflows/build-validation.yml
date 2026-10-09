@@ -45,8 +45,9 @@ jobs:
           # Pinned, never -latest. ubuntu-22.04 fixes the glibc floor at 2.35 so
           # the .deb installs on Ubuntu 22.04+ and Debian 12+; macos-14 is the
           # first arm64 image and naming it keeps the artifact's architecture
-          # from changing under us; windows-2022 matches compiler.version=194 in
-          # conan/profiles/Windows/release.
+          # from changing under us; macos-15-intel is the last Intel image GitHub
+          # offers (the plain macos-* labels are all arm64 now); windows-2022
+          # matches compiler.version=194 in conan/profiles/Windows/release.
           #
           # The test directory differs by generator: Windows uses the Visual
           # Studio multi-config generator with a flat build/build, while the
@@ -61,6 +62,10 @@ jobs:
             ctest_config: ''
           - name: macOS arm64
             os: macos-14
+            test_dir: build/build/Release
+            ctest_config: ''
+          - name: macOS x86_64
+            os: macos-15-intel
             test_dir: build/build/Release
             ctest_config: ''
 
