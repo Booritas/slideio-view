@@ -4,7 +4,7 @@ from conan.tools.cmake import cmake_layout, CMakeDeps, CMakeToolchain
 
 class SlideioViewerConan(ConanFile):
     name = "slideio-viewer"
-    version = "0.1.0"
+    version = "0.1.1"
     settings = "os", "compiler", "build_type", "arch"
 
     def requirements(self):
