@@ -1,0 +1,12 @@
+[settings]
+arch=x86_64
+build_type=Release
+compiler=apple-clang
+compiler.cppstd=17
+compiler.libcxx=libc++
+compiler.version=16
+os=Macos
+
+[conf]
+tools.build:cflags=["-Wno-unguarded-availability-new"]
+tools.build:cxxflags=["-Wno-unguarded-availability-new"]

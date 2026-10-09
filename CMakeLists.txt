@@ -361,14 +361,21 @@ set(CPACK_PACKAGE_INSTALL_DIRECTORY "SlideIO Viewer")
 set(CPACK_PACKAGE_EXECUTABLES "slideio-viewer" "SlideIO Viewer")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 
-# Self-describing artifact names, so three platforms' packages can share one
+# Self-describing artifact names, so every platform's packages can share one
 # release page without a reader having to open them to tell them apart. The .deb
 # is excluded: CPACK_DEBIAN_FILE_NAME DEB-DEFAULT gives it the Debian-native
 # name, which tooling depends on.
 if(WIN32)
     set(_package_platform "windows-x86_64")
 elseif(APPLE)
-    set(_package_platform "macos-arm64")
+    # arm64 or x86_64. The Conan toolchain sets CMAKE_OSX_ARCHITECTURES from the
+    # profile's arch; a build without it targets the host processor.
+    if(CMAKE_OSX_ARCHITECTURES)
+        set(_package_arch "${CMAKE_OSX_ARCHITECTURES}")
+    else()
+        set(_package_arch "${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+    set(_package_platform "macos-${_package_arch}")
 else()
     set(_package_platform "linux-x86_64")
 endif()

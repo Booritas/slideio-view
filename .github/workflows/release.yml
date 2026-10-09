@@ -6,6 +6,7 @@ name: Release
 #   slideio-viewer-<version>-windows-x86_64.exe   NSIS installer
 #   slideio-viewer-<version>-windows-x86_64.zip   the same tree, unpacked
 #   slideio-viewer-<version>-macos-arm64.dmg      Apple Silicon, unsigned
+#   slideio-viewer-<version>-macos-x86_64.dmg     Intel Mac, unsigned
 #   slideio-viewer_<version>_amd64.deb            Ubuntu 22.04+ / Debian 12+
 #
 # Everything is produced by ./package.sh, so the same artifacts can be built on a
@@ -59,7 +60,8 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       # Assembled here rather than inline below so a manual run can ask for one
-      # platform. A tag push carries no inputs, so a release always builds three.
+      # platform. A tag push carries no inputs, so a release always builds all four;
+      # "macos" means both Mac architectures.
       - name: Select the platforms to build
         id: matrix
         shell: bash
@@ -70,11 +72,12 @@ jobs:
           windows='{"name":"Windows x86_64","os":"windows-2022","artifact":"windows-x86_64","test_dir":"build/build","ctest_config":"-C Release"}'
           debian='{"name":"Debian x86_64","os":"ubuntu-22.04","artifact":"debian-x86_64","test_dir":"build/build/Release","ctest_config":""}'
           macos='{"name":"macOS arm64","os":"macos-14","artifact":"macos-arm64","test_dir":"build/build/Release","ctest_config":""}'
+          macos_intel='{"name":"macOS x86_64","os":"macos-15-intel","artifact":"macos-x86_64","test_dir":"build/build/Release","ctest_config":""}'
           case "$PLATFORMS" in
-            all)     include="${windows},${debian},${macos}" ;;
+            all)     include="${windows},${debian},${macos},${macos_intel}" ;;
             windows) include="${windows}" ;;
             debian)  include="${debian}" ;;
-            macos)   include="${macos}" ;;
+            macos)   include="${macos},${macos_intel}" ;;
             *) echo "Unknown platform selection: ${PLATFORMS}" >&2; exit 1 ;;
           esac
           echo "building: ${PLATFORMS}"
@@ -85,7 +88,7 @@ jobs:
     needs: check-version
     runs-on: ${{ matrix.os }}
     strategy:
-      # One platform failing should not hide whether the other two package
+      # One platform failing should not hide whether the others package
       # cleanly; a release short one artifact is worth knowing about in full.
       fail-fast: false
       matrix: ${{ fromJson(needs.check-version.outputs.matrix) }}
@@ -260,15 +263,16 @@ jobs:
             | Windows x86_64 | `slideio-viewer-${{ needs.check-version.outputs.version }}-windows-x86_64.exe` | Installer. Unsigned: SmartScreen will warn on first run. |
             | Windows x86_64 | `slideio-viewer-${{ needs.check-version.outputs.version }}-windows-x86_64.zip` | The same tree, to unpack anywhere. |
             | macOS arm64 | `slideio-viewer-${{ needs.check-version.outputs.version }}-macos-arm64.dmg` | Apple Silicon. Unsigned — see below. |
+            | macOS x86_64 | `slideio-viewer-${{ needs.check-version.outputs.version }}-macos-x86_64.dmg` | Intel Mac. Unsigned — see below. |
             | Debian/Ubuntu x86_64 | `slideio-viewer_${{ needs.check-version.outputs.version }}_amd64.deb` | Ubuntu 22.04+ / Debian 12+. Qt is bundled. |
 
-            The macOS disk image is ad-hoc signed but not notarised, so
-            Gatekeeper refuses it on first open. Either open it once and then
+            The macOS disk images are ad-hoc signed but not notarised, so
+            Gatekeeper refuses them on first open. Either open one once and then
             choose **Open Anyway** under System Settings → Privacy & Security,
             or clear the quarantine flag from the download before mounting it:
 
             ```
-            xattr -d com.apple.quarantine slideio-viewer-${{ needs.check-version.outputs.version }}-macos-arm64.dmg
+            xattr -d com.apple.quarantine slideio-viewer-${{ needs.check-version.outputs.version }}-macos-<arch>.dmg
             ```
 
             Neither needs admin rights. Without admin, drag the application to
