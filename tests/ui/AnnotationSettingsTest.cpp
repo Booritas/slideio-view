@@ -109,3 +109,33 @@ TEST_CASE("a user name is trimmed on the way in", "[ui][AnnotationSettings]")
     REQUIRE(settings.userName() == "s.melnikov");
     REQUIRE(settings.hasUserName());
 }
+
+TEST_CASE("resolveWorkspaceDirectory applies the same rule as the getter",
+          "[ui][AnnotationSettings]")
+{
+    // One rule, two callers: the stored value and a value the user has typed
+    // but not committed. They must not drift.
+    REQUIRE(AnnotationSettings::resolveWorkspaceDirectory("D:/pathology")
+            == "D:/pathology");
+    REQUIRE(AnnotationSettings::resolveWorkspaceDirectory("  D:/pathology  ")
+            == "D:/pathology");
+    REQUIRE(AnnotationSettings::resolveWorkspaceDirectory("")
+            == slideio::viewer::ui::defaultAnnotationWorkspaceDirectory());
+    REQUIRE(AnnotationSettings::resolveWorkspaceDirectory("   ")
+            == slideio::viewer::ui::defaultAnnotationWorkspaceDirectory());
+}
+
+TEST_CASE("the getter and the static resolver agree on a stored value",
+          "[ui][AnnotationSettings]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    AnnotationSettings settings(dir.filePath("settings.ini"));
+
+    settings.setWorkspaceDirectory("D:/pathology/annotations");
+    REQUIRE(settings.workspaceDirectory()
+            == AnnotationSettings::resolveWorkspaceDirectory("D:/pathology/annotations"));
+
+    settings.setWorkspaceDirectory("");
+    REQUIRE(settings.workspaceDirectory() == AnnotationSettings::resolveWorkspaceDirectory(""));
+}

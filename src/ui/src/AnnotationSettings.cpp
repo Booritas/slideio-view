@@ -27,13 +27,15 @@ AnnotationSettings::AnnotationSettings(const QString& iniFilePath)
 
 AnnotationSettings::~AnnotationSettings() = default;
 
+QString AnnotationSettings::resolveWorkspaceDirectory(const QString& stored)
+{
+    const QString trimmed = stored.trimmed();
+    return trimmed.isEmpty() ? defaultAnnotationWorkspaceDirectory() : trimmed;
+}
+
 QString AnnotationSettings::workspaceDirectory() const
 {
-    const QString stored = m_settings->value(kWorkspaceKey).toString().trimmed();
-    if (stored.isEmpty()) {
-        return defaultAnnotationWorkspaceDirectory();
-    }
-    return stored;
+    return resolveWorkspaceDirectory(m_settings->value(kWorkspaceKey).toString());
 }
 
 void AnnotationSettings::setWorkspaceDirectory(const QString& path)
