@@ -22,6 +22,17 @@ target_link_libraries(slideio-viewer-core-tests
 
 add_test(NAME core-tests COMMAND slideio-viewer-core-tests)
 
+# Application layer tests
+add_executable(slideio-viewer-app-tests
+    app/AnnotationModelTest.cpp
+)
+
+target_link_libraries(slideio-viewer-app-tests
+    PRIVATE slideio-viewer-app Catch2::Catch2WithMain Qt6::Core
+)
+
+add_test(NAME app-tests COMMAND slideio-viewer-app-tests)
+
 # Infrastructure layer tests
 add_executable(slideio-viewer-infra-tests
     infra/LruTileCacheTest.cpp
@@ -71,6 +82,9 @@ if(WIN32)
             "PATH=path_list_prepend:${_slideio_bin_dir};PATH=path_list_prepend:${_qt_bin_dir}")
         set_tests_properties(infra-tests PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:${_slideio_bin_dir};PATH=path_list_prepend:${_qt_bin_dir}")
+        # app-tests links only Qt (no SlideIO), so it needs just the Qt bin directory.
+        set_tests_properties(app-tests PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${_qt_bin_dir}")
     else()
         message(WARNING
             "CMake < 3.22: the ui-tests and infra-tests targets cannot have their PATH set up "
