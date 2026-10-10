@@ -10,6 +10,8 @@ add_library(slideio-viewer-core STATIC
     src/ColorProfileInfo.cpp
     src/ColorManagement.cpp
     src/SlideId.cpp
+    src/AnnotationGeometry.cpp
+    src/Annotation.cpp
 )
 
 target_include_directories(slideio-viewer-core PUBLIC

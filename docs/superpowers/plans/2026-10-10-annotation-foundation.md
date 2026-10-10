@@ -33,12 +33,21 @@ ctest --test-dir build/build -C Release -R core-tests --output-on-failure
 # All suites
 ctest --test-dir build/build -C Release --output-on-failure
 
-# A single Catch2 case by name
+# A single Catch2 case by name — core-tests ONLY
 ./build/build/tests/Release/slideio-viewer-core-tests.exe "the test case name"
 
 # After adding a NEW source file or test target, re-run CMake configure first:
 cmake --build build/build --config Release
 ```
+
+**Never invoke a Qt-linked test executable directly.** `app-tests`, `infra-tests` and
+`ui-tests` find `Qt6Core.dll` (and, for the latter two, the SlideIO DLLs) through the
+`ENVIRONMENT_MODIFICATION` property set in `tests/CMakeLists.txt`, which **ctest applies
+and a bare exe invocation does not**. Running one of those `.exe` files directly pops a
+modal Windows error box — "The code execution cannot proceed because Qt6Core.dll was not
+found" — which blocks until a human dismisses it and will hang an unattended run. Use
+`ctest ... -R <suite> --output-on-failure`, which gives per-assertion output on failure
+anyway. Only `core-tests` links neither Qt nor SlideIO and is safe to run directly.
 
 A full `./build.sh` is only needed when dependencies change, and requires conan on PATH:
 `export PATH="/c/Users/Stanislav/anaconda3/envs/conan2/Scripts:$PATH"` first.
