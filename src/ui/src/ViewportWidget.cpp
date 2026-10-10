@@ -2633,8 +2633,9 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         painter.drawRect(screenRect(annotation.boundingBox()));
     }
 
-    // The selected annotation is drawn again, last, so a later annotation
-    // cannot occlude the selection.
+    // Only the selection outline is redrawn here, last, so a later annotation
+    // cannot hide it. The fill is not redrawn: that would double-darken a
+    // translucent shape.
     if (!selectedId.empty()) {
         if (const core::Annotation* selected = m_impl->annotations->find(selectedId)) {
             const QRectF box = screenRect(selected->boundingBox());
@@ -3303,8 +3304,10 @@ void ViewportWidget::paintGL()
 
     // Painted last, after the snapshot capture, so annotations stay out of the
     // zoom-snapshot texture and do not smear with the blurry backdrop.
-    QPainter painter(this);
-    paintAnnotations(painter);
+    if (!m_impl->annotations->annotations().empty() || m_impl->drawing) {
+        QPainter painter(this);
+        paintAnnotations(painter);
+    }
 }
 
 void ViewportWidget::mousePressEvent(QMouseEvent* event)
@@ -3362,14 +3365,28 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
     if (m_impl->dragOwner == DragOwner::Tool && m_impl->drawing) {
         m_impl->drawing = false;
 
+        if (m_impl->controller) {
+            double slideX = 0.0;
+            double slideY = 0.0;
+            m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
+            m_impl->drawCurrentSlide = core::PointF{slideX, slideY};
+        }
+
         const core::AnnotationGeometry geometry =
             core::RectangleGeometry{m_impl->drawAnchorSlide, m_impl->drawCurrentSlide};
         const core::RectF box = core::boundingBox(geometry);
 
-        // A press with no drag is a misclick, not a zero-area shape. The
-        // geometry is normalised by boundingBox, so a right-to-left or
-        // bottom-to-top drag produces a valid positive-extent rectangle here.
-        if (box.width > 0.0 && box.height > 0.0) {
+        // A drag smaller than the click target is a misclick, not a shape. The
+        // test is screen-space on purpose: at high zoom a couple of pixels of
+        // jitter is many slide pixels, and `> 0.0` in slide units lets every
+        // one of them through. Either dimension reaching the threshold is
+        // enough, so a deliberately long, thin rectangle is still drawable.
+        // boundingBox normalises, so inverted drags yield positive extents.
+        const double scale = m_impl->controller ? m_impl->controller->viewport().scale() : 0.0;
+        const double widthScreen = box.width * scale;
+        const double heightScreen = box.height * scale;
+
+        if (widthScreen >= kHitToleranceScreenPixels || heightScreen >= kHitToleranceScreenPixels) {
             const std::string id =
                 m_impl->annotations->add(core::AnnotationType::Rectangle, geometry);
             m_impl->annotations->setSelected(id);
