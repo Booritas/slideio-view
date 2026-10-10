@@ -2,6 +2,7 @@
 
 #include "slideio/viewer/core/TileKey.h"
 #include "slideio/viewer/core/Types.h"
+#include "slideio/viewer/ui/AnnotationInteraction.h"
 #include "slideio/viewer/ui/ColorProfilePolicy.h"
 #include "slideio/viewer/ui/GpuInfo.h"
 
@@ -96,6 +97,12 @@ public:
     // A no-op when no slide is open.
     void setColorMode(core::ColorMode mode);
 
+    /// The tool that owns left-drag. Pan is the default, so navigation behaves
+    /// exactly as it did before annotations existed until the user picks a
+    /// drawing tool.
+    void setActiveTool(AnnotationTool tool);
+    [[nodiscard]] AnnotationTool activeTool() const;
+
     // The colour profile of the scene currently being read. Default-constructed
     // when no slide is open.
     core::ColorProfileInfo activeColorProfileInfo() const;
@@ -111,6 +118,7 @@ signals:
     void loadingStarted(const QString& displayName);
     void loadingStatusChanged(const QString& text);
     void loadingFinished();
+    void activeToolChanged(AnnotationTool tool);
 
 protected:
     void initializeGL() override;
@@ -123,6 +131,7 @@ protected:
     void wheelEvent(QWheelEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    void keyReleaseEvent(QKeyEvent* event) override;
 
 private:
     void installSceneOpenResult(uint64_t opId, SceneOpenResult result);
