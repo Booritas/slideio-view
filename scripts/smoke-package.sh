@@ -142,6 +142,10 @@ Darwin)
     fi
     echo "OK: no build-machine paths in the bundle"
 
+    # Launching it here proves only that it runs on this runner's macOS, which is
+    # newer than the one the release claims. Check what every binary declares.
+    "$(dirname "$0")/check-macos-min-version.sh" "$app"
+
     stays_up "$app/Contents/MacOS/slideio-viewer"
     ;;
 *)
