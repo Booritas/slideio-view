@@ -1,5 +1,7 @@
 add_library(slideio-viewer-app STATIC
     src/SlideViewerService.cpp
+    src/AnnotationModel.cpp
+    include/slideio/viewer/app/AnnotationModel.h
 )
 
 target_include_directories(slideio-viewer-app PUBLIC

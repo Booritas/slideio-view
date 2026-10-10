@@ -39,7 +39,7 @@ target_include_directories(slideio-viewer-ui
 )
 
 target_link_libraries(slideio-viewer-ui
-    PUBLIC slideio-viewer-core slideio-viewer-infra
+    PUBLIC slideio-viewer-core slideio-viewer-app slideio-viewer-infra
     PUBLIC Qt6::Widgets Qt6::OpenGLWidgets
     PRIVATE spdlog::spdlog
 )
