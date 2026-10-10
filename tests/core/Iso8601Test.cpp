@@ -3,6 +3,7 @@
 #include "slideio/viewer/core/Iso8601.h"
 
 #include <chrono>
+#include <cstdint>
 #include <string>
 
 using namespace slideio::viewer::core;
@@ -142,11 +143,45 @@ TEST_CASE("the round trip holds across a wide span of dates", "[core][Iso8601]")
     const char* samples[] = {
         "1970-01-01T00:00:00Z", "1999-12-31T23:59:59Z", "2000-01-01T00:00:00Z",
         "2000-02-29T23:59:59Z", "2024-02-29T00:00:00Z", "2026-03-05T04:07:09Z",
-        "2038-01-19T03:14:08Z", "2100-02-28T12:34:56Z", "9999-12-31T23:59:59Z",
+        "2038-01-19T03:14:08Z", "2100-02-28T12:34:56Z", "2200-01-01T00:00:00Z",
     };
     for (const char* sample : samples) {
         std::chrono::system_clock::time_point parsed{};
         REQUIRE(parseIso8601Utc(sample, parsed));
         REQUIRE(formatIso8601Utc(parsed) == sample);
+    }
+}
+
+TEST_CASE("the ceiling is whichever comes first, 9999 or the clock's own maximum",
+          "[core][Iso8601]")
+{
+    // Computed from system_clock rather than hard-coded, so this says the same
+    // thing on libstdc++ (nanoseconds, ~2262) as on MSVC and libc++.
+    const int64_t clockCeiling = std::chrono::duration_cast<std::chrono::seconds>(
+                                     std::chrono::system_clock::time_point::max()
+                                         .time_since_epoch())
+                                     .count();
+    constexpr int64_t kEndOf9999 = 253402300799LL;
+
+    std::chrono::system_clock::time_point out{};
+    if (clockCeiling < kEndOf9999) {
+        REQUIRE_FALSE(parseIso8601Utc("9999-12-31T23:59:59Z", out));
+    } else {
+        REQUIRE(parseIso8601Utc("9999-12-31T23:59:59Z", out));
+        REQUIRE(formatIso8601Utc(out) == "9999-12-31T23:59:59Z");
+    }
+}
+
+TEST_CASE("an instant just inside the clock's ceiling round-trips", "[core][Iso8601]")
+{
+    const auto ceiling = std::chrono::time_point_cast<std::chrono::seconds>(
+        std::chrono::system_clock::time_point::max());
+    const auto justInside = ceiling - std::chrono::hours(24);
+
+    const std::string formatted = formatIso8601Utc(justInside);
+    if (!formatted.empty()) {   // empty when the clock reaches past year 9999
+        std::chrono::system_clock::time_point parsed{};
+        REQUIRE(parseIso8601Utc(formatted, parsed));
+        REQUIRE(formatIso8601Utc(parsed) == formatted);
     }
 }

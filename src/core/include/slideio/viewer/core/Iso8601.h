@@ -18,7 +18,10 @@ std::string formatIso8601Utc(std::chrono::system_clock::time_point t);
 /// 'T' separator, 'Z' suffix, no offsets and no fractional seconds. Rejects
 /// invalid calendar dates (e.g. 2026-02-30), leap seconds, and anything with a
 /// sign or space in a numeric field. Returns false and leaves `out` untouched
-/// on anything else, including all instants before the epoch.
+/// on anything else, including all instants before the epoch. The upper bound
+/// is the smaller of year 9999 and system_clock's own maximum representable
+/// instant — libstdc++ (nanoseconds) caps around 2262, while MSVC and libc++
+/// reach past 9999.
 bool parseIso8601Utc(std::string_view text, std::chrono::system_clock::time_point& out);
 
 } // namespace slideio::viewer::core
