@@ -1132,29 +1132,50 @@ bool MainWindow::Impl::openPreferences()
     viewportWidget->annotationModel()->setDefaultAuthor(
         annotationSettings->userName().toStdString());
 
-    const QString chosen = dialog.workspaceDirectory();
-    if (chosen != QString::fromStdString(annotationRepository->workspaceRoot())) {
+    const QString entered = dialog.workspaceDirectory();
+    // Resolve the entry the way AnnotationSettings would before comparing: a
+    // cleared field means "use the default", which is very often the root
+    // already in use. Comparing the raw entry instead would reload the slide
+    // only to land on the folder it was already rooted at.
+    const QString requested =
+        entered.isEmpty() ? defaultAnnotationWorkspaceDirectory() : entered;
+
+    if (requested != QString::fromStdString(annotationRepository->workspaceRoot())) {
         // Flush to the OLD root before re-pointing, or the open slide's unsaved
         // work is written nowhere.
+        const QString beforeFlush = annotationSettings->workspaceDirectory();
         const core::SaveResult flushed = annotationPersistence->endSlide();
         if (flushed.status == core::SaveStatus::Saved
             || flushed.status == core::SaveStatus::NothingToDo) {
             saveFailureReported = false;
         }
+        const QString afterFlush = annotationSettings->workspaceDirectory();
 
-        annotationSettings->setWorkspaceDirectory(chosen);
-        // Read the path back rather than reusing `chosen`: an empty or
-        // whitespace-only entry clears the setting, and the repository must
-        // then follow the default workspace rather than root itself at "".
-        const QString resolved = annotationSettings->workspaceDirectory();
-        // Re-rooted, never rebuilt: the service holds a
-        // core::IAnnotationRepository& bound at construction, so destroying the
-        // repository out from under it is a dangling reference.
-        annotationRepository->setWorkspaceRoot(resolved.toStdString());
+        if (afterFlush != beforeFlush) {
+            // That flush failed and the save-failure resolver rescued it to a
+            // folder the user picked mid-failure, which it has already made the
+            // workspace and the repository root. Applying the dialog's value on
+            // top would strand the file it just saved somewhere this
+            // application never looks again, and say nothing about it. The more
+            // recent choice wins; the user is told where their work went.
+            statusBarManager->showTransientMessage(
+                tr("Annotations were saved to %1, which is now the annotation folder.")
+                    .arg(QDir::toNativeSeparators(afterFlush)));
+        } else {
+            annotationSettings->setWorkspaceDirectory(entered);
+            // Read the path back rather than reusing `entered`: an empty or
+            // whitespace-only entry clears the setting, and the repository must
+            // then follow the default workspace rather than root itself at "".
+            const QString resolved = annotationSettings->workspaceDirectory();
+            // Re-rooted, never rebuilt: the service holds a
+            // core::IAnnotationRepository& bound at construction, so destroying
+            // the repository out from under it is a dangling reference.
+            annotationRepository->setWorkspaceRoot(resolved.toStdString());
+        }
 
         if (viewportWidget->isSlideOpen()) {
             // Reopening is how the slide re-enters beginSlide() against the new
-            // root.
+            // root -- whichever of the two folders above it ended up being.
             viewportWidget->reopenCurrentScene();
         }
     }
@@ -1308,6 +1329,14 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow()
 {
+    // The persistence service dies with m_impl, before ~QMainWindow deletes the
+    // viewport that holds a raw pointer to it. Cut the link here rather than
+    // rely on ~ViewportWidget never touching it -- that is a fact about another
+    // file, and nobody changing it will think to come back and check this one.
+    if (m_impl && m_impl->viewportWidget) {
+        m_impl->viewportWidget->setPersistenceService(nullptr);
+    }
+
     // Save window geometry and dock layout
     QSettings settings;
     settings.setValue("mainWindow/geometry", saveGeometry());
