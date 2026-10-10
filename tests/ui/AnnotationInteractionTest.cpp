@@ -20,6 +20,11 @@ TEST_CASE("held space pans, whatever the tool", "[ui][AnnotationInteraction]")
                              AnnotationTool::Rectangle, false) == DragOwner::Pan);
     REQUIRE(resolveDragOwner(Qt::LeftButton, Qt::NoModifier, true,
                              AnnotationTool::Pan, true) == DragOwner::Pan);
+    // The off-diagonal cell: a drawing tool pressed ON an annotation with
+    // space held still pans. Without this, "don't pan if a drawing tool is
+    // over an annotation" could be added and every test would still pass.
+    REQUIRE(resolveDragOwner(Qt::LeftButton, Qt::NoModifier, true,
+                             AnnotationTool::Rectangle, true) == DragOwner::Pan);
 }
 
 TEST_CASE("left drag on empty space with the pan tool pans",
@@ -53,6 +58,15 @@ TEST_CASE("the right button owns no drag", "[ui][AnnotationInteraction]")
                              AnnotationTool::Pan, false) == DragOwner::None);
     REQUIRE(resolveDragOwner(Qt::RightButton, Qt::NoModifier, false,
                              AnnotationTool::Rectangle, true) == DragOwner::None);
+    // Space must not promote a non-left button into a pan: the button
+    // rejection has to come first.
+    REQUIRE(resolveDragOwner(Qt::RightButton, Qt::NoModifier, true,
+                             AnnotationTool::Pan, false) == DragOwner::None);
+    // Right is not the only non-left button. Narrowing the rejection to
+    // `button == Qt::RightButton` would let Back/Forward/NoButton fall
+    // through into the Pan or Tool branches.
+    REQUIRE(resolveDragOwner(Qt::BackButton, Qt::NoModifier, false,
+                             AnnotationTool::Rectangle, false) == DragOwner::None);
 }
 
 TEST_CASE("tolerance converts from screen pixels to slide units",
@@ -64,9 +78,9 @@ TEST_CASE("tolerance converts from screen pixels to slide units",
     REQUIRE(screenToleranceToSlide(6.0, 0.5) == 12.0);
 }
 
-// Review Focus 1: dividing by a non-positive scale yields an infinite
-// tolerance, which makes every hit test succeed -- one click would select an
-// annotation anywhere on the slide.
+// Dividing by a non-positive scale yields an infinite tolerance, which makes
+// every hit test succeed -- one click would select an annotation anywhere on
+// the slide.
 TEST_CASE("a non-positive scale yields zero tolerance, never infinity",
           "[ui][AnnotationInteraction]")
 {
