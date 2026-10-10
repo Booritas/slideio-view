@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <string>
 #include <string_view>
 
@@ -12,6 +13,10 @@ namespace slideio::viewer::core
 
 namespace
 {
+
+static_assert(sizeof(std::time_t) >= 8,
+              "A 32-bit time_t cannot carry this format's range; the casts to "
+              "std::time_t below would silently truncate.");
 
 bool isDigit(char c)
 {
@@ -77,6 +82,19 @@ void civilFromDays(int64_t z, int& year, int& month, int& day)
     year = static_cast<int>(y + (m <= 2 ? 1 : 0));
     month = static_cast<int>(m);
     day = static_cast<int>(d);
+}
+
+/// The highest instant system_clock can actually hold, in whole seconds.
+///
+/// Not a formality: libstdc++ counts nanoseconds, so its ceiling is around the
+/// year 2262 -- far below the format's own 9999 -- and from_time_t would
+/// overflow on the way there. MSVC's 100 ns ticks and libc++'s microseconds
+/// both reach past 9999, so the effective ceiling is whichever comes first.
+int64_t maxRepresentableSeconds()
+{
+    return std::chrono::duration_cast<std::chrono::seconds>(
+               std::chrono::system_clock::time_point::max().time_since_epoch())
+        .count();
 }
 
 constexpr int64_t kSecondsPerDay = 86400;
@@ -157,7 +175,7 @@ bool parseIso8601Utc(std::string_view text, std::chrono::system_clock::time_poin
 
     const int64_t total = daysFromCivil(year, month, day) * kSecondsPerDay
                           + hour * 3600 + minute * 60 + second;
-    if (total < 0) {
+    if (total < 0 || total > maxRepresentableSeconds()) {
         return false;
     }
 
