@@ -1,5 +1,7 @@
 #include "slideio/viewer/ui/AnnotationInteraction.h"
 
+#include <algorithm>
+
 namespace slideio::viewer::ui
 {
 
@@ -41,10 +43,20 @@ bool dragExceedsMinimumSize(const core::RectF& boxSlideUnits,
     }
     const double widthScreen = boxSlideUnits.width * viewportScale;
     const double heightScreen = boxSlideUnits.height * viewportScale;
-    if (widthScreen <= 0.0 || heightScreen <= 0.0) {
-        return false;
-    }
     return widthScreen >= minimumScreenPixels || heightScreen >= minimumScreenPixels;
+}
+
+core::RectF withMinimumExtent(const core::RectF& box, double minExtentSlideUnits)
+{
+    const double minimum = std::max(0.0, minExtentSlideUnits);
+    core::RectF result = box;
+    if (result.width <= 0.0) {
+        result.width = minimum;
+    }
+    if (result.height <= 0.0) {
+        result.height = minimum;
+    }
+    return result;
 }
 
 core::RectangleGeometry translatedBox(const core::RectF& box, double dx, double dy)

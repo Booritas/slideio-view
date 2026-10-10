@@ -62,6 +62,15 @@ constexpr double kHitToleranceScreenPixels = 6.0;
                                           double viewportScale,
                                           double minimumScreenPixels);
 
+/// `box` with any zero-extent dimension widened to `minExtentSlideUnits`.
+///
+/// Mouse deltas are integers, so a short deliberate horizontal or vertical
+/// drag routinely has zero extent on one axis. Rejecting those drags outright
+/// gave the user no shape, no selection change and no feedback at all; the
+/// degenerate axis is widened instead, so the gesture still produces a real
+/// annotation rather than a zero-area one.
+[[nodiscard]] core::RectF withMinimumExtent(const core::RectF& box, double minExtentSlideUnits);
+
 /// `box` translated by a slide-space delta. Returns the geometry the move
 /// handler stores, so the translation is testable without a widget.
 [[nodiscard]] core::RectangleGeometry translatedBox(const core::RectF& box, double dx, double dy);

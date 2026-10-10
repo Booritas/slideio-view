@@ -108,10 +108,47 @@ TEST_CASE("a long thin drag is accepted", "[ui][AnnotationInteraction]")
     REQUIRE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 2, 300}, 1.0, 6.0));
 }
 
-TEST_CASE("a zero-height or zero-width drag is rejected", "[ui][AnnotationInteraction]")
+TEST_CASE("a long drag with zero extent on one axis is still accepted",
+          "[ui][AnnotationInteraction]")
 {
-    REQUIRE_FALSE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 300, 0}, 1.0, 6.0));
-    REQUIRE_FALSE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 0, 300}, 1.0, 6.0));
+    // Mouse deltas are integers, so a deliberate sideways drag often has dy == 0.
+    // Rejecting it would leave the user with no shape AND no selection change --
+    // the dead-UI case this gate exists to prevent. withMinimumExtent widens the
+    // degenerate axis afterwards so the stored geometry is never zero-area.
+    REQUIRE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 300, 0}, 1.0, 6.0));
+    REQUIRE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 0, 300}, 1.0, 6.0));
+}
+
+TEST_CASE("a click with no extent on either axis is rejected", "[ui][AnnotationInteraction]")
+{
+    REQUIRE_FALSE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 0, 0}, 1.0, 6.0));
+}
+
+TEST_CASE("withMinimumExtent widens only the degenerate axis", "[ui][AnnotationInteraction]")
+{
+    const auto flat = withMinimumExtent(slideio::viewer::core::RectF{10, 20, 300, 0}, 0.5);
+    REQUIRE(flat.x == 10.0);
+    REQUIRE(flat.y == 20.0);
+    REQUIRE(flat.width == 300.0);
+    REQUIRE(flat.height == 0.5);
+
+    const auto upright = withMinimumExtent(slideio::viewer::core::RectF{10, 20, 0, 300}, 0.5);
+    REQUIRE(upright.width == 0.5);
+    REQUIRE(upright.height == 300.0);
+}
+
+TEST_CASE("withMinimumExtent leaves a healthy box alone", "[ui][AnnotationInteraction]")
+{
+    const auto box = withMinimumExtent(slideio::viewer::core::RectF{10, 20, 300, 40}, 0.5);
+    REQUIRE(box.width == 300.0);
+    REQUIRE(box.height == 40.0);
+}
+
+TEST_CASE("withMinimumExtent treats a negative minimum as zero",
+          "[ui][AnnotationInteraction]")
+{
+    const auto box = withMinimumExtent(slideio::viewer::core::RectF{0, 0, 300, 0}, -5.0);
+    REQUIRE(box.height == 0.0);
 }
 
 TEST_CASE("a non-positive scale rejects every drag", "[ui][AnnotationInteraction]")
