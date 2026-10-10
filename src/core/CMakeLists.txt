@@ -14,6 +14,7 @@ add_library(slideio-viewer-core STATIC
     src/Annotation.cpp
     src/Iso8601.cpp
     src/AnnotationSerialization.cpp
+    src/AutosavePolicy.cpp
 )
 
 target_include_directories(slideio-viewer-core PUBLIC
