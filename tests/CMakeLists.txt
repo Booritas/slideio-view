@@ -15,6 +15,7 @@ add_executable(slideio-viewer-core-tests
     core/AnnotationGeometryTest.cpp
     core/AnnotationTest.cpp
     core/Iso8601Test.cpp
+    core/AnnotationSerializationTest.cpp
 )
 
 target_link_libraries(slideio-viewer-core-tests
