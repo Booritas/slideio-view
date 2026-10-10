@@ -19,6 +19,7 @@ class QPainter;
 namespace slideio::viewer::app
 {
 class AnnotationModel;
+class AnnotationPersistenceService;
 }
 
 namespace slideio::viewer::ui
@@ -114,6 +115,10 @@ public:
     /// controller is; never null. Cleared whenever the open slide changes.
     [[nodiscard]] app::AnnotationModel* annotationModel() const;
 
+    /// Non-owning. MainWindow owns the service; the widget only calls it at the
+    /// two points in the slide lifecycle where the ordering matters.
+    void setPersistenceService(app::AnnotationPersistenceService* service);
+
     // The colour profile of the scene currently being read. Default-constructed
     // when no slide is open.
     core::ColorProfileInfo activeColorProfileInfo() const;
@@ -130,6 +135,10 @@ signals:
     void loadingStatusChanged(const QString& text);
     void loadingFinished();
     void activeToolChanged(AnnotationTool tool);
+
+    /// Whether annotations can be created on what is currently displayed.
+    /// `reason` is empty when they can, and names the obstacle when they cannot.
+    void annotationsAvailableChanged(bool available, const QString& reason);
 
 protected:
     void initializeGL() override;
