@@ -35,31 +35,40 @@ std::string AnnotationModel::add(core::AnnotationType type, core::AnnotationGeom
 
 bool AnnotationModel::remove(const std::string& id)
 {
+    // Copy before touching anything: `id` may alias m_selectedId, or an
+    // element's own m_id. clear() would empty it, and erase() either shifts
+    // the followers down (so it names the wrong annotation) or destroys it
+    // outright.
+    const std::string removedId = id;
+
     const auto it = std::find_if(m_annotations.begin(), m_annotations.end(),
-                                 [&id](const core::Annotation& a) { return a.id() == id; });
+                                 [&removedId](const core::Annotation& a) { return a.id() == removedId; });
     if (it == m_annotations.end()) {
         return false;
     }
 
     m_annotations.erase(it);
-    if (m_selectedId == id) {
+    if (m_selectedId == removedId) {
         m_selectedId.clear();
         emit selectionChanged(m_selectedId);
     }
-    emit annotationRemoved(id);
+    emit annotationRemoved(removedId);
     return true;
 }
 
 bool AnnotationModel::setGeometry(const std::string& id, core::AnnotationGeometry geometry)
 {
+    // Copied for the same reason as in remove(): `id` may alias internal state.
+    const std::string targetId = id;
+
     const auto it = std::find_if(m_annotations.begin(), m_annotations.end(),
-                                 [&id](const core::Annotation& a) { return a.id() == id; });
+                                 [&targetId](const core::Annotation& a) { return a.id() == targetId; });
     if (it == m_annotations.end()) {
         return false;
     }
 
     it->setGeometry(std::move(geometry));
-    emit annotationChanged(id);
+    emit annotationChanged(targetId);
     return true;
 }
 
