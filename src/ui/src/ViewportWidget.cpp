@@ -2291,6 +2291,12 @@ void ViewportWidget::closeSlide()
     m_impl->colorProfileProblem.clear();
     m_impl->currentSlideId.clear();
     emit slideClosed();
+
+    // The availability signal reports on what is displayed, so it has to say
+    // "nothing" here too. MainWindow's slideClosed handler already disables the
+    // tool, but a consumer should not have to listen to two signals to learn
+    // whether it can annotate.
+    emit annotationsAvailableChanged(false, tr("No slide is open."));
     update();
 }
 
@@ -2450,7 +2456,14 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
 
     m_impl->slideOpen = true;
 
+    // Reported after slideOpened below: its handlers enable the annotation tool
+    // unconditionally, and the last emission has to be the one that wins.
+    bool reportAvailability = false;
+    bool annotationsAvailable = false;
+    QString annotationsReason;
+
     if (m_impl->persistence != nullptr) {
+        reportAvailability = true;
         // Associated images compute the file's slide id with sceneIndex 0, so a
         // rectangle drawn on a label would be written into scene 0's file and
         // later painted over the tissue. An empty id means the slide could not
@@ -2461,10 +2474,9 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
 
         if (auxiliary || !identified) {
             m_impl->persistence->endSlide();
-            const QString reason = auxiliary
+            annotationsReason = auxiliary
                 ? tr("Annotations are not available on associated images.")
                 : tr("This slide could not be identified, so annotations cannot be saved.");
-            emit annotationsAvailableChanged(false, reason);
         } else {
             core::SlideProvenance provenance;
             provenance.path = m_impl->currentFilePath;
@@ -2473,6 +2485,8 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
             provenance.width = m_impl->slideInfo.width;
             provenance.height = m_impl->slideInfo.height;
 
+            // Reads the file on the UI thread, unlike ICC resolution in openScene; a slow
+            // or dead share will stall the open until the filesystem times out.
             m_impl->persistence->beginSlide({m_impl->currentSlideId, m_impl->currentSceneIndex}, provenance);
 
             // beginSlide can come back inactive: an unreadable or malformed
@@ -2480,11 +2494,11 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
             // reason matters as much here as it does above -- the dialog that
             // explained it has already been dismissed by the time the user
             // notices the tool is grey.
-            const bool active = m_impl->persistence->isActive();
-            emit annotationsAvailableChanged(
-                active, active ? QString()
-                               : tr("Annotations are read-only for this slide: "
-                                    "the stored file could not be used."));
+            annotationsAvailable = m_impl->persistence->isActive();
+            if (!annotationsAvailable) {
+                annotationsReason = tr("Annotations are read-only for this slide: "
+                                       "the stored file could not be used.");
+            }
         }
     }
 
@@ -2505,6 +2519,9 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
         emit thumbnailReady(result.thumbnail);
     }
     emit slideOpened(result.filePath);
+    if (reportAvailability) {
+        emit annotationsAvailableChanged(annotationsAvailable, annotationsReason);
+    }
     emit loadingFinished();
     emit viewportChanged();
     update();
