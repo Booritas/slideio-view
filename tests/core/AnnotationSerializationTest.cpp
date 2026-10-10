@@ -30,7 +30,7 @@ Annotation makeAnnotation()
     AnnotationMetadata metadata;
     metadata.author = "s.melnikov";
     metadata.createdAt = at(1772683629LL);
-    metadata.modifiedAt = at(1772683700LL);
+    metadata.modifiedAt = at(1772683750LL);
 
     return Annotation("4f1c8e2a-91b7-4d3e-8c15-2a9f7e6b0d44", AnnotationType::Rectangle,
                       RectangleGeometry{PointF{1200.0, 800.0}, PointF{4400.0, 2600.0}},
@@ -86,9 +86,66 @@ TEST_CASE("a rectangle writes its own corners, not a normalised box", "[core][An
                                       RectangleGeometry{PointF{400.0, 300.0}, PointF{100.0, 50.0}});
 
     const std::string json = serializeAnnotationDocument(document);
-    REQUIRE(json.find("\"topLeft\"") != std::string::npos);
-    REQUIRE(json.find("400.0") != std::string::npos);
-    REQUIRE(json.find("50.0") != std::string::npos);
+    const std::size_t topLeft = json.find("\"topLeft\"");
+    const std::size_t bottomRight = json.find("\"bottomRight\"");
+    REQUIRE(topLeft != std::string::npos);
+    REQUIRE(bottomRight != std::string::npos);
+
+    // nlohmann orders object keys alphabetically, so each corner's section runs
+    // from its key to the other key (or the end). Compare within the section:
+    // 400.0 belongs to topLeft here. Had the serializer normalised, topLeft
+    // would hold 100.0 and this would fail.
+    const std::size_t topLeftEnd = topLeft < bottomRight ? bottomRight : json.size();
+    const std::size_t bottomRightEnd = bottomRight < topLeft ? topLeft : json.size();
+
+    const std::size_t topLeftValue = json.find("400.0", topLeft);
+    REQUIRE(topLeftValue != std::string::npos);
+    REQUIRE(topLeftValue < topLeftEnd);
+
+    const std::size_t bottomRightValue = json.find("100.0", bottomRight);
+    REQUIRE(bottomRightValue != std::string::npos);
+    REQUIRE(bottomRightValue < bottomRightEnd);
+}
+
+TEST_CASE("a non-finite line width or fill opacity refuses to serialize",
+          "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document;
+    document.slideId = "id";
+    document.annotations.emplace_back("a1", AnnotationType::Rectangle,
+                                      RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
+
+    SECTION("line width")
+    {
+        AnnotationProperties properties = document.annotations.front().properties();
+        properties.lineWidth = std::numeric_limits<float>::quiet_NaN();
+        document.annotations.front().setProperties(properties);
+        REQUIRE(serializeAnnotationDocument(document).empty());
+    }
+
+    SECTION("fill opacity")
+    {
+        AnnotationProperties properties = document.annotations.front().properties();
+        properties.fillOpacity = std::numeric_limits<float>::infinity();
+        document.annotations.front().setProperties(properties);
+        REQUIRE(serializeAnnotationDocument(document).empty());
+    }
+}
+
+TEST_CASE("invalid UTF-8 in a string refuses to serialize rather than throwing",
+          "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document;
+    document.slideId = "id";
+    document.annotations.emplace_back("a1", AnnotationType::Rectangle,
+                                      RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
+
+    AnnotationProperties properties = document.annotations.front().properties();
+    properties.label = std::string("bad\xC3");   // truncated two-byte sequence
+    document.annotations.front().setProperties(properties);
+
+    REQUIRE_NOTHROW(serializeAnnotationDocument(document));
+    REQUIRE(serializeAnnotationDocument(document).empty());
 }
 
 TEST_CASE("a colour is written as #RRGGBBAA in upper case", "[core][AnnotationSerialization]")
@@ -196,5 +253,5 @@ TEST_CASE("annotation metadata is written, not regenerated", "[core][AnnotationS
     const std::string json = serializeAnnotationDocument(makeDocument());
     REQUIRE(json.find("\"author\": \"s.melnikov\"") != std::string::npos);
     REQUIRE(json.find("\"createdAt\": \"2026-03-05T04:07:09Z\"") != std::string::npos);
-    REQUIRE(json.find("\"modifiedAt\": \"2026-03-05T04:08:20Z\"") != std::string::npos);
+    REQUIRE(json.find("\"modifiedAt\": \"2026-03-05T04:09:10Z\"") != std::string::npos);
 }

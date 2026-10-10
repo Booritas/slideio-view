@@ -33,6 +33,13 @@ bool isRepresentable(const AnnotationGeometry& geometry)
     return isFinitePoint(rectangle.topLeft) && isFinitePoint(rectangle.bottomRight);
 }
 
+bool isRepresentable(const AnnotationProperties& properties)
+{
+    // Same reason as the geometry check: JSON has no NaN or infinity, nlohmann
+    // writes null, and the file will not parse back.
+    return std::isfinite(properties.lineWidth) && std::isfinite(properties.fillOpacity);
+}
+
 std::string formatColor(const Color& color)
 {
     std::array<char, 16> buffer{};
@@ -111,7 +118,7 @@ bool annotationToJson(const Annotation& annotation, json& out)
 std::string serializeAnnotationDocument(const AnnotationDocument& document)
 {
     for (const Annotation& annotation : document.annotations) {
-        if (!isRepresentable(annotation.geometry())) {
+        if (!isRepresentable(annotation.geometry()) || !isRepresentable(annotation.properties())) {
             return {};
         }
     }
@@ -150,7 +157,14 @@ std::string serializeAnnotationDocument(const AnnotationDocument& document)
         {"annotations", std::move(annotations)},
     };
 
-    return root.dump(2) + "\n";
+    // nlohmann throws on invalid UTF-8 in any string. Turning that into the
+    // same empty-string refusal as the other failures keeps the promise that no
+    // exception leaves this function -- Task 5's save path has no catch.
+    try {
+        return root.dump(2) + "\n";
+    } catch (const nlohmann::json::exception&) {
+        return {};
+    }
 }
 
 } // namespace slideio::viewer::core
