@@ -56,6 +56,7 @@ add_test(NAME infra-tests COMMAND slideio-viewer-infra-tests)
 add_executable(slideio-viewer-ui-tests
     ui/AboutInfoTest.cpp
     ui/AnnotationInteractionTest.cpp
+    ui/AnnotationSettingsTest.cpp
     ui/ColorProfilePolicyTest.cpp
     ui/DriverFiltersTest.cpp
     ui/PathDisplayTest.cpp
