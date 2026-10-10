@@ -40,6 +40,7 @@ public:
 
     /// Replaces every annotation and clears the selection, emitting one
     /// modelReset() rather than one annotationAdded() per entry.
+    /// Annotations with an empty id are skipped, as in insert().
     void replaceAll(std::vector<core::Annotation> annotations);
 
     /// Stamped into the metadata of annotations created through add().

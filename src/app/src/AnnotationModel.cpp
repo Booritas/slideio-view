@@ -52,6 +52,9 @@ void AnnotationModel::insert(core::Annotation annotation)
 
 void AnnotationModel::replaceAll(std::vector<core::Annotation> annotations)
 {
+    annotations.erase(std::remove_if(annotations.begin(), annotations.end(),
+                                     [](const core::Annotation& a) { return a.id().empty(); }),
+                      annotations.end());
     m_annotations = std::move(annotations);
 
     // Cleared directly rather than through clearSelection(), which would emit
