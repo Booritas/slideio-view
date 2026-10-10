@@ -26,6 +26,17 @@ public:
     AnnotationSettings(const AnnotationSettings&) = delete;
     AnnotationSettings& operator=(const AnnotationSettings&) = delete;
 
+    /// The directory a stored (or entered) value resolves to, with the same
+    /// rule workspaceDirectory() applies: anything empty after trimming falls
+    /// back to the default.
+    ///
+    /// Static because MainWindow needs to resolve a value the user has typed
+    /// but not yet committed -- writing it first would make it
+    /// indistinguishable from a folder the save-failure resolver had already
+    /// chosen. One implementation, so the two callers cannot drift: this rule
+    /// decides where a pathologist's annotations are written.
+    [[nodiscard]] static QString resolveWorkspaceDirectory(const QString& stored);
+
     /// The configured workspace, or defaultAnnotationWorkspaceDirectory() when
     /// nothing usable is stored. Never empty.
     [[nodiscard]] QString workspaceDirectory() const;

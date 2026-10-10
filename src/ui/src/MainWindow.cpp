@@ -1133,12 +1133,13 @@ bool MainWindow::Impl::openPreferences()
         annotationSettings->userName().toStdString());
 
     const QString entered = dialog.workspaceDirectory();
-    // Resolve the entry the way AnnotationSettings would before comparing: a
-    // cleared field means "use the default", which is very often the root
-    // already in use. Comparing the raw entry instead would reload the slide
-    // only to land on the folder it was already rooted at.
-    const QString requested =
-        entered.isEmpty() ? defaultAnnotationWorkspaceDirectory() : entered;
+    // Resolve the entry before comparing: a cleared field means "use the
+    // default", which is very often the root already in use, and comparing the
+    // raw entry would reload the slide only to land on the folder it was
+    // already rooted at. Through AnnotationSettings' own rule rather than a
+    // copy of it -- a second copy would drift, and this rule decides where
+    // annotations are written.
+    const QString requested = AnnotationSettings::resolveWorkspaceDirectory(entered);
 
     if (requested != QString::fromStdString(annotationRepository->workspaceRoot())) {
         // Flush to the OLD root before re-pointing, or the open slide's unsaved
