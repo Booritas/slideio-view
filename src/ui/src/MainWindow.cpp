@@ -1,8 +1,12 @@
 #include "slideio/viewer/ui/MainWindow.h"
+#include "slideio/viewer/app/AnnotationModel.h"
+#include "slideio/viewer/app/AnnotationPersistenceService.h"
 #include "slideio/viewer/core/ColorManagement.h"
 #include "slideio/viewer/core/SlideId.h"
+#include "slideio/viewer/infra/JsonAnnotationRepository.h"
 #include "slideio/viewer/infra/QSettingsColorProfileOverrideStore.h"
 #include "slideio/viewer/ui/AboutDialog.h"
+#include "slideio/viewer/ui/AnnotationSettings.h"
 #include "slideio/viewer/ui/AppPaths.h"
 #include "slideio/viewer/ui/AssociatedImageWindow.h"
 #include "slideio/viewer/ui/ChannelMixerPanel.h"
@@ -14,6 +18,7 @@
 #include "slideio/viewer/ui/SlideProfilesDialog.h"
 #include "slideio/viewer/ui/MetadataPanel.h"
 #include "slideio/viewer/ui/MinimapWidget.h"
+#include "slideio/viewer/ui/PreferencesDialog.h"
 #include "slideio/viewer/ui/StatusBarManager.h"
 #include "slideio/viewer/ui/ViewportController.h"
 #include "slideio/viewer/ui/ViewportWidget.h"
@@ -24,6 +29,7 @@
 
 #include <QAction>
 #include <QActionGroup>
+#include <QCloseEvent>
 #include <QDesktopServices>
 #include <QDir>
 #include <QDragEnterEvent>
@@ -37,6 +43,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QPushButton>
 #include <QRegion>
 #include <QScreen>
 #include <QSettings>
@@ -69,6 +76,7 @@ const std::string kSetSlideProfileDescription =
 namespace slideio::viewer::ui
 {
 
+namespace app = slideio::viewer::app;
 namespace core = slideio::viewer::core;
 namespace infra = slideio::viewer::infra;
 
@@ -121,6 +129,8 @@ struct MainWindow::Impl
     QAction* manageSlideProfilesAction = nullptr;
     QAction* panToolAction = nullptr;
     QAction* rectangleToolAction = nullptr;
+    QAction* preferencesAction = nullptr;
+    QAction* openAnnotationsFolderAction = nullptr;
     QAction* aboutAction = nullptr;
 
     // Why the configured default ICC profile cannot be used, if it cannot.
@@ -142,6 +152,23 @@ struct MainWindow::Impl
     std::string pendingColorManagementEnableSlideId;
 
     std::unique_ptr<infra::QSettingsColorProfileOverrideStore> overrideStore;
+
+    // The annotation persistence stack. Built once, in
+    // buildAnnotationPersistence(), and never rebuilt: the service holds a
+    // core::IAnnotationRepository& bound at construction, so replacing the
+    // repository when the user picks another workspace would leave that
+    // reference dangling. A workspace change re-roots the repository instead.
+    std::unique_ptr<AnnotationSettings> annotationSettings;
+    std::unique_ptr<infra::JsonAnnotationRepository> annotationRepository;
+    std::unique_ptr<app::AnnotationPersistenceService> annotationPersistence;
+
+    // At most one save-failure dialog per run of bad luck. A failed save stays
+    // dirty and is retried on the autosave debounce, so without this latch an
+    // unwritable workspace puts a modal on screen every two seconds.
+    bool saveFailureReported = false;
+
+    void buildAnnotationPersistence();
+    bool openPreferences();
 
     void createActions()
     {
@@ -249,8 +276,21 @@ struct MainWindow::Impl
         toolGroup->setExclusive(true);
         toolGroup->addAction(panToolAction);
         toolGroup->addAction(rectangleToolAction);
-        // Spec §6: no drawing tools without a slide. Enabled on slideOpened.
+        // Spec §6: no drawing tools without a slide. Enabled and disabled from
+        // ViewportWidget::annotationsAvailableChanged, which says more than
+        // "a slide is open": an associated image and a slide whose annotation
+        // file would not parse both leave it off.
         rectangleToolAction->setEnabled(false);
+
+        openAnnotationsFolderAction = new QAction("Open &Annotations Folder", owner);
+        openAnnotationsFolderAction->setStatusTip(
+            "Show the folder where annotation files are saved");
+
+        preferencesAction = new QAction("&Preferences...", owner);
+        // On macOS this moves the entry into the application menu, as the
+        // platform expects, instead of leaving it under Tools.
+        preferencesAction->setMenuRole(QAction::PreferencesRole);
+        preferencesAction->setStatusTip("Choose where annotations are saved and who they name");
 
         aboutAction = new QAction("&About SlideIO Viewer...", owner);
         // On macOS this moves the entry into the application menu, where the
@@ -272,6 +312,7 @@ struct MainWindow::Impl
 
         fileMenu->addAction(closeAction);
         fileMenu->addSeparator();
+        fileMenu->addAction(openAnnotationsFolderAction);
         fileMenu->addAction(openLogAction);
         fileMenu->addSeparator();
         fileMenu->addAction(exitAction);
@@ -308,6 +349,10 @@ struct MainWindow::Impl
         QMenu* toolsMenu = owner->menuBar()->addMenu("&Tools");
         toolsMenu->addAction(panToolAction);
         toolsMenu->addAction(rectangleToolAction);
+        // There is no Edit menu, so Preferences lives here. setMenuRole() moves
+        // it to the application menu on macOS regardless.
+        toolsMenu->addSeparator();
+        toolsMenu->addAction(preferencesAction);
 
         QMenu* helpMenu = owner->menuBar()->addMenu("&Help");
         helpMenu->addAction(aboutAction);
@@ -413,7 +458,40 @@ struct MainWindow::Impl
             viewportWidget->setActiveTool(AnnotationTool::Pan);
         });
         QObject::connect(rectangleToolAction, &QAction::triggered, owner, [this]() {
+            if (!annotationSettings->hasUserName()) {
+                // FR-USER-01: creation is blocked until an identity is
+                // configured. Asked here, on the first attempt to annotate,
+                // rather than at startup -- someone who opened the application
+                // to look at a slide should not be met by a dialog.
+                QMessageBox::information(
+                    owner, tr("Your name is needed"),
+                    tr("Annotations record who created them. Enter your name in "
+                       "Preferences before drawing."));
+                if (!openPreferences()) {
+                    panToolAction->setChecked(true);
+                    return;
+                }
+            }
             viewportWidget->setActiveTool(AnnotationTool::Rectangle);
+        });
+
+        QObject::connect(preferencesAction, &QAction::triggered, owner, [this]() {
+            openPreferences();
+        });
+
+        QObject::connect(openAnnotationsFolderAction, &QAction::triggered, owner, [this]() {
+            const QString workspace = annotationSettings->workspaceDirectory();
+            const QString annotations = workspace + QStringLiteral("/annotations");
+            const QString target = QFileInfo::exists(annotations) ? annotations : workspace;
+            if (!QFileInfo::exists(target)) {
+                QMessageBox::information(
+                    owner, tr("No annotations yet"),
+                    tr("The annotation folder is created the first time you save an "
+                       "annotation. It will be:\n\n%1")
+                        .arg(QDir::toNativeSeparators(annotations)));
+                return;
+            }
+            QDesktopServices::openUrl(QUrl::fromLocalFile(target));
         });
 
         QObject::connect(viewportWidget, &ViewportWidget::activeToolChanged, owner,
@@ -421,6 +499,26 @@ struct MainWindow::Impl
                              panToolAction->setChecked(tool == AnnotationTool::Pan);
                              rectangleToolAction->setChecked(tool == AnnotationTool::Rectangle);
                          });
+
+        QObject::connect(viewportWidget, &ViewportWidget::annotationsAvailableChanged, owner,
+                         [this](bool available, const QString& reason) {
+                             rectangleToolAction->setEnabled(available);
+                             if (available || !viewportWidget->isSlideOpen()) {
+                                 // Either fine, or the transient "no slide" that
+                                 // every slide switch emits -- leave the tool alone,
+                                 // as the slideClosed handler deliberately does.
+                                 return;
+                             }
+                             // A real gate: an associated image, an unidentifiable
+                             // slide, or a file we can read but must not write.
+                             viewportWidget->setActiveTool(AnnotationTool::Pan);
+                             if (!reason.isEmpty()) {
+                                 statusBarManager->showTransientMessage(reason);
+                             }
+                         });
+
+        QObject::connect(viewportWidget, &ViewportWidget::annotationEditBlocked, owner,
+                         [this](const QString& reason) { statusBarManager->showTransientMessage(reason); });
 
         QObject::connect(manageSlideProfilesAction, &QAction::triggered, owner, [this]() {
             const std::string openSlideId = owner->currentSlideId();
@@ -473,7 +571,11 @@ struct MainWindow::Impl
                 const bool sameFile = (filePath == lastOpenedFilePath);
                 lastOpenedFilePath = filePath;
                 closeAction->setEnabled(true);
-                rectangleToolAction->setEnabled(true);
+                // The Rectangle tool is NOT enabled here: an associated image
+                // opens through this path too, and so does a slide whose
+                // annotations could not be read. Its enabled state comes from
+                // annotationsAvailableChanged, which ViewportWidget emits just
+                // after this signal.
                 // The V and R shortcuts are scoped to the viewport, so give it
                 // focus once a slide is up; otherwise they would do nothing
                 // until the user happened to click the image first.
@@ -896,6 +998,228 @@ struct MainWindow::Impl
     }
 };
 
+void MainWindow::Impl::buildAnnotationPersistence()
+{
+    annotationRepository = std::make_unique<infra::JsonAnnotationRepository>(
+        annotationSettings->workspaceDirectory().toStdString());
+    annotationPersistence = std::make_unique<app::AnnotationPersistenceService>(
+        *annotationRepository, *viewportWidget->annotationModel());
+    viewportWidget->setPersistenceService(annotationPersistence.get());
+
+    annotationPersistence->setMismatchResolver(
+        [this](const core::AnnotationDocument& stored, const core::SlideProvenance& current) {
+            QMessageBox box(owner);
+            box.setIcon(QMessageBox::Warning);
+            box.setWindowTitle(tr("Annotations may belong to another slide"));
+            box.setText(tr("The stored annotations were saved for a different slide."));
+            // Both names, so the user has something to judge by. A matching id
+            // is not proof of provenance, and a mismatch is not proof of error:
+            // a re-exported slide has a new content hash and the same tissue.
+            box.setInformativeText(tr("Saved for: %1\nCurrently open: %2")
+                                       .arg(QString::fromStdString(stored.slide.fileName),
+                                            QString::fromStdString(current.fileName)));
+            QPushButton* readOnly = box.addButton(tr("Open Read-Only"), QMessageBox::AcceptRole);
+            QPushButton* reassociate =
+                box.addButton(tr("Use for This Slide"), QMessageBox::DestructiveRole);
+            box.addButton(tr("Ignore Them"), QMessageBox::RejectRole);
+            box.setDefaultButton(readOnly);
+            // Esc and the title-bar X must take the safe option the dialog
+            // highlights, not the lone RejectRole button that Qt would pick.
+            box.setEscapeButton(readOnly);
+            box.exec();
+
+            using Choice = app::AnnotationPersistenceService::MismatchChoice;
+            if (box.clickedButton() == reassociate) {
+                return Choice::Reassociate;
+            }
+            if (box.clickedButton() == readOnly) {
+                return Choice::ReadOnly;
+            }
+            return Choice::Ignore;
+        });
+
+    // Fires on a slide *switch* as well as an explicit close, because
+    // openScene() calls closeSlide() internally. That is the point: it is the
+    // one place where a failed write would otherwise cost the user everything
+    // they had drawn, with no indication it had happened.
+    annotationPersistence->setSaveFailureResolver(
+        [this](const core::SaveResult& failure, int annotationCount) {
+            using Choice = app::AnnotationPersistenceService::SaveFailureChoice;
+
+            QMessageBox box(owner);
+            box.setIcon(QMessageBox::Critical);
+            box.setWindowTitle(tr("Annotations could not be saved"));
+            box.setText(tr("%1 annotation(s) could not be saved and will be lost if you continue.")
+                            .arg(annotationCount));
+            box.setInformativeText(tr("%1\n\n%2\n\nRetry tries the same folder again, up to five times, "
+                                      "and then the annotations are discarded. To keep them, choose "
+                                      "Choose Another Folder.")
+                                       .arg(QString::fromStdString(failure.message),
+                                            QString::fromStdString(failure.path)));
+            QPushButton* retry = box.addButton(tr("Retry"), QMessageBox::AcceptRole);
+            QPushButton* chooseFolder =
+                box.addButton(tr("Choose Another Folder..."), QMessageBox::ActionRole);
+            box.addButton(tr("Discard and Close"), QMessageBox::DestructiveRole);
+            box.setDefaultButton(retry);
+            // Esc must never mean Discard; Retry is the safe exit.
+            box.setEscapeButton(retry);
+            box.exec();
+
+            if (box.clickedButton() == chooseFolder) {
+                // A plain folder picker, NOT openPreferences() -- that path
+                // calls endSlide(), which is what called this resolver, and the
+                // two would call each other until the stack ran out.
+                const QString chosen = QFileDialog::getExistingDirectory(
+                    owner, tr("Choose a folder for annotations"),
+                    annotationSettings->workspaceDirectory());
+                if (chosen.isEmpty()) {
+                    return Choice::Discard;
+                }
+                annotationSettings->setWorkspaceDirectory(chosen);
+                // Re-root rather than rebuild: the service holds a reference to
+                // this repository object.
+                annotationRepository->setWorkspaceRoot(chosen.toStdString());
+                return Choice::Retry;
+            }
+            if (box.clickedButton() == retry) {
+                return Choice::Retry;
+            }
+            // Never Retry unless a button said so: this drives a bounded loop
+            // in endSlide(), and a resolver that always retries spends all five
+            // attempts wedging the UI thread.
+            return Choice::Discard;
+        });
+
+    QObject::connect(annotationPersistence.get(), &app::AnnotationPersistenceService::loadFailed,
+                     owner, [this](const QString& path, const QString& message) {
+                         QMessageBox::warning(
+                             owner, tr("Annotations could not be opened"),
+                             tr("%1\n\n%2\n\nThe file has not been changed. Annotations are "
+                                "disabled for this slide so it cannot be overwritten.")
+                                 .arg(message, QDir::toNativeSeparators(path)));
+                     });
+
+    QObject::connect(annotationPersistence.get(), &app::AnnotationPersistenceService::saveFailed,
+                     owner, [this](const QString& path, const QString& message) {
+                         // Latched: the document stays dirty after a failure, so
+                         // the autosave retries it every couple of seconds. One
+                         // dialog is a warning; one every two seconds is a trap
+                         // the user cannot click their way out of.
+                         if (saveFailureReported) {
+                             return;
+                         }
+                         saveFailureReported = true;
+                         QMessageBox::warning(
+                             owner, tr("Annotations could not be saved"),
+                             tr("%1\n\n%2\n\nYour annotations are still open and will be "
+                                "retried. Choose another folder in Preferences if this "
+                                "keeps happening.")
+                                 .arg(message, QDir::toNativeSeparators(path)));
+                     });
+
+    // A write that reached disk ends the run of bad luck, so the next distinct
+    // failure is reported again even if the slide was never reopened.
+    QObject::connect(annotationPersistence.get(), &app::AnnotationPersistenceService::saved,
+                     owner, [this](const QString&) { saveFailureReported = false; });
+
+    QObject::connect(annotationPersistence.get(), &app::AnnotationPersistenceService::saveAbandoned,
+                     owner, [this](const QString& path, const QString& message) {
+                         QMessageBox::critical(
+                             owner, tr("Annotations were discarded"),
+                             tr("Saving failed repeatedly, so the annotations for this slide "
+                                "were discarded.\n\n%1\n\n%2")
+                                 .arg(message, QDir::toNativeSeparators(path)));
+                     });
+
+    QObject::connect(annotationPersistence.get(), &app::AnnotationPersistenceService::activeChanged,
+                     owner, [this](bool active) {
+                         // The service announces no successful save, so this is
+                         // the nearest thing to one: a slide that has just
+                         // become writable is a fresh start for the latch
+                         // above, and whatever was wrong with the last slide
+                         // has already been reported about that slide.
+                         if (active) {
+                             saveFailureReported = false;
+                         }
+                     });
+}
+
+bool MainWindow::Impl::openPreferences()
+{
+    PreferencesDialog dialog(annotationSettings->workspaceDirectory(),
+                             annotationSettings->userName(), owner);
+    if (dialog.exec() != QDialog::Accepted) {
+        return false;
+    }
+
+    annotationSettings->setUserName(dialog.userName());
+    viewportWidget->annotationModel()->setDefaultAuthor(
+        annotationSettings->userName().toStdString());
+
+    const QString entered = dialog.workspaceDirectory();
+    // Resolve the entry before comparing: a cleared field means "use the
+    // default", which is very often the root already in use, and comparing the
+    // raw entry would reload the slide only to land on the folder it was
+    // already rooted at. Through AnnotationSettings' own rule rather than a
+    // copy of it -- a second copy would drift, and this rule decides where
+    // annotations are written.
+    const QString requested = AnnotationSettings::resolveWorkspaceDirectory(entered);
+
+    if (requested != QString::fromStdString(annotationRepository->workspaceRoot())) {
+        // Flush to the OLD root before re-pointing, or the open slide's unsaved
+        // work is written nowhere.
+        const QString beforeFlush = annotationSettings->workspaceDirectory();
+        const core::SaveResult flushed = annotationPersistence->endSlide();
+        if (flushed.status == core::SaveStatus::Saved
+            || flushed.status == core::SaveStatus::NothingToDo) {
+            saveFailureReported = false;
+        }
+        const QString afterFlush = annotationSettings->workspaceDirectory();
+
+        if (afterFlush != beforeFlush) {
+            // That flush failed and the save-failure resolver rescued it to a
+            // folder the user picked mid-failure, which it has already made the
+            // workspace and the repository root. Applying the dialog's value on
+            // top would strand the file it just saved somewhere this
+            // application never looks again, and say nothing about it. The more
+            // recent choice wins; the user is told where their work went.
+            // Gated on the flush actually succeeding: when the retries against the
+            // new folder failed too, endSlide() abandoned the annotations and
+            // claiming they were saved would be false. The folder in use is
+            // named either way, so the typed value is not mistaken for it.
+            const QString folder = QDir::toNativeSeparators(afterFlush);
+            if (flushed.status == core::SaveStatus::Saved) {
+                statusBarManager->showTransientMessage(
+                    tr("Annotations were saved to %1, which is now the annotation folder "
+                       "(your entry was not used).")
+                        .arg(folder));
+            } else {
+                statusBarManager->showTransientMessage(
+                    tr("The annotation folder is now %1 (your entry was not used). "
+                       "The annotations were NOT saved.")
+                        .arg(folder));
+            }
+        } else {
+            annotationSettings->setWorkspaceDirectory(entered);
+            // Read the path back rather than reusing `entered`: an empty or
+            // whitespace-only entry clears the setting, and the repository must
+            // then follow the default workspace rather than root itself at "".
+            const QString resolved = annotationSettings->workspaceDirectory();
+            // Re-rooted, never rebuilt: the service holds a
+            // core::IAnnotationRepository& bound at construction, so destroying
+            // the repository out from under it is a dangling reference.
+            annotationRepository->setWorkspaceRoot(resolved.toStdString());
+        }
+
+        if (viewportWidget->isSlideOpen()) {
+            // Reopening is how the slide re-enters beginSlide() against the new
+            // root -- whichever of the two folders above it ended up being.
+            viewportWidget->reopenCurrentScene();
+        }
+    }
+    return annotationSettings->hasUserName();
+}
+
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
     , m_impl(std::make_unique<Impl>())
@@ -993,6 +1317,14 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->createMenus();
     m_impl->connectSignals();
 
+    // Annotation persistence. The settings object is a member rather than a
+    // static because QSettings() needs the organization and application names
+    // that main() sets before this window is built.
+    m_impl->annotationSettings = std::make_unique<AnnotationSettings>();
+    m_impl->viewportWidget->annotationModel()->setDefaultAuthor(
+        m_impl->annotationSettings->userName().toStdString());
+    m_impl->buildAnnotationPersistence();
+
     // Load the configured default ICC profile (if any) now that the viewport
     // and the actions that reflect this setting both exist.
     applyDefaultColorProfile();
@@ -1035,6 +1367,14 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow()
 {
+    // The persistence service dies with m_impl, before ~QMainWindow deletes the
+    // viewport that holds a raw pointer to it. Cut the link here rather than
+    // rely on ~ViewportWidget never touching it -- that is a fact about another
+    // file, and nobody changing it will think to come back and check this one.
+    if (m_impl && m_impl->viewportWidget) {
+        m_impl->viewportWidget->setPersistenceService(nullptr);
+    }
+
     // Save window geometry and dock layout
     QSettings settings;
     settings.setValue("mainWindow/geometry", saveGeometry());
@@ -1361,6 +1701,15 @@ void MainWindow::dropEvent(QDropEvent* event)
         return;
     }
     QMainWindow::dropEvent(event);
+}
+
+void MainWindow::closeEvent(QCloseEvent* event)
+{
+    // Quitting with a slide open would otherwise lose up to a full autosave
+    // debounce of work: ~ViewportWidget does not close the slide, so nothing
+    // flushes. closeSlide() flushes before it empties the model, by design.
+    m_impl->viewportWidget->closeSlide();
+    QMainWindow::closeEvent(event);
 }
 
 } // namespace slideio::viewer::ui

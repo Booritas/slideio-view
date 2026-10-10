@@ -17,4 +17,15 @@ QString logDirectory();
 // Full path to the primary log file (within logDirectory()).
 QString logFilePath();
 
+// Default directory for the user's annotation workspace:
+//   Windows: %USERPROFILE%\Documents\SlideIO Viewer
+//   macOS:   ~/Documents/SlideIO Viewer
+//   Linux:   $XDG_DOCUMENTS_DIR/SlideIO Viewer
+//
+// Deliberately NOT an application-data location. Slides often sit on read-only
+// institutional storage, so annotations cannot live beside them; application
+// data is writable but opaque, and a user who cannot find their annotations
+// cannot back them up or send them to a colleague.
+QString defaultAnnotationWorkspaceDirectory();
+
 } // namespace slideio::viewer::ui

@@ -14,6 +14,9 @@ add_executable(slideio-viewer-core-tests
     core/ColorProfileOverrideTest.cpp
     core/AnnotationGeometryTest.cpp
     core/AnnotationTest.cpp
+    core/Iso8601Test.cpp
+    core/AnnotationSerializationTest.cpp
+    core/AutosavePolicyTest.cpp
 )
 
 target_link_libraries(slideio-viewer-core-tests
@@ -25,6 +28,7 @@ add_test(NAME core-tests COMMAND slideio-viewer-core-tests)
 # Application layer tests
 add_executable(slideio-viewer-app-tests
     app/AnnotationModelTest.cpp
+    app/AnnotationPersistenceServiceTest.cpp
 )
 
 target_link_libraries(slideio-viewer-app-tests
@@ -39,6 +43,7 @@ add_executable(slideio-viewer-infra-tests
     infra/TileLoadSchedulerTest.cpp
     infra/ColorManagedAdapterTest.cpp
     infra/QSettingsColorProfileOverrideStoreTest.cpp
+    infra/JsonAnnotationRepositoryTest.cpp
 )
 
 target_link_libraries(slideio-viewer-infra-tests
@@ -51,6 +56,7 @@ add_test(NAME infra-tests COMMAND slideio-viewer-infra-tests)
 add_executable(slideio-viewer-ui-tests
     ui/AboutInfoTest.cpp
     ui/AnnotationInteractionTest.cpp
+    ui/AnnotationSettingsTest.cpp
     ui/ColorProfilePolicyTest.cpp
     ui/DriverFiltersTest.cpp
     ui/PathDisplayTest.cpp
