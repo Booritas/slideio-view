@@ -9,6 +9,8 @@
 #include <QSaveFile>
 #include <QString>
 
+#include <cstddef>
+#include <string_view>
 #include <utility>
 
 namespace slideio::viewer::infra
@@ -20,6 +22,28 @@ namespace
 QString annotationsDirectory(const std::string& root)
 {
     return QString::fromStdString(root) + QStringLiteral("/annotations");
+}
+
+/// A slide id becomes a path component, so it must not be able to leave the
+/// workspace. computeSlideId produces 16 lowercase hex characters; this accepts
+/// a little more than that and nothing that can traverse or escape.
+///
+/// It cannot be left to the caller: save() takes its id from the document, and
+/// parseAnnotationDocument accepts any non-empty string in that field, so a
+/// hand-edited file is enough to reach here with "../" in it.
+bool isSafeKey(const std::string& slideId, int sceneIndex)
+{
+    if (slideId.empty() || slideId.size() > 64 || sceneIndex < 0) {
+        return false;
+    }
+    for (const char c : slideId) {
+        const bool allowed = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')
+                             || (c >= 'A' && c <= 'Z') || c == '-' || c == '_';
+        if (!allowed) {
+            return false;
+        }
+    }
+    return true;
 }
 
 core::LoadResult loadFailure(core::LoadStatus status, std::string path, std::string message)
@@ -52,7 +76,9 @@ core::LoadStatus statusForParseError(core::ParseError error)
     case core::ParseError::None:
         break;
     }
-    return core::LoadStatus::Loaded;
+    // Unreachable: callers only map a real failure. Failing closed is deliberate, so a
+    // future enumerator cannot quietly turn into "loaded".
+    return core::LoadStatus::Malformed;
 }
 
 } // namespace
@@ -76,15 +102,19 @@ void JsonAnnotationRepository::setWorkspaceRoot(std::string workspaceRoot)
 
 std::string JsonAnnotationRepository::pathFor(const core::AnnotationKey& key) const
 {
-    const QString name = QStringLiteral("%1.s%2.annotations.json")
-                             .arg(QString::fromStdString(key.slideId))
-                             .arg(key.sceneIndex);
+    const QString name = QString::fromStdString(key.slideId) + QStringLiteral(".s")
+                         + QString::number(key.sceneIndex) + QStringLiteral(".annotations.json");
     return (annotationsDirectory(m_workspaceRoot) + QLatin1Char('/') + name).toStdString();
 }
 
 core::LoadResult JsonAnnotationRepository::load(const core::AnnotationKey& key)
 {
     const std::string path = pathFor(key);
+
+    if (!isSafeKey(key.slideId, key.sceneIndex)) {
+        return loadFailure(core::LoadStatus::Unreadable, path, 
+                           "the slide id or scene index cannot be used in a file name");
+    }
     const QString qpath = QString::fromStdString(path);
 
     if (!QFileInfo::exists(qpath)) {
@@ -116,6 +146,10 @@ core::LoadResult JsonAnnotationRepository::load(const core::AnnotationKey& key)
 core::SaveResult JsonAnnotationRepository::save(const core::AnnotationDocument& document)
 {
     const std::string path = pathFor({document.slideId, document.sceneIndex});
+
+    if (!isSafeKey(document.slideId, document.sceneIndex)) {
+        return saveFailure(core::SaveStatus::Failed, path, "the slide id or scene index cannot be used in a file name");
+    }
 
     // Serialize before touching the filesystem: a document that cannot be
     // represented must not cost the user their previous file.

@@ -42,7 +42,7 @@ TEST_CASE("the path carries both the slide id and the scene index",
     REQUIRE(scene0.find("a3f8c2e1b4d50697.s0.annotations.json") != std::string::npos);
     REQUIRE(scene3.find("a3f8c2e1b4d50697.s3.annotations.json") != std::string::npos);
     REQUIRE(scene0 != scene3);
-    REQUIRE(scene0.find("annotations") != std::string::npos);
+    REQUIRE(scene0.find("C:/workspace/annotations/") != std::string::npos);
 }
 
 TEST_CASE("an absent file is NotFound, not an error", "[infra][JsonAnnotationRepository]")
@@ -217,6 +217,11 @@ TEST_CASE("re-rooting sends later reads and writes to the new workspace",
     REQUIRE(QFileInfo::exists(first.path() + "/annotations/slide.s0.annotations.json"));
     REQUIRE(repository.load({"slide", 0}).status == LoadStatus::NotFound);
 
+    JsonAnnotationRepository original(first.path().toStdString());
+    const LoadResult old = original.load({"slide", 0});
+    REQUIRE(old.status == LoadStatus::Loaded);
+    REQUIRE(old.document.annotations.size() == 1);
+
     REQUIRE(repository.save(makeDocument("slide", 0)).status == SaveStatus::Saved);
     REQUIRE(QFileInfo::exists(second.path() + "/annotations/slide.s0.annotations.json"));
 }
@@ -239,4 +244,62 @@ TEST_CASE("a workspace that cannot be created is NotWritable and names the path"
 
     REQUIRE(result.status == SaveStatus::NotWritable);
     REQUIRE(result.message.find("blocked") != std::string::npos);
+}
+
+TEST_CASE("a slide id that could escape the workspace is refused",
+          "[infra][JsonAnnotationRepository]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    JsonAnnotationRepository repository(dir.path().toStdString());
+
+    const char* unsafe[] = {"../escape", "..", "a/b", "a\b", "C:evil", "has space", "pct%2fsep"};
+    for (const char* id : unsafe) {
+        REQUIRE(repository.load({id, 0}).status == LoadStatus::Unreadable);
+
+        AnnotationDocument document = makeDocument(id, 0);
+        REQUIRE(repository.save(document).status == SaveStatus::Failed);
+    }
+
+    // Nothing was created anywhere.
+    REQUIRE_FALSE(QFileInfo::exists(dir.path() + "/annotations"));
+}
+
+TEST_CASE("a percent sequence in a slide id is not substituted into",
+          "[infra][JsonAnnotationRepository]")
+{
+    // QString::arg chaining would have replaced "%2" with the scene index.
+    JsonAnnotationRepository repository("C:/workspace");
+    const std::string path = repository.pathFor({"abc%2def", 7});
+    REQUIRE(path.find("abc%2def") != std::string::npos);
+    REQUIRE(path.find(".s7.") != std::string::npos);
+}
+
+TEST_CASE("a negative scene index is refused", "[infra][JsonAnnotationRepository]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    JsonAnnotationRepository repository(dir.path().toStdString());
+    REQUIRE(repository.save(makeDocument("a3f8c2e1b4d50697", -1)).status == SaveStatus::Failed);
+}
+
+TEST_CASE("a refused save leaves the previous file untouched",
+          "[infra][JsonAnnotationRepository]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    JsonAnnotationRepository repository(dir.path().toStdString());
+
+    REQUIRE(repository.save(makeDocument("a3f8c2e1b4d50697", 0)).status == SaveStatus::Saved);
+
+    AnnotationDocument broken = makeDocument("a3f8c2e1b4d50697", 0);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    broken.annotations.front().setGeometry(RectangleGeometry{PointF{nan, 0.0}, PointF{1.0, 1.0}});
+    REQUIRE(repository.save(broken).status == SaveStatus::Failed);
+
+    // The point: the good document is still there and still loads.
+    const LoadResult reloaded = repository.load({"a3f8c2e1b4d50697", 0});
+    REQUIRE(reloaded.status == LoadStatus::Loaded);
+    REQUIRE(reloaded.document.annotations.size() == 1);
+    REQUIRE(reloaded.document.annotations.front().id() == "a1");
 }
