@@ -140,6 +140,10 @@ signals:
     /// `reason` is empty when they can, and names the obstacle when they cannot.
     void annotationsAvailableChanged(bool available, const QString& reason);
 
+    /// A move or delete was refused because the annotations are open read-only.
+    /// Transient feedback only; `reason` is ready to show.
+    void annotationEditBlocked(const QString& reason);
+
 protected:
     void initializeGL() override;
     void resizeGL(int w, int h) override;

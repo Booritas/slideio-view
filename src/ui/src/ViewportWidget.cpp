@@ -20,6 +20,7 @@
 #include "slideio/viewer/infra/SlideIOAdapter.h"
 #include "slideio/viewer/infra/TileLoadScheduler.h"
 
+#include <QCoreApplication>
 #include <QFileInfo>
 #include <QFocusEvent>
 #include <QImage>
@@ -197,6 +198,12 @@ constexpr double kZoomInFactor = 1.25;
 constexpr double kZoomOutFactor = 1.0 / 1.25;
 constexpr double kPanPixels = 20.0;
 constexpr double kWheelZoomFactor = 1.1;
+
+QString readOnlyEditMessage()
+{
+    return QCoreApplication::translate("ViewportWidget",
+                                       "These annotations are open read-only and cannot be changed.");
+}
 
 // --- Data type support helpers ---
 
@@ -1361,6 +1368,15 @@ struct ViewportWidget::Impl
 
     // Non-owning; null until MainWindow injects it.
     app::AnnotationPersistenceService* persistence = nullptr;
+
+    /// False only when a persistence service is attached and has gone inactive
+    /// -- a load failure, or a mismatch the user resolved as read-only. With no
+    /// service attached at all, annotations are in-memory and freely editable,
+    /// which is the behaviour that predates persistence.
+    [[nodiscard]] bool annotationsEditable() const
+    {
+        return persistence == nullptr || persistence->isActive();
+    }
     std::string currentAuxImageName; // empty unless an aux image is shown
 
     // Async open: every slide-open call increments openOpId. Background workers
@@ -3448,9 +3464,17 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
         m_impl->moveLastSlide = core::PointF{slideX, slideY};
     }
 
-    const DragOwner owner = resolveDragOwner(event->button(), event->modifiers(),
-                                             m_impl->spaceHeld, m_impl->activeTool,
-                                             !pressHitId.empty());
+    DragOwner owner = resolveDragOwner(event->button(), event->modifiers(),
+                                       m_impl->spaceHeld, m_impl->activeTool,
+                                       !pressHitId.empty());
+
+    if (owner == DragOwner::MoveAnnotation && !m_impl->annotationsEditable()) {
+        // Selecting is not a mutation and keeps working: the press is treated
+        // as a pan, and the release block selects the annotation under a click.
+        // Only the move is refused, and the user is told why.
+        emit annotationEditBlocked(readOnlyEditMessage());
+        owner = DragOwner::Pan;
+    }
 
     if (owner == DragOwner::Pan) {
         m_impl->dragOwner = DragOwner::Pan;
@@ -3673,6 +3697,11 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
     }
 
     if (event->key() == Qt::Key_Delete && !m_impl->annotations->selectedId().empty()) {
+        if (!m_impl->annotationsEditable()) {
+            emit annotationEditBlocked(readOnlyEditMessage());
+            event->accept();
+            return;
+        }
         m_impl->annotations->remove(m_impl->annotations->selectedId());
         event->accept();
         update();
