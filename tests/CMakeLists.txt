@@ -16,6 +16,7 @@ add_executable(slideio-viewer-core-tests
     core/AnnotationTest.cpp
     core/Iso8601Test.cpp
     core/AnnotationSerializationTest.cpp
+    core/AutosavePolicyTest.cpp
 )
 
 target_link_libraries(slideio-viewer-core-tests
