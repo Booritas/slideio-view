@@ -43,6 +43,27 @@ fi
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 SLIDEIO_DIR="$REPO_ROOT/extern/slideio"
 
+# The oldest macOS the build runs on, read from conan/macos-deployment-target
+# (override via MACOSX_DEPLOYMENT_TARGET env var). Without it every binary is
+# stamped with the SDK of whichever machine built it, so a bundle built on a
+# macos-15 runner refuses to start on anything older.
+#
+# It has to reach two conan invocations that this script controls differently.
+# The viewer's own dependencies get it as os.version, which is part of their
+# package id, so binaries built for the SDK default are never mistaken for these.
+# SlideIO's install.py passes its own profiles from the submodule, so its
+# dependencies and its own objects get it through the environment instead: clang,
+# and CMake's CMAKE_OSX_DEPLOYMENT_TARGET default, both read it from there. That
+# route leaves their package ids unchanged -- which is why CI keys its caches on
+# the floor as well.
+CONAN_EXTRA_SETTINGS=()
+if [ "$OS_NAME" = "Mac" ]; then
+    : "${MACOSX_DEPLOYMENT_TARGET:=$(tr -d '[:space:]' < "$REPO_ROOT/conan/macos-deployment-target")}"
+    export MACOSX_DEPLOYMENT_TARGET
+    echo "macOS deployment target: $MACOSX_DEPLOYMENT_TARGET"
+    CONAN_EXTRA_SETTINGS=(-s:h "os.version=$MACOSX_DEPLOYMENT_TARGET" -s:b "os.version=$MACOSX_DEPLOYMENT_TARGET")
+fi
+
 # SlideIO ships as a git submodule (extern/slideio) and is built from source
 # into extern/slideio/build/install, whose release/ and debug/ subdirectories
 # are the layout FindSlideIO.cmake expects. Setting SLIDEIO_ROOT in the
@@ -97,6 +118,7 @@ fi
 
 conan install . --output-folder=build --build=missing \
     -s build_type="$BUILD_TYPE" -s compiler.cppstd=17 \
+    "${CONAN_EXTRA_SETTINGS[@]}" \
     -pr:b "$CONAN_PROFIlE" -pr:h "$CONAN_PROFIlE"
 
 cmake -S . -B "$BUILD_DIR" -G "$GENERATOR" \
