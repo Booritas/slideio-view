@@ -4,6 +4,7 @@
 
 #include <QObject>
 
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -300,4 +301,159 @@ TEST_CASE("clear emits selectionChanged when a selection existed", "[app][Annota
 
     REQUIRE(seen.size() == 1);
     REQUIRE(seen.front().empty());
+}
+
+TEST_CASE("insert keeps the id the annotation already carries", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    model.insert(core::Annotation("stored-id-42", core::AnnotationType::Rectangle,
+                                  core::RectangleGeometry{core::PointF{0.0, 0.0},
+                                                          core::PointF{10.0, 10.0}}));
+
+    REQUIRE(model.annotations().size() == 1);
+    REQUIRE(model.annotations().front().id() == "stored-id-42");
+    REQUIRE(model.find("stored-id-42") != nullptr);
+}
+
+TEST_CASE("insert preserves stored metadata rather than restamping it",
+          "[app][AnnotationModel]")
+{
+    core::AnnotationMetadata metadata;
+    metadata.author = "a.colleague";
+    metadata.createdAt = std::chrono::system_clock::from_time_t(1000000);
+    metadata.modifiedAt = std::chrono::system_clock::from_time_t(2000000);
+
+    app::AnnotationModel model;
+    model.setDefaultAuthor("me");
+    model.insert(core::Annotation("a1", core::AnnotationType::Rectangle,
+                                  core::RectangleGeometry{core::PointF{0.0, 0.0},
+                                                          core::PointF{1.0, 1.0}},
+                                  core::AnnotationProperties{}, metadata));
+
+    const core::Annotation* loaded = model.find("a1");
+    REQUIRE(loaded != nullptr);
+    // An annotation made by a colleague keeps their name when opened here.
+    REQUIRE(loaded->metadata().author == "a.colleague");
+    REQUIRE(loaded->metadata().createdAt == metadata.createdAt);
+}
+
+TEST_CASE("insert emits annotationAdded", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    int added = 0;
+    QObject::connect(&model, &app::AnnotationModel::annotationAdded,
+                     &model, [&added](const std::string&) { ++added; });
+
+    model.insert(core::Annotation("a1", core::AnnotationType::Rectangle,
+                                  core::RectangleGeometry{core::PointF{0.0, 0.0},
+                                                          core::PointF{1.0, 1.0}}));
+    REQUIRE(added == 1);
+}
+
+TEST_CASE("replaceAll swaps the contents and emits one modelReset",
+          "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    model.add(core::AnnotationType::Rectangle,
+              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+
+    int resets = 0;
+    int adds = 0;
+    QObject::connect(&model, &app::AnnotationModel::modelReset, &model, [&resets]() { ++resets; });
+    QObject::connect(&model, &app::AnnotationModel::annotationAdded,
+                     &model, [&adds](const std::string&) { ++adds; });
+
+    std::vector<core::Annotation> loaded;
+    loaded.emplace_back("x1", core::AnnotationType::Rectangle,
+                        core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{2.0, 2.0}});
+    loaded.emplace_back("x2", core::AnnotationType::Rectangle,
+                        core::RectangleGeometry{core::PointF{3.0, 3.0}, core::PointF{4.0, 4.0}});
+    model.replaceAll(std::move(loaded));
+
+    REQUIRE(model.annotations().size() == 2);
+    REQUIRE(model.annotations().front().id() == "x1");
+    // One signal for the whole load, not one per annotation.
+    REQUIRE(resets == 1);
+    REQUIRE(adds == 0);
+}
+
+TEST_CASE("replaceAll clears the selection", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    const std::string id = model.add(core::AnnotationType::Rectangle,
+                                     core::RectangleGeometry{core::PointF{0.0, 0.0},
+                                                             core::PointF{1.0, 1.0}});
+    model.setSelected(id);
+    REQUIRE_FALSE(model.selectedId().empty());
+
+    model.replaceAll({});
+    REQUIRE(model.selectedId().empty());
+    REQUIRE(model.annotations().empty());
+}
+
+TEST_CASE("replaceAll with an empty vector still emits modelReset",
+          "[app][AnnotationModel]")
+{
+    // Loading a slide with no annotation file must still tell listeners to
+    // repaint, or the previous slide's rectangles stay on screen.
+    app::AnnotationModel model;
+    int resets = 0;
+    QObject::connect(&model, &app::AnnotationModel::modelReset, &model, [&resets]() { ++resets; });
+
+    model.replaceAll({});
+    REQUIRE(resets == 1);
+}
+
+TEST_CASE("add stamps the configured default author", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    model.setDefaultAuthor("s.melnikov");
+    const std::string id = model.add(core::AnnotationType::Rectangle,
+                                     core::RectangleGeometry{core::PointF{0.0, 0.0},
+                                                             core::PointF{1.0, 1.0}});
+
+    const core::Annotation* created = model.find(id);
+    REQUIRE(created != nullptr);
+    REQUIRE(created->metadata().author == "s.melnikov");
+    // The timestamps are still stamped at creation.
+    REQUIRE(created->metadata().createdAt.time_since_epoch().count() != 0);
+}
+
+TEST_CASE("add with no configured author leaves it empty", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    const std::string id = model.add(core::AnnotationType::Rectangle,
+                                     core::RectangleGeometry{core::PointF{0.0, 0.0},
+                                                             core::PointF{1.0, 1.0}});
+    REQUIRE(model.find(id)->metadata().author.empty());
+}
+
+TEST_CASE("insert rejects an annotation with an empty id", "[app][AnnotationModel]")
+{
+    // The parser refuses an empty id, so storing one would write a file that cannot be read back.
+    app::AnnotationModel model;
+    int added = 0;
+    QObject::connect(&model, &app::AnnotationModel::annotationAdded,
+                     &model, [&added](const std::string&) { ++added; });
+
+    model.insert(core::Annotation("", core::AnnotationType::Rectangle,
+                                  core::RectangleGeometry{core::PointF{0.0, 0.0},
+                                                          core::PointF{1.0, 1.0}}));
+    REQUIRE(model.annotations().empty());
+    REQUIRE(added == 0);
+}
+
+TEST_CASE("replaceAll emits modelReset before selectionChanged", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    const std::string id = addRect(model, 0.0, 0.0, 1.0, 1.0);
+    model.setSelected(id);
+
+    std::vector<std::string> order;
+    QObject::connect(&model, &app::AnnotationModel::modelReset, &model, [&order]() { order.push_back("reset"); });
+    QObject::connect(&model, &app::AnnotationModel::selectionChanged,
+                     &model, [&order](const std::string&) { order.push_back("selection"); });
+
+    model.replaceAll({});
+    REQUIRE(order == std::vector<std::string>{"reset", "selection"});
 }
