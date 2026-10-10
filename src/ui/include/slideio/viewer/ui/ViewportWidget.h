@@ -132,8 +132,10 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
+    void focusOutEvent(QFocusEvent* event) override;
 
 private:
+    void updateCursor();
     void installSceneOpenResult(uint64_t opId, SceneOpenResult result);
 
     // Drops the GPU textures of every tile not in `keep`'s colour mode so the

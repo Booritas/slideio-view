@@ -16,6 +16,7 @@
 #include "slideio/viewer/infra/SlideIOAdapter.h"
 #include "slideio/viewer/infra/TileLoadScheduler.h"
 
+#include <QFocusEvent>
 #include <QImage>
 #include <QMetaObject>
 #include <QMouseEvent>
@@ -1368,12 +1369,13 @@ struct ViewportWidget::Impl
     bool snapshotActive = false; // actively showing snapshot during zoom transition
 
     // Mouse interaction
-    bool isPanning = false;
     AnnotationTool activeTool = AnnotationTool::Pan;
     bool spaceHeld = false;
     // Set on press and held until release: a tool change mid-drag must not
     // re-route a drag that has already begun.
     DragOwner dragOwner = DragOwner::None;
+    // The button that began the drag; only its release may end the drag.
+    Qt::MouseButton dragButton = Qt::NoButton;
     QPoint lastMousePos;
 
     // GL state
@@ -2580,13 +2582,41 @@ void ViewportWidget::setActiveTool(AnnotationTool tool)
         return;
     }
     m_impl->activeTool = tool;
-    setCursor(tool == AnnotationTool::Pan ? Qt::ArrowCursor : Qt::CrossCursor);
+    updateCursor();
     emit activeToolChanged(tool);
 }
 
 AnnotationTool ViewportWidget::activeTool() const
 {
     return m_impl->activeTool;
+}
+
+void ViewportWidget::updateCursor()
+{
+    // One place decides the cursor, in precedence order. Five hand-copied
+    // ternaries had already drifted: a tool change mid-pan showed a crosshair
+    // while the pan ran, a release while Space was held showed the arrow, and a
+    // Space press mid-drag overwrote the closed hand.
+    switch (m_impl->dragOwner) {
+    case DragOwner::Pan:
+        setCursor(Qt::ClosedHandCursor);
+        return;
+    case DragOwner::MoveAnnotation:
+        setCursor(Qt::SizeAllCursor);
+        return;
+    case DragOwner::Tool:
+        setCursor(Qt::CrossCursor);
+        return;
+    case DragOwner::None:
+        break;
+    }
+
+    if (m_impl->spaceHeld) {
+        setCursor(Qt::OpenHandCursor);
+        return;
+    }
+
+    setCursor(m_impl->activeTool == AnnotationTool::Pan ? Qt::ArrowCursor : Qt::CrossCursor);
 }
 
 void ViewportWidget::setColorMode(core::ColorMode mode)
@@ -3208,9 +3238,9 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
 
     if (owner == DragOwner::Pan) {
         m_impl->dragOwner = DragOwner::Pan;
-        m_impl->isPanning = true;
+        m_impl->dragButton = event->button();
         m_impl->lastMousePos = event->pos();
-        setCursor(Qt::ClosedHandCursor);
+        updateCursor();
         event->accept();
         return;
     }
@@ -3219,6 +3249,8 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
         // Task 7 begins the rectangle here. Claim the drag so it does not fall
         // through to panning.
         m_impl->dragOwner = DragOwner::Tool;
+        m_impl->dragButton = event->button();
+        updateCursor();
         event->accept();
         return;
     }
@@ -3228,23 +3260,24 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
 
 void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
 {
-    if (m_impl->dragOwner == DragOwner::None) {
+    // Only the button that began the drag may end it. Before tool modes a pan
+    // ended on a left release, so a stray middle or right click mid-drag was
+    // harmless; without this check, releasing a second button kills a pan whose
+    // own button is still held.
+    if (m_impl->dragOwner == DragOwner::None || event->button() != m_impl->dragButton) {
         QOpenGLWidget::mouseReleaseEvent(event);
         return;
     }
 
-    if (m_impl->dragOwner == DragOwner::Pan) {
-        m_impl->isPanning = false;
-    }
-
     m_impl->dragOwner = DragOwner::None;
-    setCursor(m_impl->activeTool == AnnotationTool::Pan ? Qt::ArrowCursor : Qt::CrossCursor);
+    m_impl->dragButton = Qt::NoButton;
+    updateCursor();
     event->accept();
 }
 
 void ViewportWidget::mouseMoveEvent(QMouseEvent* event)
 {
-    if (m_impl->dragOwner == DragOwner::Pan && m_impl->isPanning && m_impl->controller) {
+    if (m_impl->dragOwner == DragOwner::Pan && m_impl->controller) {
         QPoint delta = event->pos() - m_impl->lastMousePos;
         m_impl->controller->pan(static_cast<double>(delta.x()),
                                 static_cast<double>(delta.y()));
@@ -3307,7 +3340,7 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
     // Auto-repeat would otherwise re-enter pan mode on every repeat.
     if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
         m_impl->spaceHeld = true;
-        setCursor(Qt::OpenHandCursor);
+        updateCursor();
         event->accept();
         return;
     }
@@ -3357,14 +3390,21 @@ void ViewportWidget::keyReleaseEvent(QKeyEvent* event)
 {
     if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
         m_impl->spaceHeld = false;
-        if (m_impl->dragOwner != DragOwner::Pan) {
-            setCursor(m_impl->activeTool == AnnotationTool::Pan ? Qt::ArrowCursor
-                                                                : Qt::CrossCursor);
-        }
+        updateCursor();
         event->accept();
         return;
     }
     QOpenGLWidget::keyReleaseEvent(event);
+}
+
+void ViewportWidget::focusOutEvent(QFocusEvent* event)
+{
+    // keyReleaseEvent never arrives if focus leaves while Space is down, which
+    // would leave the widget believing Space is held forever -- left-drag would
+    // keep panning even under a drawing tool.
+    m_impl->spaceHeld = false;
+    updateCursor();
+    QOpenGLWidget::focusOutEvent(event);
 }
 
 } // namespace slideio::viewer::ui
