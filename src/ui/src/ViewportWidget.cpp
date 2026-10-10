@@ -1369,6 +1369,11 @@ struct ViewportWidget::Impl
 
     // Mouse interaction
     bool isPanning = false;
+    AnnotationTool activeTool = AnnotationTool::Pan;
+    bool spaceHeld = false;
+    // Set on press and held until release: a tool change mid-drag must not
+    // re-route a drag that has already begun.
+    DragOwner dragOwner = DragOwner::None;
     QPoint lastMousePos;
 
     // GL state
@@ -2569,6 +2574,21 @@ void ViewportWidget::reopenCurrentScene()
     }
 }
 
+void ViewportWidget::setActiveTool(AnnotationTool tool)
+{
+    if (m_impl->activeTool == tool) {
+        return;
+    }
+    m_impl->activeTool = tool;
+    setCursor(tool == AnnotationTool::Pan ? Qt::ArrowCursor : Qt::CrossCursor);
+    emit activeToolChanged(tool);
+}
+
+AnnotationTool ViewportWidget::activeTool() const
+{
+    return m_impl->activeTool;
+}
+
 void ViewportWidget::setColorMode(core::ColorMode mode)
 {
     if (!m_impl->slideSource || !m_impl->controller) {
@@ -3175,30 +3195,56 @@ void ViewportWidget::paintGL()
 
 void ViewportWidget::mousePressEvent(QMouseEvent* event)
 {
-    if (event->button() == Qt::LeftButton) {
+    // A drag already in flight keeps its owner: changing tools mid-drag must
+    // not strand half-built state.
+    if (m_impl->dragOwner != DragOwner::None) {
+        QOpenGLWidget::mousePressEvent(event);
+        return;
+    }
+
+    const DragOwner owner = resolveDragOwner(event->button(), event->modifiers(),
+                                             m_impl->spaceHeld, m_impl->activeTool,
+                                             false);
+
+    if (owner == DragOwner::Pan) {
+        m_impl->dragOwner = DragOwner::Pan;
         m_impl->isPanning = true;
         m_impl->lastMousePos = event->pos();
         setCursor(Qt::ClosedHandCursor);
         event->accept();
-    } else {
-        QOpenGLWidget::mousePressEvent(event);
+        return;
     }
+
+    if (owner == DragOwner::Tool) {
+        // Task 7 begins the rectangle here. Claim the drag so it does not fall
+        // through to panning.
+        m_impl->dragOwner = DragOwner::Tool;
+        event->accept();
+        return;
+    }
+
+    QOpenGLWidget::mousePressEvent(event);
 }
 
 void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
 {
-    if (event->button() == Qt::LeftButton && m_impl->isPanning) {
-        m_impl->isPanning = false;
-        setCursor(Qt::ArrowCursor);
-        event->accept();
-    } else {
+    if (m_impl->dragOwner == DragOwner::None) {
         QOpenGLWidget::mouseReleaseEvent(event);
+        return;
     }
+
+    if (m_impl->dragOwner == DragOwner::Pan) {
+        m_impl->isPanning = false;
+    }
+
+    m_impl->dragOwner = DragOwner::None;
+    setCursor(m_impl->activeTool == AnnotationTool::Pan ? Qt::ArrowCursor : Qt::CrossCursor);
+    event->accept();
 }
 
 void ViewportWidget::mouseMoveEvent(QMouseEvent* event)
 {
-    if (m_impl->isPanning && m_impl->controller) {
+    if (m_impl->dragOwner == DragOwner::Pan && m_impl->isPanning && m_impl->controller) {
         QPoint delta = event->pos() - m_impl->lastMousePos;
         m_impl->controller->pan(static_cast<double>(delta.x()),
                                 static_cast<double>(delta.y()));
@@ -3258,6 +3304,14 @@ void ViewportWidget::mouseDoubleClickEvent(QMouseEvent* event)
 
 void ViewportWidget::keyPressEvent(QKeyEvent* event)
 {
+    // Auto-repeat would otherwise re-enter pan mode on every repeat.
+    if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
+        m_impl->spaceHeld = true;
+        setCursor(Qt::OpenHandCursor);
+        event->accept();
+        return;
+    }
+
     if (!m_impl->controller) {
         QOpenGLWidget::keyPressEvent(event);
         return;
@@ -3297,6 +3351,20 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
     } else {
         QOpenGLWidget::keyPressEvent(event);
     }
+}
+
+void ViewportWidget::keyReleaseEvent(QKeyEvent* event)
+{
+    if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
+        m_impl->spaceHeld = false;
+        if (m_impl->dragOwner != DragOwner::Pan) {
+            setCursor(m_impl->activeTool == AnnotationTool::Pan ? Qt::ArrowCursor
+                                                                : Qt::CrossCursor);
+        }
+        event->accept();
+        return;
+    }
+    QOpenGLWidget::keyReleaseEvent(event);
 }
 
 } // namespace slideio::viewer::ui

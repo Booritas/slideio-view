@@ -23,6 +23,7 @@
 #include <spdlog/spdlog.h>
 
 #include <QAction>
+#include <QActionGroup>
 #include <QDesktopServices>
 #include <QDir>
 #include <QDragEnterEvent>
@@ -118,6 +119,8 @@ struct MainWindow::Impl
     QAction* setSlideProfileAction = nullptr;
     QAction* clearSlideProfileAction = nullptr;
     QAction* manageSlideProfilesAction = nullptr;
+    QAction* panToolAction = nullptr;
+    QAction* rectangleToolAction = nullptr;
     QAction* aboutAction = nullptr;
 
     // Why the configured default ICC profile cannot be used, if it cannot.
@@ -220,6 +223,22 @@ struct MainWindow::Impl
         manageSlideProfilesAction->setStatusTip(
             "See and remove stored per-slide color profile overrides");
 
+        panToolAction = new QAction("&Navigate", owner);
+        panToolAction->setCheckable(true);
+        panToolAction->setChecked(true);
+        panToolAction->setShortcut(QKeySequence("V"));
+        panToolAction->setStatusTip("Pan and select with the left mouse button");
+
+        rectangleToolAction = new QAction("&Rectangle", owner);
+        rectangleToolAction->setCheckable(true);
+        rectangleToolAction->setShortcut(QKeySequence("R"));
+        rectangleToolAction->setStatusTip("Draw a rectangular annotation by dragging");
+
+        auto* toolGroup = new QActionGroup(owner);
+        toolGroup->setExclusive(true);
+        toolGroup->addAction(panToolAction);
+        toolGroup->addAction(rectangleToolAction);
+
         aboutAction = new QAction("&About SlideIO Viewer...", owner);
         // On macOS this moves the entry into the application menu, where the
         // platform expects it, instead of leaving it under Help.
@@ -272,6 +291,10 @@ struct MainWindow::Impl
         viewMenu->addAction(setSlideProfileAction);
         viewMenu->addAction(clearSlideProfileAction);
         viewMenu->addAction(manageSlideProfilesAction);
+
+        QMenu* toolsMenu = owner->menuBar()->addMenu("&Tools");
+        toolsMenu->addAction(panToolAction);
+        toolsMenu->addAction(rectangleToolAction);
 
         QMenu* helpMenu = owner->menuBar()->addMenu("&Help");
         helpMenu->addAction(aboutAction);
@@ -362,6 +385,13 @@ struct MainWindow::Impl
                          owner, &MainWindow::onSetSlideColorProfile);
         QObject::connect(clearSlideProfileAction, &QAction::triggered,
                          owner, &MainWindow::onClearSlideColorProfile);
+
+        QObject::connect(panToolAction, &QAction::triggered, owner, [this]() {
+            viewportWidget->setActiveTool(AnnotationTool::Pan);
+        });
+        QObject::connect(rectangleToolAction, &QAction::triggered, owner, [this]() {
+            viewportWidget->setActiveTool(AnnotationTool::Rectangle);
+        });
 
         QObject::connect(manageSlideProfilesAction, &QAction::triggered, owner, [this]() {
             const std::string openSlideId = owner->currentSlideId();
