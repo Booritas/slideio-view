@@ -626,6 +626,46 @@ application, including the ICC round trip that item 4 is about.
 
 ---
 
+## 9A. Slide provenance in cleartext — accepted risk
+
+**Decision:** `SlideProvenance` stores the slide's `fileName` and full `path` as
+cleartext in the annotation file. Accepted 2026-10-10 by s.melnikov.
+
+**Rationale given:** the workstations running this software are in a physically
+secure environment.
+
+**What the field is.** A post-implementation review raised this as a PHI/PII
+concern. Whole-slide-image filenames and share paths in pathology workflows
+routinely carry accession numbers, and the annotation file is written as
+cleartext JSON into `<Documents>/SlideIO Viewer`, a deliberately browsable
+location (§4). The applicable frameworks are the HIPAA Security Rule
+(§164.312(a)(1) access control, §164.312(e) transmission security), GDPR data
+minimisation, and EU MDR / EU AI Act record-keeping for the device.
+
+**What the rationale covers and what it does not.** Physical security of the
+workstation addresses access control at rest. It does not address the two
+routes by which these identifiers leave that environment, both of which are
+intended behaviour rather than failure modes:
+
+- The workspace is in `Documents` **specifically so that annotation files can
+  be backed up and sent to colleagues** — that is the reason application-data
+  storage was rejected in §2. A copied file carries the path with it, as does a
+  synced or roamed Documents folder.
+- NFR-SEC-03's "export for sharing" exists precisely because these files are
+  expected to travel.
+
+GDPR minimisation is also a question about whether a field is stored at all,
+which location does not answer.
+
+**Worth knowing if this is revisited.** `path` has **no consumer**: identity
+matching uses `slideId` (§3.2), and the mismatch dialog displays `fileName`
+(§7). Removing `path` alone would cost nothing functionally, though it would
+not fully resolve the concern, since `fileName` carries identifiers too and is
+used. If the decision changes after release it becomes a schema migration; before
+release it is a one-line edit to `annotationToJson`.
+
+---
+
 ## 10. Deliberate absences
 
 Named so that their absence reads as a decision rather than an oversight.
