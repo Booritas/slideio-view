@@ -234,6 +234,17 @@ struct MainWindow::Impl
         rectangleToolAction->setShortcut(QKeySequence("R"));
         rectangleToolAction->setStatusTip("Draw a rectangular annotation by dragging");
 
+        // These are the only bare-letter shortcuts in the application; every
+        // other one here is modifier-qualified. Qt matches shortcuts before the
+        // key reaches the focus widget, so at the default window scope "v" and
+        // "r" would be stolen from every text field in the window -- typing
+        // "regression" in the Metadata filter would switch the viewport to the
+        // Rectangle tool. Scoping them to the viewport (which they are added to
+        // in connectSignals) keeps them working where they mean something and
+        // out of the way everywhere else.
+        panToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        rectangleToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+
         auto* toolGroup = new QActionGroup(owner);
         toolGroup->setExclusive(true);
         toolGroup->addAction(panToolAction);
@@ -336,6 +347,10 @@ struct MainWindow::Impl
         QObject::connect(closeAction, &QAction::triggered, owner, [this]() {
             viewportWidget->closeSlide();
             closeAction->setEnabled(false);
+            // Reset the tool here rather than on the slideClosed signal, which
+            // also fires at the start of every open. Putting the viewer away is
+            // the one case where returning to Navigate is what the user meant.
+            viewportWidget->setActiveTool(AnnotationTool::Pan);
             sceneThumbnailPanel->clear();
             associatedImagesPanel->clear();
             // Dock panel visibility intentionally preserved — user-controlled.
@@ -387,6 +402,12 @@ struct MainWindow::Impl
                          owner, &MainWindow::onSetSlideColorProfile);
         QObject::connect(clearSlideProfileAction, &QAction::triggered,
                          owner, &MainWindow::onClearSlideColorProfile);
+
+        // Associating the actions with the viewport is what gives their
+        // WidgetWithChildrenShortcut context something to match against; the
+        // menu still shows "V" and "R" either way.
+        viewportWidget->addAction(panToolAction);
+        viewportWidget->addAction(rectangleToolAction);
 
         QObject::connect(panToolAction, &QAction::triggered, owner, [this]() {
             viewportWidget->setActiveTool(AnnotationTool::Pan);
@@ -453,6 +474,10 @@ struct MainWindow::Impl
                 lastOpenedFilePath = filePath;
                 closeAction->setEnabled(true);
                 rectangleToolAction->setEnabled(true);
+                // The V and R shortcuts are scoped to the viewport, so give it
+                // focus once a slide is up; otherwise they would do nothing
+                // until the user happened to click the image first.
+                viewportWidget->setFocus(Qt::OtherFocusReason);
                 auto* ctrl = viewportWidget->controller();
                 if (ctrl) {
                     const auto& vp = ctrl->viewport();
@@ -632,8 +657,11 @@ struct MainWindow::Impl
             });
 
         QObject::connect(viewportWidget, &ViewportWidget::slideClosed, owner, [this]() {
-            // A drawing tool must never be active with no slide open.
-            viewportWidget->setActiveTool(AnnotationTool::Pan);
+            // Disabling the action is what satisfies "no drawing tool without a
+            // slide" (spec §6); the active tool is deliberately left alone.
+            // openSlide() calls closeSlide() first, so resetting it here would
+            // drop the user back to Navigate every time they opened the next
+            // slide -- re-picking the tool on every slide of a series.
             rectangleToolAction->setEnabled(false);
             closeAction->setEnabled(false);
             minimapWidget->clearThumbnail();

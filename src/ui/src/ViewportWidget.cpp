@@ -1393,6 +1393,9 @@ struct ViewportWidget::Impl
     // Moving a selected annotation.
     core::PointF moveLastSlide;
     std::string movingId;
+    // The geometry the annotation had when it was picked up, so Escape can put
+    // it back. There is no undo stack in this slice, so nothing else could.
+    core::AnnotationGeometry moveOriginalGeometry;
 
     // GL state
     bool glInitialized = false;
@@ -2654,8 +2657,15 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
     if (!selectedId.empty()) {
         if (const core::Annotation* selected = m_impl->annotations->find(selectedId)) {
             const QRectF box = screenRect(selected->boundingBox());
-            painter.setPen(QPen(QColor(0xFF, 0xFF, 0xFF), 1.0, Qt::DashLine));
             painter.setBrush(Qt::NoBrush);
+            // Two-tone, and not white alone: brightfield H&E glass and tissue are
+            // near-white, and paintGL clears the slide rect to white, so a 1 px
+            // white dash was invisible on the commonest slide type. The user
+            // presses Delete on the strength of this outline, so it has to read
+            // against both a pale slide and a dark background.
+            painter.setPen(QPen(QColor(0x00, 0x00, 0x00), 3.0, Qt::SolidLine));
+            painter.drawRect(box);
+            painter.setPen(QPen(QColor(0xFF, 0xFF, 0xFF), 1.0, Qt::DashLine));
             painter.drawRect(box);
         }
     }
@@ -2696,6 +2706,12 @@ void ViewportWidget::resetAnnotationState()
     m_impl->dragOwner = DragOwner::None;
     m_impl->dragButton = Qt::NoButton;
     m_impl->movingId.clear();
+
+    // The drag that was in flight no longer owns the cursor. Without this, a
+    // slide opened mid-drag leaves the closed hand (or the move cursor) on
+    // screen: the eventual real release takes the dragOwner == None early exit
+    // in mouseReleaseEvent and never refreshes it.
+    updateCursor();
 }
 
 void ViewportWidget::updateCursor()
@@ -3377,6 +3393,9 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
         m_impl->dragButton = event->button();
         m_impl->pressPos = event->pos();
         m_impl->movingId = pressHitId;
+        if (const core::Annotation* picked = m_impl->annotations->find(pressHitId)) {
+            m_impl->moveOriginalGeometry = picked->geometry();
+        }
         m_impl->annotations->setSelected(pressHitId);
         updateCursor();
         event->accept();
@@ -3426,16 +3445,23 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
             m_impl->drawCurrentSlide = core::PointF{slideX, slideY};
         }
 
-        const core::AnnotationGeometry geometry =
-            core::RectangleGeometry{m_impl->drawAnchorSlide, m_impl->drawCurrentSlide};
-        const core::RectF box = core::boundingBox(geometry);
+        const core::RectF rawBox = core::boundingBox(
+            core::RectangleGeometry{m_impl->drawAnchorSlide, m_impl->drawCurrentSlide});
 
         // A drag smaller than the click target is a misclick, not a shape. The
         // test is screen-space on purpose: at high zoom a couple of pixels of
         // jitter is many slide pixels. A rejected drag falls through to the
         // selection block below.
         const double scale = m_impl->controller ? m_impl->controller->viewport().scale() : 0.0;
-        if (dragExceedsMinimumSize(box, scale, kHitToleranceScreenPixels)) {
+        if (dragExceedsMinimumSize(rawBox, scale, kHitToleranceScreenPixels)) {
+            // A short sideways or upright drag has zero extent on one axis,
+            // because mouse deltas are integers. That axis is widened to one
+            // screen pixel rather than the gesture being discarded -- the user
+            // dragged deliberately and must get something back.
+            const core::RectF box = withMinimumExtent(rawBox, screenToleranceToSlide(1.0, scale));
+            const core::AnnotationGeometry geometry =
+                core::RectangleGeometry{core::PointF{box.x, box.y},
+                                        core::PointF{box.x + box.width, box.y + box.height}};
             const std::string id =
                 m_impl->annotations->add(core::AnnotationType::Rectangle, geometry);
             m_impl->annotations->setSelected(id);
@@ -3579,15 +3605,35 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
     }
 
     if (event->key() == Qt::Key_Escape) {
-        // Cancels a draw in progress, then falls back to leaving the tool.
+        bool cancelled = false;
+
         if (m_impl->drawing) {
             m_impl->drawing = false;
             m_impl->dragOwner = DragOwner::None;
             m_impl->dragButton = Qt::NoButton;
-            updateCursor();
-        } else {
+            cancelled = true;
+        } else if (m_impl->dragOwner == DragOwner::MoveAnnotation && !m_impl->movingId.empty()) {
+            // Put the annotation back where it was picked up. Without this the
+            // shape keeps following the cursor with no way to recover its
+            // original position -- there is no undo stack in this slice.
+            m_impl->annotations->setGeometry(m_impl->movingId, m_impl->moveOriginalGeometry);
+            m_impl->movingId.clear();
+            m_impl->dragOwner = DragOwner::None;
+            m_impl->dragButton = Qt::NoButton;
+            cancelled = true;
+        } else if (m_impl->activeTool != AnnotationTool::Pan) {
             setActiveTool(AnnotationTool::Pan);
+            cancelled = true;
         }
+
+        if (!cancelled) {
+            // Nothing to cancel. Escape belongs to whatever else wants it rather
+            // than being swallowed by a viewport with nothing in flight.
+            QOpenGLWidget::keyPressEvent(event);
+            return;
+        }
+
+        updateCursor();
         event->accept();
         update();
         return;
