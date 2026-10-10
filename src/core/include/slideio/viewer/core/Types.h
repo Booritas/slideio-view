@@ -345,7 +345,7 @@ struct PointF
 };
 
 /// 8-bit RGBA. Annotation colours come from the colorblind-safe palette in
-/// FR-ANN-15; the default below is that palette's orange.
+/// FR-ANN-15.
 struct Color
 {
     uint8_t r = 0;
