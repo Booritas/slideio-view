@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "slideio/viewer/core/AnnotationRepository.h"
 #include "slideio/viewer/core/AutosavePolicy.h"
 
 #include <chrono>
@@ -19,6 +20,13 @@ std::chrono::steady_clock::time_point base()
 }
 
 } // namespace
+
+// The suite runs against its own constants, so without this the production
+// values could change and no test would notice.
+static_assert(kAutosaveDebounce == std::chrono::milliseconds{2000},
+              "The autosave debounce is part of the documented behaviour.");
+static_assert(kAutosaveBackstop == std::chrono::milliseconds{30000},
+              "The autosave backstop is part of the documented behaviour.");
 
 TEST_CASE("a clean model is never saved", "[core][AutosavePolicy]")
 {
@@ -57,6 +65,15 @@ TEST_CASE("continuous editing still saves at the backstop interval",
     REQUIRE(shouldAutosave(true, now - 100ms, t0, now, kDebounce, kBackstop));
 }
 
+TEST_CASE("the backstop does not fire early", "[core][AutosavePolicy]")
+{
+    const auto t0 = base();
+    // One millisecond short. Without this, a backstop of any shorter duration
+    // would pass the suite.
+    REQUIRE_FALSE(shouldAutosave(true, t0 + 29899ms, t0, t0 + 29999ms, kDebounce, kBackstop));
+    REQUIRE(shouldAutosave(true, t0 + 29900ms, t0, t0 + 30000ms, kDebounce, kBackstop));
+}
+
 TEST_CASE("the backstop is measured from the last save, not the last mutation",
           "[core][AutosavePolicy]")
 {
@@ -76,4 +93,19 @@ TEST_CASE("a clock that has not advanced never triggers a save", "[core][Autosav
 {
     const auto t0 = base();
     REQUIRE_FALSE(shouldAutosave(true, t0, t0, t0, kDebounce, kBackstop));
+}
+
+TEST_CASE("AnnotationKey equality includes both slide ID and scene index", "[core][AnnotationRepository]")
+{
+    const AnnotationKey key1{"id", 0};
+    const AnnotationKey key2{"id", 0};
+    const AnnotationKey key3{"id", 1};
+    const AnnotationKey key4{"other", 0};
+
+    REQUIRE(key1 == key2);
+    REQUIRE_FALSE(key1 != key2);
+    REQUIRE_FALSE(key1 == key3);
+    REQUIRE(key1 != key3);
+    REQUIRE_FALSE(key1 == key4);
+    REQUIRE(key1 != key4);
 }

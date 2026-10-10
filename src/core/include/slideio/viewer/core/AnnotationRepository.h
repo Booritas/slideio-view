@@ -20,6 +20,19 @@ struct AnnotationKey
     int sceneIndex = 0;
 };
 
+/// Equality is over both fields. The scene index is half the key: a file whose
+/// content names a different scene than the one it was opened for belongs to a
+/// different coordinate space.
+inline bool operator==(const AnnotationKey& lhs, const AnnotationKey& rhs)
+{
+    return lhs.slideId == rhs.slideId && lhs.sceneIndex == rhs.sceneIndex;
+}
+
+inline bool operator!=(const AnnotationKey& lhs, const AnnotationKey& rhs)
+{
+    return !(lhs == rhs);
+}
+
 enum class LoadStatus
 {
     Loaded,
@@ -68,12 +81,20 @@ class IAnnotationRepository
 public:
     virtual ~IAnnotationRepository() = default;
 
+    IAnnotationRepository(const IAnnotationRepository&) = delete;
+    IAnnotationRepository& operator=(const IAnnotationRepository&) = delete;
+    IAnnotationRepository(IAnnotationRepository&&) = delete;
+    IAnnotationRepository& operator=(IAnnotationRepository&&) = delete;
+
     virtual LoadResult load(const AnnotationKey& key) = 0;
     virtual SaveResult save(const AnnotationDocument& document) = 0;
 
     /// Where `key` lives, whether or not anything is there. Exists so an error
     /// message can name a real path without the caller rebuilding the naming rule.
     [[nodiscard]] virtual std::string pathFor(const AnnotationKey& key) const = 0;
+
+protected:
+    IAnnotationRepository() = default;
 };
 
 } // namespace slideio::viewer::core
