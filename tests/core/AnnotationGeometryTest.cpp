@@ -23,9 +23,9 @@ TEST_CASE("boundingBox returns the rectangle itself", "[core][AnnotationGeometry
     REQUIRE(box.height == 50.0);
 }
 
-// Review Focus 2: a drag that runs right-to-left and bottom-to-top must still
-// produce a positive-extent box, or the shape fails its own hit test and can
-// never be selected again.
+// A drag that runs right-to-left and bottom-to-top must still produce a
+// positive-extent box, or the shape fails its own hit test and can never be
+// selected again.
 TEST_CASE("boundingBox normalises an inverted rectangle", "[core][AnnotationGeometry]")
 {
     const RectF box = boundingBox(rect(110.0, 70.0, 10.0, 20.0));
@@ -55,6 +55,11 @@ TEST_CASE("hitTest succeeds on the outline with zero tolerance", "[core][Annotat
 TEST_CASE("hitTest fails outside the shape", "[core][AnnotationGeometry]")
 {
     REQUIRE_FALSE(hitTest(rect(10.0, 20.0, 110.0, 70.0), PointF{5.0, 45.0}, 0.0));
+    // Each of the four edge comparisons must be exercised as failing, or a
+    // sign typo in any one of them passes unnoticed.
+    REQUIRE_FALSE(hitTest(rect(10.0, 20.0, 110.0, 70.0), PointF{115.0, 45.0}, 0.0));
+    REQUIRE_FALSE(hitTest(rect(10.0, 20.0, 110.0, 70.0), PointF{50.0, 15.0}, 0.0));
+    REQUIRE_FALSE(hitTest(rect(10.0, 20.0, 110.0, 70.0), PointF{50.0, 75.0}, 0.0));
 }
 
 TEST_CASE("hitTest succeeds just outside when tolerance covers the gap",
