@@ -9,6 +9,7 @@ configure_file(
 add_library(slideio-viewer-ui STATIC
     src/AboutDialog.cpp
     src/AboutInfo.cpp
+    src/AnnotationInteraction.cpp
     src/AppPaths.cpp
     src/AssociatedImageWindow.cpp
     src/ColorProfilePolicy.cpp
