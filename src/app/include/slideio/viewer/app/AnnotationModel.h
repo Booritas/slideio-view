@@ -30,6 +30,25 @@ public:
     /// Stores a new annotation under a freshly generated id, which is returned.
     std::string add(core::AnnotationType type, core::AnnotationGeometry geometry);
 
+    /// Stores `annotation` under the id it already carries, with its metadata
+    /// exactly as given. This is the loading path: `add()` mints a fresh id and
+    /// stamps the current time, which would churn every id on every save/load
+    /// round trip. Preconditions: the id is non-empty and not already in the
+    /// model. An annotation violating either is dropped silently (nothing
+    /// stored, nothing emitted), so the model never holds a state the
+    /// serializer would write and the parser would refuse.
+    void insert(core::Annotation annotation);
+
+    /// Replaces every annotation and clears the selection, emitting one
+    /// modelReset() rather than one annotationAdded() per entry.
+    /// Entries with an empty id, or an id already seen earlier in the vector,
+    /// are dropped silently (the first occurrence wins), as in insert().
+    void replaceAll(std::vector<core::Annotation> annotations);
+
+    /// Stamped into the metadata of annotations created through add().
+    /// Self-asserted and unverified: it identifies, it does not authenticate.
+    void setDefaultAuthor(std::string author);
+
     /// False when `id` is unknown. Clears the selection if it named `id`.
     bool remove(const std::string& id);
 
@@ -62,10 +81,14 @@ signals:
     void annotationChanged(const std::string& id);
     void selectionChanged(const std::string& id);
     void cleared();
+    /// The whole contents changed at once. Listeners must rebuild rather than
+    /// track individual ids.
+    void modelReset();
 
 private:
     std::vector<core::Annotation> m_annotations;
     std::string m_selectedId;
+    std::string m_defaultAuthor;
 };
 
 } // namespace slideio::viewer::app

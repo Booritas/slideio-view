@@ -3,6 +3,7 @@
 #include "slideio/viewer/ui/ViewportController.h"
 
 #include "slideio/viewer/app/AnnotationModel.h"
+#include "slideio/viewer/app/AnnotationPersistenceService.h"
 #include "slideio/viewer/core/Annotation.h"
 #include "slideio/viewer/core/AnnotationGeometry.h"
 #include "slideio/viewer/core/CoordinateSystem.h"
@@ -19,6 +20,8 @@
 #include "slideio/viewer/infra/SlideIOAdapter.h"
 #include "slideio/viewer/infra/TileLoadScheduler.h"
 
+#include <QCoreApplication>
+#include <QFileInfo>
 #include <QFocusEvent>
 #include <QImage>
 #include <QMetaObject>
@@ -195,6 +198,12 @@ constexpr double kZoomInFactor = 1.25;
 constexpr double kZoomOutFactor = 1.0 / 1.25;
 constexpr double kPanPixels = 20.0;
 constexpr double kWheelZoomFactor = 1.1;
+
+QString readOnlyEditMessage()
+{
+    return QCoreApplication::translate("ViewportWidget",
+                                       "These annotations are open read-only and cannot be changed.");
+}
 
 // --- Data type support helpers ---
 
@@ -1356,6 +1365,18 @@ struct ViewportWidget::Impl
 
     // What is currently displayed, so reopenCurrentScene can rebuild it.
     int currentSceneIndex = 0;
+
+    // Non-owning; null until MainWindow injects it.
+    app::AnnotationPersistenceService* persistence = nullptr;
+
+    /// False only when a persistence service is attached and has gone inactive
+    /// -- a load failure, or a mismatch the user resolved as read-only. With no
+    /// service attached at all, annotations are in-memory and freely editable,
+    /// which is the behaviour that predates persistence.
+    [[nodiscard]] bool annotationsEditable() const
+    {
+        return persistence == nullptr || persistence->isActive();
+    }
     std::string currentAuxImageName; // empty unless an aux image is shown
 
     // Async open: every slide-open call increments openOpId. Background workers
@@ -2247,6 +2268,14 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
 
 void ViewportWidget::closeSlide()
 {
+    // Before everything, and specifically before resetAnnotationState() below:
+    // openScene() calls closeSlide() internally, so this is also the flush that
+    // runs on a slide switch and on reopenCurrentScene() -- which is what keeps
+    // an ICC profile change from destroying the slide's annotations.
+    if (m_impl->persistence != nullptr) {
+        m_impl->persistence->endSlide();
+    }
+
     // Bump opId so any in-flight async open result will be discarded when it
     // arrives back on the UI thread, and tell the overlay to come down.
     ++m_impl->openOpId;
@@ -2278,6 +2307,12 @@ void ViewportWidget::closeSlide()
     m_impl->colorProfileProblem.clear();
     m_impl->currentSlideId.clear();
     emit slideClosed();
+
+    // The availability signal reports on what is displayed, so it has to say
+    // "nothing" here too. MainWindow's slideClosed handler already disables the
+    // tool, but a consumer should not have to listen to two signals to learn
+    // whether it can annotate.
+    emit annotationsAvailableChanged(false, tr("No slide is open."));
     update();
 }
 
@@ -2437,6 +2472,54 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
 
     m_impl->slideOpen = true;
 
+    // Reported after slideOpened below: its handlers enable the annotation tool
+    // unconditionally, and the last emission has to be the one that wins.
+    bool reportAvailability = false;
+    bool annotationsAvailable = false;
+    QString annotationsReason;
+
+    if (m_impl->persistence != nullptr) {
+        reportAvailability = true;
+        // Associated images compute the file's slide id with sceneIndex 0, so a
+        // rectangle drawn on a label would be written into scene 0's file and
+        // later painted over the tissue. An empty id means the slide could not
+        // be identified, and computeSlideId yields the same value for every
+        // such file.
+        const bool auxiliary = result.isAuxImage;
+        const bool identified = !m_impl->currentSlideId.empty();
+
+        if (auxiliary || !identified) {
+            m_impl->persistence->endSlide();
+            annotationsReason = auxiliary
+                ? tr("Annotations are not available on associated images.")
+                : tr("This slide could not be identified, so annotations cannot be saved.");
+        } else {
+            core::SlideProvenance provenance;
+            provenance.path = m_impl->currentFilePath;
+            provenance.fileName = QFileInfo(QString::fromStdString(m_impl->currentFilePath))
+                                      .fileName().toStdString();
+            provenance.width = m_impl->slideInfo.width;
+            provenance.height = m_impl->slideInfo.height;
+
+            // Reads the file on the UI thread, unlike ICC resolution in openScene; a slow
+            // or dead share will stall the open until the filesystem times out. The
+            // autosave flush() has the same exposure every two seconds on a dead
+            // network share.
+            m_impl->persistence->beginSlide({m_impl->currentSlideId, m_impl->currentSceneIndex}, provenance);
+
+            // beginSlide can come back inactive: an unreadable or malformed
+            // file, or a slide-id mismatch the user resolved as read-only. The
+            // reason matters as much here as it does above -- the dialog that
+            // explained it has already been dismissed by the time the user
+            // notices the tool is grey.
+            annotationsAvailable = m_impl->persistence->isActive();
+            if (!annotationsAvailable) {
+                annotationsReason = tr("Annotations are read-only for this slide: "
+                                       "the stored file could not be used.");
+            }
+        }
+    }
+
     spdlog::info("ViewportWidget::installSceneOpenResult: slide {}x{}, {} levels, {} channels",
                  m_impl->slideInfo.width, m_impl->slideInfo.height,
                  m_impl->slideInfo.numZoomLevels, m_impl->slideInfo.numChannels);
@@ -2454,6 +2537,9 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
         emit thumbnailReady(result.thumbnail);
     }
     emit slideOpened(result.filePath);
+    if (reportAvailability) {
+        emit annotationsAvailableChanged(annotationsAvailable, annotationsReason);
+    }
     emit loadingFinished();
     emit viewportChanged();
     update();
@@ -2601,6 +2687,11 @@ void ViewportWidget::reopenCurrentScene()
     } else {
         openScene(filePath, sceneIndex, driverId);
     }
+}
+
+void ViewportWidget::setPersistenceService(app::AnnotationPersistenceService* service)
+{
+    m_impl->persistence = service;
 }
 
 app::AnnotationModel* ViewportWidget::annotationModel() const
@@ -3373,9 +3464,17 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
         m_impl->moveLastSlide = core::PointF{slideX, slideY};
     }
 
-    const DragOwner owner = resolveDragOwner(event->button(), event->modifiers(),
-                                             m_impl->spaceHeld, m_impl->activeTool,
-                                             !pressHitId.empty());
+    DragOwner owner = resolveDragOwner(event->button(), event->modifiers(),
+                                       m_impl->spaceHeld, m_impl->activeTool,
+                                       !pressHitId.empty());
+
+    if (owner == DragOwner::MoveAnnotation && !m_impl->annotationsEditable()) {
+        // Selecting is not a mutation and keeps working: the press is treated
+        // as a pan, and the release block selects the annotation under a click.
+        // Only the move is refused, and the user is told why.
+        emit annotationEditBlocked(readOnlyEditMessage());
+        owner = DragOwner::Pan;
+    }
 
     if (owner == DragOwner::Pan) {
         m_impl->dragOwner = DragOwner::Pan;
@@ -3598,6 +3697,11 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
     }
 
     if (event->key() == Qt::Key_Delete && !m_impl->annotations->selectedId().empty()) {
+        if (!m_impl->annotationsEditable()) {
+            emit annotationEditBlocked(readOnlyEditMessage());
+            event->accept();
+            return;
+        }
         m_impl->annotations->remove(m_impl->annotations->selectedId());
         event->accept();
         update();

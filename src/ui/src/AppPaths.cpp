@@ -1,5 +1,6 @@
 #include "slideio/viewer/ui/AppPaths.h"
 
+#include <QCoreApplication>
 #include <QStandardPaths>
 
 namespace slideio::viewer::ui
@@ -17,6 +18,12 @@ QString logDirectory()
 QString logFilePath()
 {
     return logDirectory() + QStringLiteral("/slideio-viewer.log");
+}
+
+QString defaultAnnotationWorkspaceDirectory()
+{
+    const QString documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    return documents + QStringLiteral("/") + QCoreApplication::applicationName();
 }
 
 } // namespace slideio::viewer::ui

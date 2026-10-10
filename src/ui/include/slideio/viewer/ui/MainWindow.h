@@ -27,6 +27,10 @@ protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dragMoveEvent(QDragMoveEvent* event) override;
     void dropEvent(QDropEvent* event) override;
+    // Flushes the open slide's annotations before the window goes away. Nothing
+    // else does: ~ViewportWidget does not close the slide, so a quit with a
+    // slide open would lose up to a full autosave debounce of work.
+    void closeEvent(QCloseEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:

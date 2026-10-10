@@ -42,6 +42,12 @@ class Annotation
 public:
     Annotation(std::string id, AnnotationType type, AnnotationGeometry geometry);
 
+    /// Restores an annotation exactly as stored, including its timestamps.
+    /// Loading must not restamp createdAt/modifiedAt the way the constructor
+    /// above does, and creation must be able to supply an author.
+    Annotation(std::string id, AnnotationType type, AnnotationGeometry geometry,
+               AnnotationProperties properties, AnnotationMetadata metadata);
+
     [[nodiscard]] const std::string& id() const;
     [[nodiscard]] AnnotationType type() const;
     [[nodiscard]] const AnnotationGeometry& geometry() const;
