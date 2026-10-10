@@ -336,4 +336,22 @@ struct Rect
     T height = T{};
 };
 
+using RectF = Rect<double>;
+
+struct PointF
+{
+    double x = 0.0;
+    double y = 0.0;
+};
+
+/// 8-bit RGBA. Annotation colours come from the colorblind-safe palette in
+/// FR-ANN-15; the default below is that palette's orange.
+struct Color
+{
+    uint8_t r = 0;
+    uint8_t g = 0;
+    uint8_t b = 0;
+    uint8_t a = 255;
+};
+
 } // namespace slideio::viewer::core

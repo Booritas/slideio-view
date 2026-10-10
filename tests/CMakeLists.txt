@@ -12,6 +12,7 @@ add_executable(slideio-viewer-core-tests
     core/ColorManagementTest.cpp
     core/SlideIdTest.cpp
     core/ColorProfileOverrideTest.cpp
+    core/AnnotationGeometryTest.cpp
 )
 
 target_link_libraries(slideio-viewer-core-tests
