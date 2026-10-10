@@ -186,6 +186,30 @@ TEST_CASE("the default annotation colour survives verbatim", "[core][AnnotationS
     REQUIRE(json.find("\"color\": \"#E67E22FF\"") != std::string::npos);
 }
 
+TEST_CASE("the serializer refuses ids the parser would reject",
+          "[core][AnnotationSerialization]")
+{
+    // Same invariant as the property bounds: never write what we cannot read.
+    AnnotationDocument document;
+    document.slideId = "a3f8c2e1b4d50697";
+
+    SECTION("an empty id")
+    {
+        document.annotations.emplace_back("", AnnotationType::Rectangle,
+                                          RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
+        REQUIRE(serializeAnnotationDocument(document).empty());
+    }
+
+    SECTION("two annotations sharing an id")
+    {
+        document.annotations.emplace_back("same", AnnotationType::Rectangle,
+                                          RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
+        document.annotations.emplace_back("same", AnnotationType::Rectangle,
+                                          RectangleGeometry{PointF{5.0, 5.0}, PointF{6.0, 6.0}});
+        REQUIRE(serializeAnnotationDocument(document).empty());
+    }
+}
+
 TEST_CASE("a non-finite coordinate refuses to serialize", "[core][AnnotationSerialization]")
 {
     // JSON cannot carry NaN or infinity. nlohmann emits null, which produces a

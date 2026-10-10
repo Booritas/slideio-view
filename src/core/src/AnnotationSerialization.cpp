@@ -442,6 +442,15 @@ ParseResult parseDocument(std::string_view text)
 
 std::string serializeAnnotationDocument(const AnnotationDocument& document)
 {
+    // The parser rejects an empty id and a duplicate id. Same rule as the
+    // property bounds: never write a file we cannot read back.
+    std::set<std::string> ids;
+    for (const Annotation& annotation : document.annotations) {
+        if (annotation.id().empty() || !ids.insert(annotation.id()).second) {
+            return {};
+        }
+    }
+
     for (const Annotation& annotation : document.annotations) {
         if (!isRepresentable(annotation.geometry()) || !isRepresentable(annotation.properties())) {
             return {};

@@ -112,7 +112,7 @@ core::LoadResult JsonAnnotationRepository::load(const core::AnnotationKey& key)
     const std::string path = pathFor(key);
 
     if (!isSafeKey(key.slideId, key.sceneIndex)) {
-        return loadFailure(core::LoadStatus::Unreadable, path, 
+        return loadFailure(core::LoadStatus::Unreadable, path,
                            "the slide id or scene index cannot be used in a file name");
     }
     const QString qpath = QString::fromStdString(path);
@@ -156,7 +156,7 @@ core::SaveResult JsonAnnotationRepository::save(const core::AnnotationDocument& 
     const std::string json = core::serializeAnnotationDocument(document);
     if (json.empty()) {
         return saveFailure(core::SaveStatus::Failed, path,
-                           "the annotations contain a coordinate JSON cannot represent");
+                           "the annotations contain a value that cannot be written to JSON");
     }
 
     const QString directory = annotationsDirectory(m_workspaceRoot);

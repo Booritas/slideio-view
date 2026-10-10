@@ -3,7 +3,6 @@
 #include "slideio/viewer/ui/AnnotationSettings.h"
 #include "slideio/viewer/ui/AppPaths.h"
 
-#include <QSettings>
 #include <QString>
 #include <QTemporaryDir>
 
@@ -96,6 +95,21 @@ TEST_CASE("a user name of only whitespace does not count as configured",
     AnnotationSettings settings(dir.filePath("settings.ini"));
 
     settings.setUserName("   ");
+    REQUIRE_FALSE(settings.hasUserName());
+}
+
+TEST_CASE("a user name can be cleared", "[ui][AnnotationSettings]")
+{
+    // Gates FR-USER-01: clearing the name must put the identity gate back up.
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    AnnotationSettings settings(dir.filePath("settings.ini"));
+
+    settings.setUserName("s.melnikov");
+    REQUIRE(settings.hasUserName());
+
+    settings.setUserName("");
+    REQUIRE(settings.userName().isEmpty());
     REQUIRE_FALSE(settings.hasUserName());
 }
 
