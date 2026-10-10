@@ -738,11 +738,9 @@ std::string serializeAnnotationDocument(const AnnotationDocument& document)
 
 - [ ] **Step 7: Link nlohmann_json to core**
 
-In the top-level `CMakeLists.txt`, beside the existing `find_package` calls:
-
-```cmake
-find_package(nlohmann_json REQUIRED)
-```
+`find_package(nlohmann_json REQUIRED)` is **already present** at the top-level
+`CMakeLists.txt:46` — nlohmann has always been found, just never linked by any
+target. Do not add a second one.
 
 In `src/core/CMakeLists.txt`, add `src/AnnotationSerialization.cpp` to the sources and append:
 
@@ -1848,6 +1846,31 @@ TEST_CASE("a document that cannot be serialized fails rather than writing a brok
     REQUIRE_FALSE(QFileInfo::exists(QString::fromStdString(result.path)));
 }
 
+TEST_CASE("re-rooting sends later reads and writes to the new workspace",
+          "[infra][JsonAnnotationRepository]")
+{
+    // The repository object has to survive a workspace change: the persistence
+    // service holds a reference to it that is bound at construction.
+    QTemporaryDir first;
+    QTemporaryDir second;
+    REQUIRE(first.isValid());
+    REQUIRE(second.isValid());
+
+    JsonAnnotationRepository repository(first.path().toStdString());
+    REQUIRE(repository.save(makeDocument("slide", 0)).status == SaveStatus::Saved);
+
+    repository.setWorkspaceRoot(second.path().toStdString());
+    REQUIRE(repository.workspaceRoot() == second.path().toStdString());
+
+    // The old file is untouched and the new root starts empty -- changing the
+    // setting must not move or lose anything already written.
+    REQUIRE(QFileInfo::exists(first.path() + "/annotations/slide.s0.annotations.json"));
+    REQUIRE(repository.load({"slide", 0}).status == LoadStatus::NotFound);
+
+    REQUIRE(repository.save(makeDocument("slide", 0)).status == SaveStatus::Saved);
+    REQUIRE(QFileInfo::exists(second.path() + "/annotations/slide.s0.annotations.json"));
+}
+
 TEST_CASE("a workspace that cannot be created is NotWritable and names the path",
           "[infra][JsonAnnotationRepository]")
 {
@@ -1908,9 +1931,19 @@ public:
     core::SaveResult save(const core::AnnotationDocument& document) override;
     [[nodiscard]] std::string pathFor(const core::AnnotationKey& key) const override;
 
-    /// Where the repository is rooted. The workspace can change while the
-    /// application runs, so a repository is replaced rather than re-rooted.
+    /// Where the repository is rooted.
     [[nodiscard]] const std::string& workspaceRoot() const;
+
+    /// Re-points at a different workspace. The repository object itself must
+    /// outlive every change, because AnnotationPersistenceService holds a
+    /// reference to it that is bound at construction -- destroying and
+    /// rebuilding the repository when the user picks a new folder would leave
+    /// that reference dangling.
+    ///
+    /// The caller is responsible for flushing to the OLD root first. Every
+    /// operation here is synchronous on the UI thread, so there is no in-flight
+    /// read or write for a re-root to land in the middle of.
+    void setWorkspaceRoot(std::string workspaceRoot);
 
 private:
     std::string m_workspaceRoot;
@@ -1993,6 +2026,11 @@ JsonAnnotationRepository::~JsonAnnotationRepository() = default;
 const std::string& JsonAnnotationRepository::workspaceRoot() const
 {
     return m_workspaceRoot;
+}
+
+void JsonAnnotationRepository::setWorkspaceRoot(std::string workspaceRoot)
+{
+    m_workspaceRoot = std::move(workspaceRoot);
 }
 
 std::string JsonAnnotationRepository::pathFor(const core::AnnotationKey& key) const
@@ -3865,7 +3903,17 @@ In `installSceneOpenResult`, **after** `m_impl->currentSlideId = std::move(resul
 
             m_impl->persistence->beginSlide({m_impl->currentSlideId, m_impl->currentSceneIndex},
                                             provenance);
-            emit annotationsAvailableChanged(m_impl->persistence->isActive(), QString());
+
+            // beginSlide can come back inactive: an unreadable or malformed
+            // file, or a slide-id mismatch the user resolved as read-only. The
+            // reason matters as much as here as it does above -- the dialog
+            // that explained it has already been dismissed by the time the user
+            // notices the tool is grey.
+            const bool active = m_impl->persistence->isActive();
+            emit annotationsAvailableChanged(
+                active, active ? QString()
+                               : tr("Annotations are read-only for this slide: "
+                                    "the stored file could not be used."));
         }
     }
 ```
@@ -3935,15 +3983,14 @@ replaces the repository, and the service has to be rebuilt on top of it:
     annotationSettings = std::make_unique<AnnotationSettings>();
     viewportWidget->annotationModel()->setDefaultAuthor(
         annotationSettings->userName().toStdString());
-    rebuildAnnotationPersistence();
+    buildAnnotationPersistence();
 ```
 
-Declare `void rebuildAnnotationPersistence();` on `MainWindow::Impl` and define
-it to hold everything from here through Step 5, so both the initial
-construction and a workspace change go through one path:
+Declare `void buildAnnotationPersistence();` on `MainWindow::Impl` and define it
+to hold everything from here through Step 5. It runs **once**, at construction:
 
 ```cpp
-void MainWindow::Impl::rebuildAnnotationPersistence()
+void MainWindow::Impl::buildAnnotationPersistence()
 {
     annotationRepository = std::make_unique<infra::JsonAnnotationRepository>(
         annotationSettings->workspaceDirectory().toStdString());
@@ -3956,10 +4003,12 @@ void MainWindow::Impl::rebuildAnnotationPersistence()
 }
 ```
 
-The `annotationsAvailableChanged` connection in Step 5 is on `viewportWidget`,
-not on the service, so it is made **once** at construction rather than inside
-this method — connecting it again on every workspace change would fire the
-handler twice per signal.
+Neither object is ever rebuilt. A workspace change calls
+`annotationRepository->setWorkspaceRoot(...)` instead (Step 7), because the
+service holds a `core::IAnnotationRepository&` bound at construction — replacing
+the repository underneath it would leave that reference dangling, and routing
+the save-failure resolver back through `openPreferences()` would make the two
+call each other without end.
 
 - [ ] **Step 2: Install the mismatch resolver**
 
@@ -4018,9 +4067,19 @@ handler twice per signal.
             box.exec();
 
             if (box.clickedButton() == chooseFolder) {
-                // Preferences replaces the repository, so the retry writes to
-                // wherever the user just pointed us.
-                m_impl->openPreferences();
+                // A plain folder picker, NOT openPreferences() -- that path
+                // calls endSlide(), which is what called this resolver, and the
+                // two would call each other until the stack ran out.
+                const QString chosen = QFileDialog::getExistingDirectory(
+                    m_impl->owner, tr("Choose a folder for annotations"),
+                    m_impl->annotationSettings->workspaceDirectory());
+                if (chosen.isEmpty()) {
+                    return Choice::Discard;
+                }
+                m_impl->annotationSettings->setWorkspaceDirectory(chosen);
+                // Re-root rather than rebuild: the service holds a reference to
+                // this repository object.
+                m_impl->annotationRepository->setWorkspaceRoot(chosen.toStdString());
                 return Choice::Retry;
             }
             if (box.clickedButton() == retry) {
@@ -4132,19 +4191,16 @@ bool MainWindow::Impl::openPreferences()
 
     const QString chosen = dialog.workspaceDirectory();
     if (chosen != QString::fromStdString(annotationRepository->workspaceRoot())) {
-        // The repository is rooted at construction, so a new root means a new
-        // repository. Flush to the OLD one before replacing it, or the open
-        // slide's unsaved work is written nowhere.
+        // Flush to the OLD root before re-pointing, or the open slide's unsaved
+        // work is written nowhere.
         annotationPersistence->endSlide();
-        viewportWidget->setPersistenceService(nullptr);
-        annotationPersistence.reset();
 
         annotationSettings->setWorkspaceDirectory(chosen);
-        rebuildAnnotationPersistence();
+        annotationRepository->setWorkspaceRoot(chosen.toStdString());
 
         if (viewportWidget->isSlideOpen()) {
             // Reopening is how the slide re-enters beginSlide() against the new
-            // repository; the ordering in Task 9 makes this safe.
+            // root; the ordering in Task 9 makes this safe.
             viewportWidget->reopenCurrentScene();
         }
     }
@@ -4152,10 +4208,11 @@ bool MainWindow::Impl::openPreferences()
 }
 ```
 
-Note the ordering: `endSlide()` runs while `annotationRepository` still points
-at the old workspace, and `setWorkspaceDirectory` is called only after that
-flush has completed. Setting the preference first would send the flush to a
-repository rooted somewhere the user has not finished choosing.
+Two orderings matter here. `endSlide()` runs while the repository is still
+rooted at the old workspace, so the flush lands where the annotations came
+from. And the repository is **re-rooted, never rebuilt**: the service holds a
+`core::IAnnotationRepository&` bound at construction, so destroying the
+repository out from under it is a dangling reference.
 
 - [ ] **Step 8: Gate annotation creation on a configured name**
 
