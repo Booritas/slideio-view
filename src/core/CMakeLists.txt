@@ -12,6 +12,7 @@ add_library(slideio-viewer-core STATIC
     src/SlideId.cpp
     src/AnnotationGeometry.cpp
     src/Annotation.cpp
+    src/Iso8601.cpp
 )
 
 target_include_directories(slideio-viewer-core PUBLIC
