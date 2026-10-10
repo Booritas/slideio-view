@@ -1,0 +1,167 @@
+#include <catch2/catch_test_macros.hpp>
+
+#include "slideio/viewer/ui/AnnotationInteraction.h"
+
+using namespace slideio::viewer::ui;
+
+TEST_CASE("middle button always pans, whatever the tool", "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveDragOwner(Qt::MiddleButton, Qt::NoModifier, false,
+                             AnnotationTool::Pan, false) == DragOwner::Pan);
+    REQUIRE(resolveDragOwner(Qt::MiddleButton, Qt::NoModifier, false,
+                             AnnotationTool::Rectangle, false) == DragOwner::Pan);
+    REQUIRE(resolveDragOwner(Qt::MiddleButton, Qt::NoModifier, false,
+                             AnnotationTool::Rectangle, true) == DragOwner::Pan);
+}
+
+TEST_CASE("held space pans, whatever the tool", "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveDragOwner(Qt::LeftButton, Qt::NoModifier, true,
+                             AnnotationTool::Rectangle, false) == DragOwner::Pan);
+    REQUIRE(resolveDragOwner(Qt::LeftButton, Qt::NoModifier, true,
+                             AnnotationTool::Pan, true) == DragOwner::Pan);
+    // The off-diagonal cell: a drawing tool pressed ON an annotation with
+    // space held still pans. Without this, "don't pan if a drawing tool is
+    // over an annotation" could be added and every test would still pass.
+    REQUIRE(resolveDragOwner(Qt::LeftButton, Qt::NoModifier, true,
+                             AnnotationTool::Rectangle, true) == DragOwner::Pan);
+}
+
+TEST_CASE("left drag on empty space with the pan tool pans",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveDragOwner(Qt::LeftButton, Qt::NoModifier, false,
+                             AnnotationTool::Pan, false) == DragOwner::Pan);
+}
+
+TEST_CASE("left drag on an annotation with the pan tool moves it",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveDragOwner(Qt::LeftButton, Qt::NoModifier, false,
+                             AnnotationTool::Pan, true) == DragOwner::MoveAnnotation);
+}
+
+TEST_CASE("left drag with a drawing tool belongs to the tool",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveDragOwner(Qt::LeftButton, Qt::NoModifier, false,
+                             AnnotationTool::Rectangle, false) == DragOwner::Tool);
+    // Pressing on an existing annotation does not steal the drag from a
+    // drawing tool: the user asked to draw.
+    REQUIRE(resolveDragOwner(Qt::LeftButton, Qt::NoModifier, false,
+                             AnnotationTool::Rectangle, true) == DragOwner::Tool);
+}
+
+TEST_CASE("the right button owns no drag", "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveDragOwner(Qt::RightButton, Qt::NoModifier, false,
+                             AnnotationTool::Pan, false) == DragOwner::None);
+    REQUIRE(resolveDragOwner(Qt::RightButton, Qt::NoModifier, false,
+                             AnnotationTool::Rectangle, true) == DragOwner::None);
+    // Space must not promote a non-left button into a pan: the button
+    // rejection has to come first.
+    REQUIRE(resolveDragOwner(Qt::RightButton, Qt::NoModifier, true,
+                             AnnotationTool::Pan, false) == DragOwner::None);
+    // Right is not the only non-left button. Narrowing the rejection to
+    // `button == Qt::RightButton` would let Back/Forward/NoButton fall
+    // through into the Pan or Tool branches.
+    REQUIRE(resolveDragOwner(Qt::BackButton, Qt::NoModifier, false,
+                             AnnotationTool::Rectangle, false) == DragOwner::None);
+}
+
+TEST_CASE("tolerance converts from screen pixels to slide units",
+          "[ui][AnnotationInteraction]")
+{
+    // At 2x, 6 screen pixels is 3 slide pixels.
+    REQUIRE(screenToleranceToSlide(6.0, 2.0) == 3.0);
+    // At 0.5x, the same 6 screen pixels covers 12 slide pixels.
+    REQUIRE(screenToleranceToSlide(6.0, 0.5) == 12.0);
+}
+
+// Dividing by a non-positive scale yields an infinite tolerance, which makes
+// every hit test succeed -- one click would select an annotation anywhere on
+// the slide.
+TEST_CASE("a non-positive scale yields zero tolerance, never infinity",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE(screenToleranceToSlide(6.0, 0.0) == 0.0);
+    REQUIRE(screenToleranceToSlide(6.0, -1.0) == 0.0);
+}
+
+TEST_CASE("the hit tolerance constant is a usable click target",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE(kHitToleranceScreenPixels > 0.0);
+    REQUIRE(kHitToleranceScreenPixels <= 12.0);
+}
+
+TEST_CASE("a tiny drag is rejected as a misclick", "[ui][AnnotationInteraction]")
+{
+    REQUIRE_FALSE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 2, 2}, 1.0, 6.0));
+    // The same slide-space drag at high zoom is large on screen and is accepted.
+    REQUIRE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 2, 2}, 4.0, 6.0));
+}
+
+TEST_CASE("a long thin drag is accepted", "[ui][AnnotationInteraction]")
+{
+    REQUIRE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 300, 2}, 1.0, 6.0));
+    REQUIRE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 2, 300}, 1.0, 6.0));
+}
+
+TEST_CASE("a long drag with zero extent on one axis is still accepted",
+          "[ui][AnnotationInteraction]")
+{
+    // Mouse deltas are integers, so a deliberate sideways drag often has dy == 0.
+    // Rejecting it would leave the user with no shape AND no selection change --
+    // the dead-UI case this gate exists to prevent. withMinimumExtent widens the
+    // degenerate axis afterwards so the stored geometry is never zero-area.
+    REQUIRE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 300, 0}, 1.0, 6.0));
+    REQUIRE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 0, 300}, 1.0, 6.0));
+}
+
+TEST_CASE("a click with no extent on either axis is rejected", "[ui][AnnotationInteraction]")
+{
+    REQUIRE_FALSE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 0, 0}, 1.0, 6.0));
+}
+
+TEST_CASE("withMinimumExtent widens only the degenerate axis", "[ui][AnnotationInteraction]")
+{
+    const auto flat = withMinimumExtent(slideio::viewer::core::RectF{10, 20, 300, 0}, 0.5);
+    REQUIRE(flat.x == 10.0);
+    REQUIRE(flat.y == 20.0);
+    REQUIRE(flat.width == 300.0);
+    REQUIRE(flat.height == 0.5);
+
+    const auto upright = withMinimumExtent(slideio::viewer::core::RectF{10, 20, 0, 300}, 0.5);
+    REQUIRE(upright.width == 0.5);
+    REQUIRE(upright.height == 300.0);
+}
+
+TEST_CASE("withMinimumExtent leaves a healthy box alone", "[ui][AnnotationInteraction]")
+{
+    const auto box = withMinimumExtent(slideio::viewer::core::RectF{10, 20, 300, 40}, 0.5);
+    REQUIRE(box.width == 300.0);
+    REQUIRE(box.height == 40.0);
+}
+
+TEST_CASE("withMinimumExtent treats a negative minimum as zero",
+          "[ui][AnnotationInteraction]")
+{
+    const auto box = withMinimumExtent(slideio::viewer::core::RectF{0, 0, 300, 0}, -5.0);
+    REQUIRE(box.height == 0.0);
+}
+
+TEST_CASE("a non-positive scale rejects every drag", "[ui][AnnotationInteraction]")
+{
+    REQUIRE_FALSE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 300, 300}, 0.0, 6.0));
+    REQUIRE_FALSE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 300, 300}, -1.0, 6.0));
+}
+
+TEST_CASE("translatedBox moves the origin and preserves extent", "[ui][AnnotationInteraction]")
+{
+    const auto g = translatedBox(slideio::viewer::core::RectF{10, 20, 30, 40}, 5.0, -7.0);
+    REQUIRE(g.topLeft.x == 15.0);
+    REQUIRE(g.topLeft.y == 13.0);
+    REQUIRE(g.bottomRight.x - g.topLeft.x == 30.0);
+    REQUIRE(g.bottomRight.y - g.topLeft.y == 40.0);
+}

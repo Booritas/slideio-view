@@ -2,6 +2,9 @@
 #include "slideio/viewer/ui/PathDisplay.h"
 #include "slideio/viewer/ui/ViewportController.h"
 
+#include "slideio/viewer/app/AnnotationModel.h"
+#include "slideio/viewer/core/Annotation.h"
+#include "slideio/viewer/core/AnnotationGeometry.h"
 #include "slideio/viewer/core/CoordinateSystem.h"
 #include "slideio/viewer/core/Histogram.h"
 #include "slideio/viewer/core/ISlideSource.h"
@@ -16,9 +19,11 @@
 #include "slideio/viewer/infra/SlideIOAdapter.h"
 #include "slideio/viewer/infra/TileLoadScheduler.h"
 
+#include <QFocusEvent>
 #include <QImage>
 #include <QMetaObject>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QTimer>
 #include <QOpenGLFunctions_3_3_Core>
 #include <QOpenGLShaderProgram>
@@ -37,6 +42,7 @@
 #include <optional>
 #include <thread>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 namespace slideio::viewer::ui
@@ -1368,8 +1374,28 @@ struct ViewportWidget::Impl
     bool snapshotActive = false; // actively showing snapshot during zoom transition
 
     // Mouse interaction
-    bool isPanning = false;
+    AnnotationTool activeTool = AnnotationTool::Pan;
+    bool spaceHeld = false;
+    // Set on press and held until release: a tool change mid-drag must not
+    // re-route a drag that has already begun.
+    DragOwner dragOwner = DragOwner::None;
+    // The button that began the drag; only its release may end the drag.
+    Qt::MouseButton dragButton = Qt::NoButton;
     QPoint lastMousePos;
+    // Where the drag began, for telling a click from a drag at release.
+    QPoint pressPos;
+
+    std::unique_ptr<app::AnnotationModel> annotations;
+    bool drawing = false;
+    core::PointF drawAnchorSlide;
+    core::PointF drawCurrentSlide;
+
+    // Moving a selected annotation.
+    core::PointF moveLastSlide;
+    std::string movingId;
+    // The geometry the annotation had when it was picked up, so Escape can put
+    // it back. There is no undo stack in this slice, so nothing else could.
+    core::AnnotationGeometry moveOriginalGeometry;
 
     // GL state
     bool glInitialized = false;
@@ -1858,6 +1884,8 @@ ViewportWidget::ViewportWidget(QWidget* parent)
     setAttribute(Qt::WA_OpaquePaintEvent, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
     setAutoFillBackground(false);
+
+    m_impl->annotations = std::make_unique<app::AnnotationModel>();
 }
 
 ViewportWidget::~ViewportWidget()
@@ -2228,6 +2256,7 @@ void ViewportWidget::closeSlide()
         m_impl->scheduler->stop();
     }
 
+    resetAnnotationState();
     m_impl->controller.reset();
     m_impl->scheduler.reset();
     m_impl->pyramid.reset();
@@ -2329,6 +2358,11 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
                      opId, m_impl->openOpId.load());
         return;
     }
+
+    // Redundant while every open path calls closeSlide() first; it guards a
+    // future path that does not. After the stale check so a discarded result
+    // cannot wipe the current slide's annotations.
+    resetAnnotationState();
 
     if (!result.success) {
         // Nothing is on screen for the problem to be about. Left standing it
@@ -2567,6 +2601,145 @@ void ViewportWidget::reopenCurrentScene()
     } else {
         openScene(filePath, sceneIndex, driverId);
     }
+}
+
+app::AnnotationModel* ViewportWidget::annotationModel() const
+{
+    return m_impl->annotations.get();
+}
+
+void ViewportWidget::paintAnnotations(QPainter& painter)
+{
+    if (!m_impl->controller) {
+        return;
+    }
+
+    static_assert(std::variant_size_v<core::AnnotationGeometry> == 1,
+                  "This assumes Rectangle is the only geometry: it draws every shape from its "
+                  "bounding box. Add per-type dispatch before widening the variant.");
+
+    const core::Viewport& vp = m_impl->controller->viewport();
+
+    // Slide -> screen is done point by point rather than by installing a
+    // QTransform on the painter: a world transform scales the pen with the
+    // geometry, and FR-ANN-11 fixes line width in SCREEN pixels.
+    const auto toScreen = [&vp](core::PointF slidePos) {
+        double sx = 0.0;
+        double sy = 0.0;
+        vp.slideToScreen(slidePos.x, slidePos.y, sx, sy);
+        return QPointF(sx, sy);
+    };
+
+    const auto screenRect = [&toScreen](const core::RectF& box) {
+        const QPointF a = toScreen(core::PointF{box.x, box.y});
+        const QPointF b = toScreen(core::PointF{box.x + box.width, box.y + box.height});
+        return QRectF(a, b).normalized();
+    };
+
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const std::string& selectedId = m_impl->annotations->selectedId();
+
+    for (const core::Annotation& annotation : m_impl->annotations->annotations()) {
+        const core::AnnotationProperties& props = annotation.properties();
+        const QColor stroke(props.color.r, props.color.g, props.color.b, props.color.a);
+        QColor fill = stroke;
+        fill.setAlphaF(props.fillOpacity);
+
+        painter.setPen(QPen(stroke, props.lineWidth));
+        painter.setBrush(fill);
+        painter.drawRect(screenRect(annotation.boundingBox()));
+    }
+
+    // Only the selection outline is redrawn here, last, so a later annotation
+    // cannot hide it. The fill is not redrawn: that would double-darken a
+    // translucent shape.
+    if (!selectedId.empty()) {
+        if (const core::Annotation* selected = m_impl->annotations->find(selectedId)) {
+            const QRectF box = screenRect(selected->boundingBox());
+            painter.setBrush(Qt::NoBrush);
+            // Two-tone, and not white alone: brightfield H&E glass and tissue are
+            // near-white, and paintGL clears the slide rect to white, so a 1 px
+            // white dash was invisible on the commonest slide type. The user
+            // presses Delete on the strength of this outline, so it has to read
+            // against both a pale slide and a dark background.
+            painter.setPen(QPen(QColor(0x00, 0x00, 0x00), 3.0, Qt::SolidLine));
+            painter.drawRect(box);
+            painter.setPen(QPen(QColor(0xFF, 0xFF, 0xFF), 1.0, Qt::DashLine));
+            painter.drawRect(box);
+        }
+    }
+
+    // The rectangle being dragged right now is not in the model yet.
+    if (m_impl->drawing) {
+        const QRectF preview =
+            QRectF(toScreen(m_impl->drawAnchorSlide), toScreen(m_impl->drawCurrentSlide))
+                .normalized();
+        painter.setPen(QPen(QColor(0xE6, 0x7E, 0x22), 2.0, Qt::DashLine));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRect(preview);
+    }
+}
+
+void ViewportWidget::setActiveTool(AnnotationTool tool)
+{
+    if (m_impl->activeTool == tool) {
+        return;
+    }
+    m_impl->activeTool = tool;
+    updateCursor();
+    emit activeToolChanged(tool);
+}
+
+AnnotationTool ViewportWidget::activeTool() const
+{
+    return m_impl->activeTool;
+}
+
+void ViewportWidget::resetAnnotationState()
+{
+    // Annotations must never survive into a different slide. Nothing here is
+    // persisted, so a stale model can only produce a clinical misassociation --
+    // one slide's marks drawn over another's tissue.
+    m_impl->annotations->clear();
+    m_impl->drawing = false;
+    m_impl->dragOwner = DragOwner::None;
+    m_impl->dragButton = Qt::NoButton;
+    m_impl->movingId.clear();
+
+    // The drag that was in flight no longer owns the cursor. Without this, a
+    // slide opened mid-drag leaves the closed hand (or the move cursor) on
+    // screen: the eventual real release takes the dragOwner == None early exit
+    // in mouseReleaseEvent and never refreshes it.
+    updateCursor();
+}
+
+void ViewportWidget::updateCursor()
+{
+    // One place decides the cursor, in precedence order. Five hand-copied
+    // ternaries had already drifted: a tool change mid-pan showed a crosshair
+    // while the pan ran, a release while Space was held showed the arrow, and a
+    // Space press mid-drag overwrote the closed hand.
+    switch (m_impl->dragOwner) {
+    case DragOwner::Pan:
+        setCursor(Qt::ClosedHandCursor);
+        return;
+    case DragOwner::MoveAnnotation:
+        setCursor(Qt::SizeAllCursor);
+        return;
+    case DragOwner::Tool:
+        setCursor(Qt::CrossCursor);
+        return;
+    case DragOwner::None:
+        break;
+    }
+
+    if (m_impl->spaceHeld) {
+        setCursor(Qt::OpenHandCursor);
+        return;
+    }
+
+    setCursor(m_impl->activeTool == AnnotationTool::Pan ? Qt::ArrowCursor : Qt::CrossCursor);
 }
 
 void ViewportWidget::setColorMode(core::ColorMode mode)
@@ -3171,34 +3344,162 @@ void ViewportWidget::paintGL()
         m_impl->snapshotActive = false;
         m_impl->captureSnapshotTexture(this, viewport);
     }
+
+    // Painted last, after the snapshot capture, so annotations stay out of the
+    // zoom-snapshot texture and do not smear with the blurry backdrop.
+    if (!m_impl->annotations->annotations().empty() || m_impl->drawing) {
+        QPainter painter(this);
+        paintAnnotations(painter);
+    }
 }
 
 void ViewportWidget::mousePressEvent(QMouseEvent* event)
 {
-    if (event->button() == Qt::LeftButton) {
-        m_impl->isPanning = true;
-        m_impl->lastMousePos = event->pos();
-        setCursor(Qt::ClosedHandCursor);
-        event->accept();
-    } else {
+    // A drag already in flight keeps its owner: changing tools mid-drag must
+    // not strand half-built state.
+    if (m_impl->dragOwner != DragOwner::None) {
         QOpenGLWidget::mousePressEvent(event);
+        return;
     }
+
+    std::string pressHitId;
+    if (m_impl->controller) {
+        double slideX = 0.0;
+        double slideY = 0.0;
+        m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
+        const double tolerance = screenToleranceToSlide(kHitToleranceScreenPixels,
+                                                        m_impl->controller->viewport().scale());
+        pressHitId = m_impl->annotations->hitTest(core::PointF{slideX, slideY}, tolerance);
+        m_impl->moveLastSlide = core::PointF{slideX, slideY};
+    }
+
+    const DragOwner owner = resolveDragOwner(event->button(), event->modifiers(),
+                                             m_impl->spaceHeld, m_impl->activeTool,
+                                             !pressHitId.empty());
+
+    if (owner == DragOwner::Pan) {
+        m_impl->dragOwner = DragOwner::Pan;
+        m_impl->dragButton = event->button();
+        m_impl->pressPos = event->pos();
+        m_impl->lastMousePos = event->pos();
+        m_impl->movingId.clear();
+        updateCursor();
+        event->accept();
+        return;
+    }
+
+    if (owner == DragOwner::MoveAnnotation) {
+        m_impl->dragOwner = DragOwner::MoveAnnotation;
+        m_impl->dragButton = event->button();
+        m_impl->pressPos = event->pos();
+        m_impl->movingId = pressHitId;
+        if (const core::Annotation* picked = m_impl->annotations->find(pressHitId)) {
+            m_impl->moveOriginalGeometry = picked->geometry();
+        }
+        m_impl->annotations->setSelected(pressHitId);
+        updateCursor();
+        event->accept();
+        update();
+        return;
+    }
+
+    if (owner == DragOwner::Tool && m_impl->controller) {
+        double slideX = 0.0;
+        double slideY = 0.0;
+        m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
+
+        m_impl->dragOwner = DragOwner::Tool;
+        m_impl->dragButton = event->button();
+        m_impl->pressPos = event->pos();
+        m_impl->movingId.clear();
+        m_impl->drawing = true;
+        m_impl->drawAnchorSlide = core::PointF{slideX, slideY};
+        m_impl->drawCurrentSlide = m_impl->drawAnchorSlide;
+        updateCursor();
+        event->accept();
+        update();
+        return;
+    }
+
+    QOpenGLWidget::mousePressEvent(event);
 }
 
 void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
 {
-    if (event->button() == Qt::LeftButton && m_impl->isPanning) {
-        m_impl->isPanning = false;
-        setCursor(Qt::ArrowCursor);
-        event->accept();
-    } else {
+    // Only the button that began the drag may end it. Before tool modes a pan
+    // ended on a left release, so a stray middle or right click mid-drag was
+    // harmless; without this check, releasing a second button kills a pan whose
+    // own button is still held.
+    if (m_impl->dragOwner == DragOwner::None || event->button() != m_impl->dragButton) {
         QOpenGLWidget::mouseReleaseEvent(event);
+        return;
     }
+
+    if (m_impl->dragOwner == DragOwner::Tool && m_impl->drawing) {
+        m_impl->drawing = false;
+
+        if (m_impl->controller) {
+            double slideX = 0.0;
+            double slideY = 0.0;
+            m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
+            m_impl->drawCurrentSlide = core::PointF{slideX, slideY};
+        }
+
+        const core::RectF rawBox = core::boundingBox(
+            core::RectangleGeometry{m_impl->drawAnchorSlide, m_impl->drawCurrentSlide});
+
+        // A drag smaller than the click target is a misclick, not a shape. The
+        // test is screen-space on purpose: at high zoom a couple of pixels of
+        // jitter is many slide pixels. A rejected drag falls through to the
+        // selection block below.
+        const double scale = m_impl->controller ? m_impl->controller->viewport().scale() : 0.0;
+        if (dragExceedsMinimumSize(rawBox, scale, kHitToleranceScreenPixels)) {
+            // A short sideways or upright drag has zero extent on one axis,
+            // because mouse deltas are integers. That axis is widened to one
+            // screen pixel rather than the gesture being discarded -- the user
+            // dragged deliberately and must get something back.
+            const core::RectF box = withMinimumExtent(rawBox, screenToleranceToSlide(1.0, scale));
+            const core::AnnotationGeometry geometry =
+                core::RectangleGeometry{core::PointF{box.x, box.y},
+                                        core::PointF{box.x + box.width, box.y + box.height}};
+            const std::string id =
+                m_impl->annotations->add(core::AnnotationType::Rectangle, geometry);
+            m_impl->annotations->setSelected(id);
+        }
+        update();
+    }
+
+    // Spec §6: a press that did not become a shape is a selection click. The
+    // test is the press-to-release screen distance, not "did any move event
+    // arrive" -- Qt delivers one for a single pixel, which made deselecting by
+    // clicking empty tissue work only if the mouse never twitched.
+    if (m_impl->controller && m_impl->dragOwner != DragOwner::MoveAnnotation
+        && event->button() == Qt::LeftButton
+        && (event->pos() - m_impl->pressPos).manhattanLength() < kHitToleranceScreenPixels) {
+        double slideX = 0.0;
+        double slideY = 0.0;
+        m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
+        const double tolerance = screenToleranceToSlide(kHitToleranceScreenPixels,
+                                                        m_impl->controller->viewport().scale());
+        const std::string hit = m_impl->annotations->hitTest(core::PointF{slideX, slideY}, tolerance);
+        if (hit.empty()) {
+            m_impl->annotations->clearSelection();
+        } else {
+            m_impl->annotations->setSelected(hit);
+        }
+        update();
+    }
+    m_impl->movingId.clear();
+
+    m_impl->dragOwner = DragOwner::None;
+    m_impl->dragButton = Qt::NoButton;
+    updateCursor();
+    event->accept();
 }
 
 void ViewportWidget::mouseMoveEvent(QMouseEvent* event)
 {
-    if (m_impl->isPanning && m_impl->controller) {
+    if (m_impl->dragOwner == DragOwner::Pan && m_impl->controller) {
         QPoint delta = event->pos() - m_impl->lastMousePos;
         m_impl->controller->pan(static_cast<double>(delta.x()),
                                 static_cast<double>(delta.y()));
@@ -3206,6 +3507,36 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event)
         emit viewportChanged();
         update();
         event->accept();
+    }
+
+    if (m_impl->dragOwner == DragOwner::MoveAnnotation && m_impl->controller
+        && !m_impl->movingId.empty()) {
+        double slideX = 0.0;
+        double slideY = 0.0;
+        m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
+
+        const double dx = slideX - m_impl->moveLastSlide.x;
+        const double dy = slideY - m_impl->moveLastSlide.y;
+        m_impl->moveLastSlide = core::PointF{slideX, slideY};
+
+        if (const core::Annotation* current = m_impl->annotations->find(m_impl->movingId)) {
+            static_assert(std::variant_size_v<core::AnnotationGeometry> == 1,
+                          "This assumes Rectangle is the only geometry: it rebuilds the shape from its "
+                          "bounding box. Add per-type dispatch before widening the variant.");
+            m_impl->annotations->setGeometry(
+                m_impl->movingId, translatedBox(current->boundingBox(), dx, dy));
+        }
+        event->accept();
+        update();
+    }
+
+    if (m_impl->dragOwner == DragOwner::Tool && m_impl->drawing && m_impl->controller) {
+        double slideX = 0.0;
+        double slideY = 0.0;
+        m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
+        m_impl->drawCurrentSlide = core::PointF{slideX, slideY};
+        event->accept();
+        update();
     }
 
     if (m_impl->controller) {
@@ -3258,6 +3589,56 @@ void ViewportWidget::mouseDoubleClickEvent(QMouseEvent* event)
 
 void ViewportWidget::keyPressEvent(QKeyEvent* event)
 {
+    // Auto-repeat would otherwise re-enter pan mode on every repeat.
+    if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
+        m_impl->spaceHeld = true;
+        updateCursor();
+        event->accept();
+        return;
+    }
+
+    if (event->key() == Qt::Key_Delete && !m_impl->annotations->selectedId().empty()) {
+        m_impl->annotations->remove(m_impl->annotations->selectedId());
+        event->accept();
+        update();
+        return;
+    }
+
+    if (event->key() == Qt::Key_Escape) {
+        bool cancelled = false;
+
+        if (m_impl->drawing) {
+            m_impl->drawing = false;
+            m_impl->dragOwner = DragOwner::None;
+            m_impl->dragButton = Qt::NoButton;
+            cancelled = true;
+        } else if (m_impl->dragOwner == DragOwner::MoveAnnotation && !m_impl->movingId.empty()) {
+            // Put the annotation back where it was picked up. Without this the
+            // shape keeps following the cursor with no way to recover its
+            // original position -- there is no undo stack in this slice.
+            m_impl->annotations->setGeometry(m_impl->movingId, m_impl->moveOriginalGeometry);
+            m_impl->movingId.clear();
+            m_impl->dragOwner = DragOwner::None;
+            m_impl->dragButton = Qt::NoButton;
+            cancelled = true;
+        } else if (m_impl->activeTool != AnnotationTool::Pan) {
+            setActiveTool(AnnotationTool::Pan);
+            cancelled = true;
+        }
+
+        if (!cancelled) {
+            // Nothing to cancel. Escape belongs to whatever else wants it rather
+            // than being swallowed by a viewport with nothing in flight.
+            QOpenGLWidget::keyPressEvent(event);
+            return;
+        }
+
+        updateCursor();
+        event->accept();
+        update();
+        return;
+    }
+
     if (!m_impl->controller) {
         QOpenGLWidget::keyPressEvent(event);
         return;
@@ -3297,6 +3678,34 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
     } else {
         QOpenGLWidget::keyPressEvent(event);
     }
+}
+
+void ViewportWidget::keyReleaseEvent(QKeyEvent* event)
+{
+    if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
+        m_impl->spaceHeld = false;
+        updateCursor();
+        event->accept();
+        return;
+    }
+    QOpenGLWidget::keyReleaseEvent(event);
+}
+
+void ViewportWidget::focusOutEvent(QFocusEvent* event)
+{
+    // keyReleaseEvent never arrives if focus leaves while Space is down, which
+    // would leave the widget believing Space is held forever -- left-drag would
+    // keep panning even under a drawing tool.
+    m_impl->spaceHeld = false;
+    // Likewise the release of an in-flight drag: left set, dragOwner makes
+    // mousePressEvent's early return swallow every later press.
+    m_impl->dragOwner = DragOwner::None;
+    m_impl->dragButton = Qt::NoButton;
+    m_impl->drawing = false;
+    m_impl->movingId.clear();
+    updateCursor();
+    update();
+    QOpenGLWidget::focusOutEvent(event);
 }
 
 } // namespace slideio::viewer::ui
