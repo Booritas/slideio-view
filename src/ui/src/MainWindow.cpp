@@ -238,6 +238,8 @@ struct MainWindow::Impl
         toolGroup->setExclusive(true);
         toolGroup->addAction(panToolAction);
         toolGroup->addAction(rectangleToolAction);
+        // Spec §6: no drawing tools without a slide. Enabled on slideOpened.
+        rectangleToolAction->setEnabled(false);
 
         aboutAction = new QAction("&About SlideIO Viewer...", owner);
         // On macOS this moves the entry into the application menu, where the
@@ -450,6 +452,7 @@ struct MainWindow::Impl
                 const bool sameFile = (filePath == lastOpenedFilePath);
                 lastOpenedFilePath = filePath;
                 closeAction->setEnabled(true);
+                rectangleToolAction->setEnabled(true);
                 auto* ctrl = viewportWidget->controller();
                 if (ctrl) {
                     const auto& vp = ctrl->viewport();
@@ -631,6 +634,7 @@ struct MainWindow::Impl
         QObject::connect(viewportWidget, &ViewportWidget::slideClosed, owner, [this]() {
             // A drawing tool must never be active with no slide open.
             viewportWidget->setActiveTool(AnnotationTool::Pan);
+            rectangleToolAction->setEnabled(false);
             closeAction->setEnabled(false);
             minimapWidget->clearThumbnail();
             statusBarManager->updateCursorPosition(0.0, 0.0);

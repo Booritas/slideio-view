@@ -1,5 +1,8 @@
 #pragma once
 
+#include "slideio/viewer/core/AnnotationGeometry.h"
+#include "slideio/viewer/core/Types.h"
+
 #include <Qt>
 
 namespace slideio::viewer::ui
@@ -50,5 +53,17 @@ constexpr double kHitToleranceScreenPixels = 6.0;
 /// tolerance would make every hit test succeed.
 [[nodiscard]] double screenToleranceToSlide(double toleranceScreenPixels,
                                             double viewportScale);
+
+/// True when a drag is big enough on screen to be a deliberate shape rather
+/// than a misclick. Either dimension reaching the threshold is enough, so a
+/// long thin rectangle stays drawable -- but both must be non-zero, or a
+/// perfectly horizontal drag would produce a zero-height annotation.
+[[nodiscard]] bool dragExceedsMinimumSize(const core::RectF& boxSlideUnits,
+                                          double viewportScale,
+                                          double minimumScreenPixels);
+
+/// `box` translated by a slide-space delta. Returns the geometry the move
+/// handler stores, so the translation is testable without a widget.
+[[nodiscard]] core::RectangleGeometry translatedBox(const core::RectF& box, double dx, double dy);
 
 } // namespace slideio::viewer::ui

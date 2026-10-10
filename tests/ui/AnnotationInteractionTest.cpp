@@ -94,3 +94,37 @@ TEST_CASE("the hit tolerance constant is a usable click target",
     REQUIRE(kHitToleranceScreenPixels > 0.0);
     REQUIRE(kHitToleranceScreenPixels <= 12.0);
 }
+
+TEST_CASE("a tiny drag is rejected as a misclick", "[ui][AnnotationInteraction]")
+{
+    REQUIRE_FALSE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 2, 2}, 1.0, 6.0));
+    // The same slide-space drag at high zoom is large on screen and is accepted.
+    REQUIRE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 2, 2}, 4.0, 6.0));
+}
+
+TEST_CASE("a long thin drag is accepted", "[ui][AnnotationInteraction]")
+{
+    REQUIRE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 300, 2}, 1.0, 6.0));
+    REQUIRE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 2, 300}, 1.0, 6.0));
+}
+
+TEST_CASE("a zero-height or zero-width drag is rejected", "[ui][AnnotationInteraction]")
+{
+    REQUIRE_FALSE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 300, 0}, 1.0, 6.0));
+    REQUIRE_FALSE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 0, 300}, 1.0, 6.0));
+}
+
+TEST_CASE("a non-positive scale rejects every drag", "[ui][AnnotationInteraction]")
+{
+    REQUIRE_FALSE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 300, 300}, 0.0, 6.0));
+    REQUIRE_FALSE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 300, 300}, -1.0, 6.0));
+}
+
+TEST_CASE("translatedBox moves the origin and preserves extent", "[ui][AnnotationInteraction]")
+{
+    const auto g = translatedBox(slideio::viewer::core::RectF{10, 20, 30, 40}, 5.0, -7.0);
+    REQUIRE(g.topLeft.x == 15.0);
+    REQUIRE(g.topLeft.y == 13.0);
+    REQUIRE(g.bottomRight.x - g.topLeft.x == 30.0);
+    REQUIRE(g.bottomRight.y - g.topLeft.y == 40.0);
+}

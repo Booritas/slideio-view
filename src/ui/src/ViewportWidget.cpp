@@ -42,6 +42,7 @@
 #include <optional>
 #include <thread>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 namespace slideio::viewer::ui
@@ -1381,16 +1382,17 @@ struct ViewportWidget::Impl
     // The button that began the drag; only its release may end the drag.
     Qt::MouseButton dragButton = Qt::NoButton;
     QPoint lastMousePos;
+    // Where the drag began, for telling a click from a drag at release.
+    QPoint pressPos;
 
     std::unique_ptr<app::AnnotationModel> annotations;
     bool drawing = false;
     core::PointF drawAnchorSlide;
     core::PointF drawCurrentSlide;
 
-    // Moving a selected annotation, and telling a click from a pan-drag.
+    // Moving a selected annotation.
     core::PointF moveLastSlide;
     std::string movingId;
-    bool moved = false;
 
     // GL state
     bool glInitialized = false;
@@ -2609,6 +2611,10 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         return;
     }
 
+    static_assert(std::variant_size_v<core::AnnotationGeometry> == 1,
+                  "This assumes Rectangle is the only geometry: it draws every shape from its "
+                  "bounding box. Add per-type dispatch before widening the variant.");
+
     const core::Viewport& vp = m_impl->controller->viewport();
 
     // Slide -> screen is done point by point rather than by installing a
@@ -2690,7 +2696,6 @@ void ViewportWidget::resetAnnotationState()
     m_impl->dragOwner = DragOwner::None;
     m_impl->dragButton = Qt::NoButton;
     m_impl->movingId.clear();
-    m_impl->moved = false;
 }
 
 void ViewportWidget::updateCursor()
@@ -3359,9 +3364,9 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
     if (owner == DragOwner::Pan) {
         m_impl->dragOwner = DragOwner::Pan;
         m_impl->dragButton = event->button();
+        m_impl->pressPos = event->pos();
         m_impl->lastMousePos = event->pos();
         m_impl->movingId.clear();
-        m_impl->moved = false;
         updateCursor();
         event->accept();
         return;
@@ -3370,8 +3375,8 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
     if (owner == DragOwner::MoveAnnotation) {
         m_impl->dragOwner = DragOwner::MoveAnnotation;
         m_impl->dragButton = event->button();
+        m_impl->pressPos = event->pos();
         m_impl->movingId = pressHitId;
-        m_impl->moved = false;
         m_impl->annotations->setSelected(pressHitId);
         updateCursor();
         event->accept();
@@ -3386,6 +3391,8 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
 
         m_impl->dragOwner = DragOwner::Tool;
         m_impl->dragButton = event->button();
+        m_impl->pressPos = event->pos();
+        m_impl->movingId.clear();
         m_impl->drawing = true;
         m_impl->drawAnchorSlide = core::PointF{slideX, slideY};
         m_impl->drawCurrentSlide = m_impl->drawAnchorSlide;
@@ -3425,15 +3432,10 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
 
         // A drag smaller than the click target is a misclick, not a shape. The
         // test is screen-space on purpose: at high zoom a couple of pixels of
-        // jitter is many slide pixels, and `> 0.0` in slide units lets every
-        // one of them through. Either dimension reaching the threshold is
-        // enough, so a deliberately long, thin rectangle is still drawable.
-        // boundingBox normalises, so inverted drags yield positive extents.
+        // jitter is many slide pixels. A rejected drag falls through to the
+        // selection block below.
         const double scale = m_impl->controller ? m_impl->controller->viewport().scale() : 0.0;
-        const double widthScreen = box.width * scale;
-        const double heightScreen = box.height * scale;
-
-        if (widthScreen >= kHitToleranceScreenPixels || heightScreen >= kHitToleranceScreenPixels) {
+        if (dragExceedsMinimumSize(box, scale, kHitToleranceScreenPixels)) {
             const std::string id =
                 m_impl->annotations->add(core::AnnotationType::Rectangle, geometry);
             m_impl->annotations->setSelected(id);
@@ -3441,14 +3443,27 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
         update();
     }
 
-    // A left click with no drag and no annotation under it clears the
-    // selection; the Navigate tool doubles as select.
-    if (m_impl->dragOwner == DragOwner::Pan && !m_impl->moved && event->button() == Qt::LeftButton) {
-        m_impl->annotations->clearSelection();
+    // Spec §6: a press that did not become a shape is a selection click. The
+    // test is the press-to-release screen distance, not "did any move event
+    // arrive" -- Qt delivers one for a single pixel, which made deselecting by
+    // clicking empty tissue work only if the mouse never twitched.
+    if (m_impl->controller && m_impl->dragOwner != DragOwner::MoveAnnotation
+        && event->button() == Qt::LeftButton
+        && (event->pos() - m_impl->pressPos).manhattanLength() < kHitToleranceScreenPixels) {
+        double slideX = 0.0;
+        double slideY = 0.0;
+        m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
+        const double tolerance = screenToleranceToSlide(kHitToleranceScreenPixels,
+                                                        m_impl->controller->viewport().scale());
+        const std::string hit = m_impl->annotations->hitTest(core::PointF{slideX, slideY}, tolerance);
+        if (hit.empty()) {
+            m_impl->annotations->clearSelection();
+        } else {
+            m_impl->annotations->setSelected(hit);
+        }
         update();
     }
     m_impl->movingId.clear();
-    m_impl->moved = false;
 
     m_impl->dragOwner = DragOwner::None;
     m_impl->dragButton = Qt::NoButton;
@@ -3463,7 +3478,6 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event)
         m_impl->controller->pan(static_cast<double>(delta.x()),
                                 static_cast<double>(delta.y()));
         m_impl->lastMousePos = event->pos();
-        m_impl->moved = true;
         emit viewportChanged();
         update();
         event->accept();
@@ -3480,13 +3494,11 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event)
         m_impl->moveLastSlide = core::PointF{slideX, slideY};
 
         if (const core::Annotation* current = m_impl->annotations->find(m_impl->movingId)) {
-            const core::RectF box = current->boundingBox();
+            static_assert(std::variant_size_v<core::AnnotationGeometry> == 1,
+                          "This assumes Rectangle is the only geometry: it rebuilds the shape from its "
+                          "bounding box. Add per-type dispatch before widening the variant.");
             m_impl->annotations->setGeometry(
-                m_impl->movingId,
-                core::RectangleGeometry{
-                    core::PointF{box.x + dx, box.y + dy},
-                    core::PointF{box.x + box.width + dx, box.y + box.height + dy}});
-            m_impl->moved = true;
+                m_impl->movingId, translatedBox(current->boundingBox(), dx, dy));
         }
         event->accept();
         update();
@@ -3639,7 +3651,14 @@ void ViewportWidget::focusOutEvent(QFocusEvent* event)
     // would leave the widget believing Space is held forever -- left-drag would
     // keep panning even under a drawing tool.
     m_impl->spaceHeld = false;
+    // Likewise the release of an in-flight drag: left set, dragOwner makes
+    // mousePressEvent's early return swallow every later press.
+    m_impl->dragOwner = DragOwner::None;
+    m_impl->dragButton = Qt::NoButton;
+    m_impl->drawing = false;
+    m_impl->movingId.clear();
     updateCursor();
+    update();
     QOpenGLWidget::focusOutEvent(event);
 }
 
