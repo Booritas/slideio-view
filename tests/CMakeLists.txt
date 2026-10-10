@@ -87,7 +87,7 @@ if(WIN32)
             "PATH=path_list_prepend:${_qt_bin_dir}")
     else()
         message(WARNING
-            "CMake < 3.22: the ui-tests and infra-tests targets cannot have their PATH set up "
+            "CMake < 3.22: the app-tests, ui-tests and infra-tests targets cannot have their PATH set up "
             "automatically. Run them with the Qt and SlideIO bin directories on PATH.")
     endif()
 endif()

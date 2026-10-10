@@ -193,3 +193,111 @@ TEST_CASE("clear on an empty model still reports cleared", "[app][AnnotationMode
     model.clear();
     REQUIRE(clearedCount == 1);
 }
+
+TEST_CASE("remove emits the real id when passed the selection by reference",
+          "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    const std::string id = addRect(model, 0.0, 0.0, 10.0, 10.0);
+    model.setSelected(id);
+
+    std::vector<std::string> seen;
+    QObject::connect(&model, &app::AnnotationModel::annotationRemoved,
+                     [&seen](const std::string& removed) { seen.push_back(removed); });
+
+    // Aliases m_selectedId -- exactly what the Delete-key handler does.
+    REQUIRE(model.remove(model.selectedId()));
+
+    REQUIRE(seen.size() == 1);
+    REQUIRE(seen.front() == id);
+}
+
+TEST_CASE("remove emits the real id when passed an element's own id by reference",
+          "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    const std::string first = addRect(model, 0.0, 0.0, 10.0, 10.0);
+    addRect(model, 20.0, 20.0, 30.0, 30.0);
+
+    std::vector<std::string> seen;
+    QObject::connect(&model, &app::AnnotationModel::annotationRemoved,
+                     [&seen](const std::string& removed) { seen.push_back(removed); });
+
+    // Aliases the first element's own m_id; erase() shifts the second down over it.
+    REQUIRE(model.remove(model.annotations().front().id()));
+
+    REQUIRE(seen.size() == 1);
+    REQUIRE(seen.front() == first);
+    REQUIRE(model.annotations().size() == 1);
+}
+
+TEST_CASE("find returns null for an unknown id", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    addRect(model, 0.0, 0.0, 10.0, 10.0);
+    REQUIRE(model.find("not-a-real-id") == nullptr);
+}
+
+TEST_CASE("setGeometry on an unknown id reports false and emits nothing", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    addRect(model, 0.0, 0.0, 10.0, 10.0);
+
+    int changes = 0;
+    QObject::connect(&model, &app::AnnotationModel::annotationChanged,
+                     [&changes](const std::string&) { ++changes; });
+
+    REQUIRE_FALSE(model.setGeometry("not-a-real-id", rect(1.0, 1.0, 2.0, 2.0)));
+    REQUIRE(changes == 0);
+}
+
+TEST_CASE("clearSelection empties the selection and emits selectionChanged with an empty id",
+          "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    const std::string id = addRect(model, 0.0, 0.0, 10.0, 10.0);
+    model.setSelected(id);
+
+    std::vector<std::string> seen;
+    QObject::connect(&model, &app::AnnotationModel::selectionChanged,
+                     [&seen](const std::string& selected) { seen.push_back(selected); });
+
+    model.clearSelection();
+
+    REQUIRE(model.selectedId().empty());
+    REQUIRE(seen.size() == 1);
+    REQUIRE(seen.front().empty());
+}
+
+TEST_CASE("removing the selected annotation emits selectionChanged with an empty id",
+          "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    const std::string id = addRect(model, 0.0, 0.0, 10.0, 10.0);
+    model.setSelected(id);
+
+    std::vector<std::string> seen;
+    QObject::connect(&model, &app::AnnotationModel::selectionChanged,
+                     [&seen](const std::string& selected) { seen.push_back(selected); });
+
+    REQUIRE(model.remove(id));
+
+    REQUIRE(seen.size() == 1);
+    REQUIRE(seen.front().empty());
+}
+
+TEST_CASE("clear emits selectionChanged when a selection existed", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    const std::string id = addRect(model, 0.0, 0.0, 10.0, 10.0);
+    model.setSelected(id);
+
+    std::vector<std::string> seen;
+    QObject::connect(&model, &app::AnnotationModel::selectionChanged,
+                     [&seen](const std::string& selected) { seen.push_back(selected); });
+
+    model.clear();
+
+    REQUIRE(seen.size() == 1);
+    REQUIRE(seen.front().empty());
+}
