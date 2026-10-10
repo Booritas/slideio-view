@@ -682,3 +682,42 @@ TEST_CASE("the serializer never writes a document the parser would refuse",
     REQUIRE(parsed.document.annotations.front().properties().lineWidth == defaults.lineWidth);
     REQUIRE(parsed.document.annotations.front().properties().fillOpacity == defaults.fillOpacity);
 }
+
+TEST_CASE("a document with two annotations sharing an id is rejected",
+          "[core][AnnotationSerialization]")
+{
+    // hitTest scans from the end while find and setGeometry take the first
+    // match, so duplicates make the application move a shape the user did not
+    // click. The id is the identity; two of them is a malformed document.
+    const ParseResult result = parseAnnotationDocument(R"({
+        "schemaVersion": 1, "slideId": "a3f8c2e1b4d50697", "sceneIndex": 0,
+        "annotations": [
+          {"id": "same", "type": "rectangle",
+           "geometry": {"type": "rectangle", "topLeft": {"x": 0.0, "y": 0.0},
+                        "bottomRight": {"x": 1.0, "y": 1.0}}},
+          {"id": "same", "type": "rectangle",
+           "geometry": {"type": "rectangle", "topLeft": {"x": 5.0, "y": 5.0},
+                        "bottomRight": {"x": 6.0, "y": 6.0}}}
+        ]})");
+
+    REQUIRE(result.error == ParseError::InvalidField);
+    REQUIRE(result.message.find("same") != std::string::npos);
+    REQUIRE(result.document.annotations.empty());
+}
+
+TEST_CASE("distinct ids in one document are fine", "[core][AnnotationSerialization]")
+{
+    const ParseResult result = parseAnnotationDocument(R"({
+        "schemaVersion": 1, "slideId": "a3f8c2e1b4d50697", "sceneIndex": 0,
+        "annotations": [
+          {"id": "first", "type": "rectangle",
+           "geometry": {"type": "rectangle", "topLeft": {"x": 0.0, "y": 0.0},
+                        "bottomRight": {"x": 1.0, "y": 1.0}}},
+          {"id": "second", "type": "rectangle",
+           "geometry": {"type": "rectangle", "topLeft": {"x": 5.0, "y": 5.0},
+                        "bottomRight": {"x": 6.0, "y": 6.0}}}
+        ]})");
+
+    REQUIRE(result.error == ParseError::None);
+    REQUIRE(result.document.annotations.size() == 2);
+}

@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <exception>
 #include <limits>
+#include <set>
 #include <utility>
 #include <variant>
 
@@ -415,11 +416,19 @@ ParseResult parseDocument(std::string_view text)
         return failure(ParseError::InvalidField, "annotations is not an array");
     }
 
+    // Ids are identity. Two annotations sharing one makes hitTest and
+    // setGeometry disagree about which shape the user is pointing at, so the
+    // honest answer is that the document is malformed.
+    std::set<std::string> seenIds;
     for (const json& entry : root.at("annotations")) {
         Annotation annotation("", AnnotationType::Rectangle,
                               RectangleGeometry{PointF{}, PointF{}});
         if (!readAnnotation(entry, annotation, problem)) {
             return failure(ParseError::InvalidField, problem);
+        }
+        if (!seenIds.insert(annotation.id()).second) {
+            return failure(ParseError::InvalidField,
+                           "two annotations share the id '" + annotation.id() + "'");
         }
         document.annotations.push_back(std::move(annotation));
     }

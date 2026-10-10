@@ -457,3 +457,15 @@ TEST_CASE("replaceAll emits modelReset before selectionChanged", "[app][Annotati
     model.replaceAll({});
     REQUIRE(order == std::vector<std::string>{"reset", "selection"});
 }
+
+TEST_CASE("replaceAll skips annotations with an empty id", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    std::vector<core::Annotation> loaded;
+    loaded.emplace_back("", core::AnnotationType::Rectangle, rect(0.0, 0.0, 1.0, 1.0));
+    loaded.emplace_back("ok", core::AnnotationType::Rectangle, rect(2.0, 2.0, 3.0, 3.0));
+    model.replaceAll(std::move(loaded));
+
+    REQUIRE(model.annotations().size() == 1);
+    REQUIRE(model.annotations().front().id() == "ok");
+}
