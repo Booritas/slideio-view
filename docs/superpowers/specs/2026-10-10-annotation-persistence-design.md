@@ -383,8 +383,16 @@ public:
 signals:
     void loadFailed(const QString& path, const QString& message);
     void saveFailed(const QString& path, const QString& message);
+    void activeChanged(bool active);   ///< The ui layer gates its tools on this.
 };
 ```
+
+The two decisions in §7 that need a human — what to do about a slide-ID
+mismatch, and what to do when the flush inside `endSlide()` fails — are
+injected as `std::function` resolvers rather than taken here. The dialogs
+belong in `ui`; the policy belongs in `app`; and a resolver is what lets the
+service be tested without either. With no resolver installed, a mismatch is
+read-only and a failed close proceeds, which are the safe defaults.
 
 **Dirty tracking lives here, not in `AnnotationModel`.** The service connects
 `annotationAdded`, `annotationRemoved` and `annotationChanged` and sets its own
@@ -558,12 +566,18 @@ mandate that failure-prone decisions become pure testable functions — the same
 pattern as `ColorProfilePolicy`, `AnnotationInteraction` and `DriverFilters`:
 
 ```cpp
-bool shouldAutosave(std::chrono::steady_clock::time_point lastMutation,
+bool shouldAutosave(bool dirty,
+                    std::chrono::steady_clock::time_point lastMutation,
+                    std::chrono::steady_clock::time_point lastSave,
                     std::chrono::steady_clock::time_point now,
-                    bool dirty,
                     std::chrono::milliseconds debounce,
-                    std::chrono::milliseconds maxInterval);
+                    std::chrono::milliseconds backstop);
 ```
+
+`lastSave` is separate from `lastMutation` because the backstop is measured
+from the last write, not the last edit. Without that, someone dragging
+annotations without pause resets the debounce forever and nothing is ever
+saved — which is the case the backstop exists for.
 
 The `QTimer` becomes a dumb clock that asks it.
 
@@ -577,8 +591,10 @@ live:
 - `schemaVersion` of 2 rejected as `UnsupportedFutureVersion`.
 - Coordinate precision: a `double` that needs 17 significant digits survives.
 - Non-finite coordinates rejected on serialize rather than written as `null`.
-- Timestamp format and parse, including a value before 1970 and one with a
-  two-digit month and day.
+- Timestamp format and parse, including zero-padded single-digit fields and a
+  rejected instant before 1970. The format's representable range starts at the
+  epoch, because MSVC's `_mkgmtime` cannot go below it; the parser says so
+  rather than inventing a value.
 - Colour round-trip including a non-opaque alpha.
 - `shouldAutosave` at each boundary: clean, within debounce, past debounce,
   past `maxInterval` while still inside the debounce window.
