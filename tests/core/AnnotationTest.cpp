@@ -2,6 +2,10 @@
 
 #include "slideio/viewer/core/Annotation.h"
 
+#include <chrono>
+#include <string>
+#include <utility>
+
 using namespace slideio::viewer::core;
 
 namespace
@@ -11,6 +15,19 @@ Annotation makeRect(std::string id = "a1")
 {
     return Annotation(std::move(id), AnnotationType::Rectangle,
                       RectangleGeometry{PointF{10.0, 20.0}, PointF{110.0, 70.0}});
+}
+
+/// Blocks until system_clock has advanced past `t`, so a strict timestamp
+/// comparison is meaningful rather than flaky. Bounded, so a clock that never
+/// advances fails the test instead of hanging the suite.
+void waitForClockToPass(std::chrono::system_clock::time_point t)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::system_clock::now() <= t) {
+        if (std::chrono::steady_clock::now() > deadline) {
+            FAIL("system_clock did not advance within 2 seconds");
+        }
+    }
 }
 
 } // namespace
@@ -66,14 +83,26 @@ TEST_CASE("setGeometry replaces the shape and refreshes the bounding box",
     REQUIRE(box.width == 10.0);
 }
 
-TEST_CASE("modifiedAt is never earlier than createdAt", "[core][Annotation]")
+TEST_CASE("setGeometry refreshes modifiedAt", "[core][Annotation]")
 {
-    // Deliberately not asserting a strict increase: the system clock's
-    // resolution can be coarser than the time between construction and the
-    // call below, which would make a strict assertion flaky.
     Annotation annotation = makeRect();
+    const auto createdAt = annotation.metadata().createdAt;
+    waitForClockToPass(createdAt);
+
     annotation.setGeometry(RectangleGeometry{PointF{0.0, 0.0}, PointF{10.0, 10.0}});
-    REQUIRE(annotation.metadata().modifiedAt >= annotation.metadata().createdAt);
+    REQUIRE(annotation.metadata().modifiedAt > createdAt);
+}
+
+TEST_CASE("setProperties refreshes modifiedAt", "[core][Annotation]")
+{
+    Annotation annotation = makeRect();
+    const auto createdAt = annotation.metadata().createdAt;
+    waitForClockToPass(createdAt);
+
+    AnnotationProperties props;
+    props.label = "updated";
+    annotation.setProperties(props);
+    REQUIRE(annotation.metadata().modifiedAt > createdAt);
 }
 
 TEST_CASE("setProperties replaces the properties", "[core][Annotation]")
