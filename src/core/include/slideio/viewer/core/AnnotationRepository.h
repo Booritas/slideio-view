@@ -57,6 +57,9 @@ struct LoadResult
 enum class SaveStatus
 {
     Saved,
+    /// Nothing was attempted: no slide, nothing to write, or writing disabled.
+    /// A repository never returns this; AnnotationPersistenceService does.
+    NothingToDo,
     /// The workspace directory is missing, or not writable.
     NotWritable,
     /// Everything else: a serialization refusal, a failed rename, a full disk.

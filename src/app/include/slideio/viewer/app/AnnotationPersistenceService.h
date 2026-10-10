@@ -99,6 +99,7 @@ signals:
 private:
     void markDirty();
     void onAutosaveTick();
+    void onModelCleared();
     void setActive(bool active);
 
     core::IAnnotationRepository& m_repository;

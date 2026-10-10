@@ -324,6 +324,8 @@ TEST_CASE("a future schema version also blocks saving",
     service.beginSlide({"future-slide", 0}, provenance());
 
     REQUIRE_FALSE(service.isActive());
+    model.add(core::AnnotationType::Rectangle,
+              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
     service.flush();
     REQUIRE(repository.saveCount == 0);
 }
@@ -562,5 +564,83 @@ TEST_CASE("a scene index mismatch is referred to the resolver like a slide id mi
     service.beginSlide({"slide-1", 3}, provenance());
 
     REQUIRE(resolverCalls == 1);
+    REQUIRE_FALSE(service.isActive());
+}
+
+TEST_CASE("clearing the model under an active service stops it writing",
+          "[app][AnnotationPersistenceService]")
+{
+    FakeRepository repository;
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+    service.beginSlide({"slide-1", 0}, provenance());
+
+    model.add(core::AnnotationType::Rectangle,
+              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    REQUIRE(service.isDirty());
+
+    model.clear();
+
+    REQUIRE_FALSE(service.isActive());
+    REQUIRE_FALSE(service.isDirty());
+    service.flush();
+    REQUIRE(repository.saveCount == 0); // never an empty document over the file
+}
+
+TEST_CASE("a failed save stays dirty and a flush with nothing to do says so",
+          "[app][AnnotationPersistenceService]")
+{
+    FakeRepository repository;
+    repository.nextSave = core::SaveResult{core::SaveStatus::Failed, "disk full", "/fake/path"};
+
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+    service.beginSlide({"slide-1", 0}, provenance());
+
+    int failures = 0;
+    QObject::connect(&service, &AnnotationPersistenceService::saveFailed, &service,
+                     [&failures](const QString&, const QString&) { ++failures; });
+
+    model.add(core::AnnotationType::Rectangle,
+              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    REQUIRE(service.flush().status == core::SaveStatus::Failed);
+    // An explicit flush always attempts the write; the debounce only paces the timer.
+    REQUIRE(service.flush().status == core::SaveStatus::Failed);
+    REQUIRE(failures == 2);
+    REQUIRE(service.isDirty());
+
+    repository.nextSave = core::SaveResult{core::SaveStatus::Saved, {}, "/fake/path"};
+    REQUIRE(service.flush().status == core::SaveStatus::Saved);
+    REQUIRE(service.flush().status == core::SaveStatus::NothingToDo);
+}
+
+TEST_CASE("flush on an inactive service reports NothingToDo", "[app][AnnotationPersistenceService]")
+{
+    FakeRepository repository;
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+    REQUIRE(service.flush().status == core::SaveStatus::NothingToDo);
+}
+
+TEST_CASE("a resolver that always retries cannot wedge the close",
+          "[app][AnnotationPersistenceService]")
+{
+    FakeRepository repository;
+    repository.nextSave = core::SaveResult{core::SaveStatus::Failed, "disk full", "/fake/path"};
+
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+    service.beginSlide({"slide-1", 0}, provenance());
+    model.add(core::AnnotationType::Rectangle,
+              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+
+    int asked = 0;
+    service.setSaveFailureResolver([&](const core::SaveResult&, int) {
+        ++asked;
+        return AnnotationPersistenceService::SaveFailureChoice::Retry;
+    });
+    service.endSlide();
+
+    REQUIRE(asked == 5);
     REQUIRE_FALSE(service.isActive());
 }

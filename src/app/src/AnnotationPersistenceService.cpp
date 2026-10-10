@@ -36,6 +36,12 @@ AnnotationPersistenceService::AnnotationPersistenceService(core::IAnnotationRepo
     connect(&m_model, &AnnotationModel::annotationChanged, this,
             [this](const std::string&) { markDirty(); });
 
+    // Not modelReset(): replaceAll() emits that, and this service calls
+    // replaceAll() itself during a load, so connecting it would make the
+    // service deactivate itself on every successful open. clear() is the
+    // signal that means "someone else emptied this".
+    connect(&m_model, &AnnotationModel::cleared, this, &AnnotationPersistenceService::onModelCleared);
+
     m_autosaveTimer = new QTimer(this);
     m_autosaveTimer->setInterval(kAutosaveTickMs);
     connect(m_autosaveTimer, &QTimer::timeout, this, &AnnotationPersistenceService::onAutosaveTick);
@@ -56,6 +62,8 @@ void AnnotationPersistenceService::setSaveFailureResolver(SaveFailureResolver re
 void AnnotationPersistenceService::beginSlide(const core::AnnotationKey& key,
                                               const core::SlideProvenance& provenance)
 {
+    // The previous slide's save result is deliberately dropped: endSlide() has
+    // already consulted the save-failure resolver, so the user was asked.
     endSlide();
 
     m_key = key;
@@ -68,7 +76,9 @@ void AnnotationPersistenceService::beginSlide(const core::AnnotationKey& key,
     if (key.slideId.empty()) {
         // Every unidentifiable file produces the same id, so looking one up
         // would hand this slide another slide's annotations.
+        m_loading = true;
         m_model.replaceAll({});
+        m_loading = false;
         setActive(false);
         return;
     }
@@ -139,7 +149,7 @@ core::SaveResult AnnotationPersistenceService::flush()
 {
     if (!m_active || !m_dirty) {
         core::SaveResult result;
-        result.status = core::SaveStatus::Saved;
+        result.status = core::SaveStatus::NothingToDo;
         result.path = m_active ? m_repository.pathFor(m_key) : std::string{};
         return result;
     }
@@ -159,7 +169,10 @@ core::SaveResult AnnotationPersistenceService::flush()
     if (result.status == core::SaveStatus::Saved) {
         m_dirty = false;
     } else {
-        // Left dirty on purpose: the next tick retries rather than forgetting.
+        // Left dirty on purpose so the next tick retries -- but move the
+        // mutation stamp forward, or "the debounce has already elapsed" stays
+        // true and we retry every single tick instead of every two seconds.
+        m_lastMutation = std::chrono::steady_clock::now();
         emit saveFailed(QString::fromStdString(result.path),
                         QString::fromStdString(result.message));
     }
@@ -173,7 +186,14 @@ core::SaveResult AnnotationPersistenceService::endSlide()
     // A close that fails silently is how a slide switch eats an hour of work.
     // The resolver gets a chance to fix the cause and say "try again"; without
     // one, the close proceeds rather than wedging the application.
-    while (result.status != core::SaveStatus::Saved && m_saveFailureResolver) {
+    //
+    // Bounded, so a non-interactive resolver that always says Retry cannot wedge
+    // the UI thread; at the cap the close falls through to the discard path.
+    constexpr int kMaxRetries = 5;
+    const auto isFailure = [](const core::SaveResult& r) {
+        return r.status == core::SaveStatus::NotWritable || r.status == core::SaveStatus::Failed;
+    };
+    for (int attempt = 0; attempt < kMaxRetries && isFailure(result) && m_saveFailureResolver; ++attempt) {
         const int count = static_cast<int>(m_model.annotations().size());
         if (m_saveFailureResolver(result, count) == SaveFailureChoice::Discard) {
             break;
@@ -206,6 +226,23 @@ void AnnotationPersistenceService::markDirty()
     }
     m_dirty = true;
     m_lastMutation = std::chrono::steady_clock::now();
+}
+
+void AnnotationPersistenceService::onModelCleared()
+{
+    if (!m_active) {
+        return;
+    }
+    // Someone emptied the model while this service was still responsible for
+    // writing it. We cannot save what is gone, and writing what remains would
+    // put an empty document over the user's file -- so stop being able to
+    // write at all, and let the last good save on disk stand.
+    //
+    // In correct operation this never fires: closeSlide() calls endSlide()
+    // before resetAnnotationState(). It is here so that ordering is a safety
+    // net rather than a load-bearing assumption.
+    m_dirty = false;
+    setActive(false);
 }
 
 void AnnotationPersistenceService::onAutosaveTick()
