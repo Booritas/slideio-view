@@ -517,6 +517,9 @@ struct MainWindow::Impl
                              }
                          });
 
+        QObject::connect(viewportWidget, &ViewportWidget::annotationEditBlocked, owner,
+                         [this](const QString& reason) { statusBarManager->showTransientMessage(reason); });
+
         QObject::connect(manageSlideProfilesAction, &QAction::triggered, owner, [this]() {
             const std::string openSlideId = owner->currentSlideId();
             const bool hadOverride =
@@ -1020,6 +1023,9 @@ void MainWindow::Impl::buildAnnotationPersistence()
                 box.addButton(tr("Use for This Slide"), QMessageBox::DestructiveRole);
             box.addButton(tr("Ignore Them"), QMessageBox::RejectRole);
             box.setDefaultButton(readOnly);
+            // Esc and the title-bar X must take the safe option the dialog
+            // highlights, not the lone RejectRole button that Qt would pick.
+            box.setEscapeButton(readOnly);
             box.exec();
 
             using Choice = app::AnnotationPersistenceService::MismatchChoice;
@@ -1055,6 +1061,8 @@ void MainWindow::Impl::buildAnnotationPersistence()
                 box.addButton(tr("Choose Another Folder..."), QMessageBox::ActionRole);
             box.addButton(tr("Discard and Close"), QMessageBox::DestructiveRole);
             box.setDefaultButton(retry);
+            // Esc must never mean Discard; Retry is the safe exit.
+            box.setEscapeButton(retry);
             box.exec();
 
             if (box.clickedButton() == chooseFolder) {
@@ -1175,9 +1183,22 @@ bool MainWindow::Impl::openPreferences()
             // top would strand the file it just saved somewhere this
             // application never looks again, and say nothing about it. The more
             // recent choice wins; the user is told where their work went.
-            statusBarManager->showTransientMessage(
-                tr("Annotations were saved to %1, which is now the annotation folder.")
-                    .arg(QDir::toNativeSeparators(afterFlush)));
+            // Gated on the flush actually succeeding: when the retries against the
+            // new folder failed too, endSlide() abandoned the annotations and
+            // claiming they were saved would be false. The folder in use is
+            // named either way, so the typed value is not mistaken for it.
+            const QString folder = QDir::toNativeSeparators(afterFlush);
+            if (flushed.status == core::SaveStatus::Saved) {
+                statusBarManager->showTransientMessage(
+                    tr("Annotations were saved to %1, which is now the annotation folder "
+                       "(your entry was not used).")
+                        .arg(folder));
+            } else {
+                statusBarManager->showTransientMessage(
+                    tr("The annotation folder is now %1 (your entry was not used). "
+                       "The annotations were NOT saved.")
+                        .arg(folder));
+            }
         } else {
             annotationSettings->setWorkspaceDirectory(entered);
             // Read the path back rather than reusing `entered`: an empty or

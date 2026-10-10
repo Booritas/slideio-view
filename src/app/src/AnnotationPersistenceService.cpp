@@ -183,14 +183,30 @@ core::SaveResult AnnotationPersistenceService::flush()
         // mutation stamp forward, or "the debounce has already elapsed" stays
         // true and we retry every single tick instead of every two seconds.
         m_lastMutation = std::chrono::steady_clock::now();
-        emit saveFailed(QString::fromStdString(result.path),
-                        QString::fromStdString(result.message));
+        // During endSlide() with a resolver installed, the resolver dialog and
+        // saveAbandoned already carry the message; a second "will be retried"
+        // report would contradict them.
+        if (!m_inCloseFlush) {
+            emit saveFailed(QString::fromStdString(result.path),
+                            QString::fromStdString(result.message));
+        }
     }
     return result;
 }
 
 core::SaveResult AnnotationPersistenceService::endSlide()
 {
+    // Without a resolver nothing else reports the failure, so saveFailed must
+    // keep firing; with one, the resolver and saveAbandoned speak instead.
+    const bool wasInCloseFlush = m_inCloseFlush;
+    m_inCloseFlush = static_cast<bool>(m_saveFailureResolver);
+    struct Restore
+    {
+        bool& flag;
+        bool value;
+        ~Restore() { flag = value; }
+    } restore{m_inCloseFlush, wasInCloseFlush};
+
     core::SaveResult result = flush();
 
     // A close that fails silently is how a slide switch eats an hour of work.

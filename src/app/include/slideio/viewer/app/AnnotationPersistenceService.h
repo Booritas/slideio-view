@@ -119,6 +119,7 @@ private:
     bool m_active = false;
     bool m_dirty = false;
     bool m_loading = false;
+    bool m_inCloseFlush = false;
     std::chrono::steady_clock::time_point m_lastMutation{};
     std::chrono::steady_clock::time_point m_lastSave{};
 };

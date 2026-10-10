@@ -490,6 +490,37 @@ TEST_CASE("a save that fails while closing asks the resolver",
     REQUIRE_FALSE(service.isActive());
 }
 
+TEST_CASE("saveFailed is silent during endSlide with a resolver but still fires from flush",
+          "[app][AnnotationPersistenceService]")
+{
+    // The resolver dialog and saveAbandoned already tell the user about a
+    // close-time failure; a second "will be retried" modal contradicts them.
+    FakeRepository repository;
+    repository.nextSave = core::SaveResult{core::SaveStatus::NotWritable,
+                                           "the folder is read-only", "/fake/path"};
+
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+    service.beginSlide({"slide-1", 0}, provenance());
+    model.add(core::AnnotationType::Rectangle,
+              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+
+    int failedSignals = 0;
+    QObject::connect(&service, &AnnotationPersistenceService::saveFailed, &service,
+                     [&](const QString&, const QString&) { ++failedSignals; });
+
+    // An ordinary failing flush still reports.
+    REQUIRE(service.flush().status == core::SaveStatus::NotWritable);
+    REQUIRE(failedSignals == 1);
+
+    service.setSaveFailureResolver([](const core::SaveResult&, int) {
+        return AnnotationPersistenceService::SaveFailureChoice::Discard;
+    });
+    service.endSlide();
+
+    REQUIRE(failedSignals == 1);
+}
+
 TEST_CASE("Retry re-attempts the save and succeeds once the cause is fixed",
           "[app][AnnotationPersistenceService]")
 {
