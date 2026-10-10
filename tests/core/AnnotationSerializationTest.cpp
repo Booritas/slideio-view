@@ -276,3 +276,260 @@ TEST_CASE("annotation metadata is written, not regenerated", "[core][AnnotationS
     REQUIRE(json.find("\"createdAt\": \"2026-03-05T04:07:09Z\"") != std::string::npos);
     REQUIRE(json.find("\"modifiedAt\": \"2026-03-05T04:09:10Z\"") != std::string::npos);
 }
+
+TEST_CASE("a document round-trips through JSON unchanged", "[core][AnnotationSerialization]")
+{
+    const AnnotationDocument original = makeDocument();
+    const ParseResult result = parseAnnotationDocument(serializeAnnotationDocument(original));
+
+    REQUIRE(result.error == ParseError::None);
+    const AnnotationDocument& parsed = result.document;
+
+    REQUIRE(parsed.schemaVersion == kCurrentSchemaVersion);
+    REQUIRE(parsed.slideId == original.slideId);
+    REQUIRE(parsed.sceneIndex == original.sceneIndex);
+    REQUIRE(parsed.slide.fileName == original.slide.fileName);
+    REQUIRE(parsed.slide.path == original.slide.path);
+    REQUIRE(parsed.slide.width == original.slide.width);
+    REQUIRE(parsed.slide.height == original.slide.height);
+    REQUIRE(parsed.createdAt == original.createdAt);
+    REQUIRE(parsed.modifiedAt == original.modifiedAt);
+    REQUIRE(parsed.annotations.size() == 1);
+
+    const Annotation& a = parsed.annotations.front();
+    const Annotation& b = original.annotations.front();
+    REQUIRE(a.id() == b.id());
+    REQUIRE(a.type() == b.type());
+    REQUIRE(a.properties().label == b.properties().label);
+    REQUIRE(a.properties().classification == b.properties().classification);
+    REQUIRE(a.properties().notes == b.properties().notes);
+    REQUIRE(a.properties().lineWidth == b.properties().lineWidth);
+    REQUIRE(a.properties().fillOpacity == b.properties().fillOpacity);
+    REQUIRE(a.metadata().author == b.metadata().author);
+    REQUIRE(a.metadata().createdAt == b.metadata().createdAt);
+    REQUIRE(a.metadata().modifiedAt == b.metadata().modifiedAt);
+}
+
+TEST_CASE("a colour round-trips including a non-opaque alpha", "[core][AnnotationSerialization]")
+{
+    const ParseResult result = parseAnnotationDocument(serializeAnnotationDocument(makeDocument()));
+    REQUIRE(result.error == ParseError::None);
+
+    const Color color = result.document.annotations.front().properties().color;
+    REQUIRE(color.r == 0x1F);
+    REQUIRE(color.g == 0x77);
+    REQUIRE(color.b == 0xB4);
+    REQUIRE(color.a == 0x80);
+}
+
+TEST_CASE("an inverted rectangle round-trips with its corners as drawn",
+          "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document;
+    document.slideId = "id";
+    document.annotations.emplace_back("a1", AnnotationType::Rectangle,
+                                      RectangleGeometry{PointF{400.0, 300.0}, PointF{100.0, 50.0}});
+
+    const ParseResult result = parseAnnotationDocument(serializeAnnotationDocument(document));
+    REQUIRE(result.error == ParseError::None);
+
+    const auto& rectangle = std::get<RectangleGeometry>(result.document.annotations.front().geometry());
+    REQUIRE(rectangle.topLeft.x == 400.0);
+    REQUIRE(rectangle.topLeft.y == 300.0);
+    REQUIRE(rectangle.bottomRight.x == 100.0);
+    REQUIRE(rectangle.bottomRight.y == 50.0);
+}
+
+TEST_CASE("a double needing full precision survives the round trip",
+          "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document;
+    document.slideId = "id";
+    const double awkward = 0.1 + 0.2;
+    document.annotations.emplace_back("a1", AnnotationType::Rectangle,
+                                      RectangleGeometry{PointF{awkward, 0.0}, PointF{1.0, 1.0}});
+
+    const ParseResult result = parseAnnotationDocument(serializeAnnotationDocument(document));
+    REQUIRE(result.error == ParseError::None);
+    const auto& rectangle = std::get<RectangleGeometry>(result.document.annotations.front().geometry());
+    REQUIRE(rectangle.topLeft.x == awkward);
+}
+
+TEST_CASE("malformed JSON is reported, not thrown", "[core][AnnotationSerialization]")
+{
+    const ParseResult result = parseAnnotationDocument("{\"schemaVersion\": 1,");
+    REQUIRE(result.error == ParseError::MalformedJson);
+    REQUIRE_FALSE(result.message.empty());
+    REQUIRE(result.document.annotations.empty());
+}
+
+TEST_CASE("an empty input is malformed, not an empty document", "[core][AnnotationSerialization]")
+{
+    REQUIRE(parseAnnotationDocument("").error == ParseError::MalformedJson);
+}
+
+TEST_CASE("JSON that is not an annotation document is rejected", "[core][AnnotationSerialization]")
+{
+    SECTION("an array at the root")
+    {
+        REQUIRE(parseAnnotationDocument("[]").error == ParseError::NotAnAnnotationDocument);
+    }
+    SECTION("an object with no schemaVersion")
+    {
+        REQUIRE(parseAnnotationDocument("{\"slideId\": \"x\"}").error
+                == ParseError::NotAnAnnotationDocument);
+    }
+    SECTION("a schemaVersion that is not a number")
+    {
+        REQUIRE(parseAnnotationDocument("{\"schemaVersion\": \"1\"}").error
+                == ParseError::NotAnAnnotationDocument);
+    }
+}
+
+TEST_CASE("a newer schema version is refused outright", "[core][AnnotationSerialization]")
+{
+    // Loading what we understand and saving it back would silently drop
+    // whatever the newer version added.
+    const ParseResult result = parseAnnotationDocument(
+        "{\"schemaVersion\": 2, \"slideId\": \"x\", \"sceneIndex\": 0, \"annotations\": []}");
+    REQUIRE(result.error == ParseError::UnsupportedFutureVersion);
+    REQUIRE(result.message.find('2') != std::string::npos);
+}
+
+TEST_CASE("a field of the wrong type is an InvalidField naming the field",
+          "[core][AnnotationSerialization]")
+{
+    SECTION("annotations is not an array")
+    {
+        const ParseResult result = parseAnnotationDocument(
+            "{\"schemaVersion\": 1, \"slideId\": \"x\", \"annotations\": {}}");
+        REQUIRE(result.error == ParseError::InvalidField);
+        REQUIRE(result.message.find("annotations") != std::string::npos);
+    }
+
+    SECTION("a coordinate is a string")
+    {
+        const ParseResult result = parseAnnotationDocument(R"({
+            "schemaVersion": 1, "slideId": "x", "sceneIndex": 0, "annotations": [
+              {"id": "a1", "type": "rectangle",
+               "geometry": {"type": "rectangle",
+                            "topLeft": {"x": "nope", "y": 0.0},
+                            "bottomRight": {"x": 1.0, "y": 1.0}}}
+            ]})");
+        REQUIRE(result.error == ParseError::InvalidField);
+    }
+
+    SECTION("an unknown geometry type")
+    {
+        const ParseResult result = parseAnnotationDocument(R"({
+            "schemaVersion": 1, "slideId": "x", "sceneIndex": 0, "annotations": [
+              {"id": "a1", "type": "hexagon",
+               "geometry": {"type": "hexagon"}}
+            ]})");
+        REQUIRE(result.error == ParseError::InvalidField);
+        REQUIRE(result.message.find("hexagon") != std::string::npos);
+    }
+
+    SECTION("an annotation with no id")
+    {
+        const ParseResult result = parseAnnotationDocument(R"({
+            "schemaVersion": 1, "slideId": "x", "sceneIndex": 0, "annotations": [
+              {"type": "rectangle",
+               "geometry": {"type": "rectangle",
+                            "topLeft": {"x": 0.0, "y": 0.0},
+                            "bottomRight": {"x": 1.0, "y": 1.0}}}
+            ]})");
+        REQUIRE(result.error == ParseError::InvalidField);
+        REQUIRE(result.message.find("id") != std::string::npos);
+    }
+
+    SECTION("an unparseable timestamp")
+    {
+        const ParseResult result = parseAnnotationDocument(R"({
+            "schemaVersion": 1, "slideId": "x", "sceneIndex": 0,
+            "createdAt": "yesterday", "annotations": []})");
+        REQUIRE(result.error == ParseError::InvalidField);
+        REQUIRE(result.message.find("createdAt") != std::string::npos);
+    }
+}
+
+TEST_CASE("missing optional blocks fall back to defaults", "[core][AnnotationSerialization]")
+{
+    // A minimal hand-written file must load: properties, metadata, slide and
+    // the timestamps are all omittable.
+    const ParseResult result = parseAnnotationDocument(R"({
+        "schemaVersion": 1, "slideId": "x", "sceneIndex": 2, "annotations": [
+          {"id": "a1", "type": "rectangle",
+           "geometry": {"type": "rectangle",
+                        "topLeft": {"x": 0.0, "y": 0.0},
+                        "bottomRight": {"x": 1.0, "y": 1.0}}}
+        ]})");
+
+    REQUIRE(result.error == ParseError::None);
+    REQUIRE(result.document.sceneIndex == 2);
+    REQUIRE(result.document.annotations.size() == 1);
+
+    const AnnotationProperties& properties = result.document.annotations.front().properties();
+    REQUIRE(properties.color.r == 0xE6);
+    REQUIRE(properties.lineWidth == 2.0f);
+    REQUIRE(properties.label.empty());
+}
+
+TEST_CASE("unknown fields are dropped rather than preserved", "[core][AnnotationSerialization]")
+{
+    // Round-tripping unrecognised JSON would promise a forward compatibility
+    // the version check already handles honestly.
+    const ParseResult result = parseAnnotationDocument(R"({
+        "schemaVersion": 1, "slideId": "x", "sceneIndex": 0,
+        "layers": ["not-implemented"], "annotations": []})");
+
+    REQUIRE(result.error == ParseError::None);
+    REQUIRE(serializeAnnotationDocument(result.document).find("layers") == std::string::npos);
+}
+
+TEST_CASE("a malformed colour is an InvalidField", "[core][AnnotationSerialization]")
+{
+    const ParseResult result = parseAnnotationDocument(R"({
+        "schemaVersion": 1, "slideId": "x", "sceneIndex": 0, "annotations": [
+          {"id": "a1", "type": "rectangle",
+           "geometry": {"type": "rectangle",
+                        "topLeft": {"x": 0.0, "y": 0.0},
+                        "bottomRight": {"x": 1.0, "y": 1.0}},
+           "properties": {"color": "orange"}}
+        ]})");
+    REQUIRE(result.error == ParseError::InvalidField);
+    REQUIRE(result.message.find("color") != std::string::npos);
+}
+
+TEST_CASE("a non-finite coordinate in a file is rejected on load",
+          "[core][AnnotationSerialization]")
+{
+    // JSON has no NaN literal, but it has 1e400. nlohmann's lexer rejects an
+    // out-of-range literal itself (it does not yield infinity), so this is
+    // reported as MalformedJson before readDouble's isfinite check is reached.
+    // Either way no non-finite value can enter an AnnotationDocument.
+    const ParseResult result = parseAnnotationDocument(R"({
+        "schemaVersion": 1, "slideId": "x", "sceneIndex": 0, "annotations": [
+          {"id": "a1", "type": "rectangle",
+           "geometry": {"type": "rectangle",
+                        "topLeft": {"x": 1e400, "y": 0.0},
+                        "bottomRight": {"x": 1.0, "y": 1.0}}}
+        ]})");
+    REQUIRE(result.error == ParseError::MalformedJson);
+}
+
+TEST_CASE("a colour with signs, spaces or a 0x prefix inside a field is rejected",
+          "[core][AnnotationSerialization]")
+{
+    for (const char* color : {"#+F+F+F+F", "# 1 2 3 4", "#0x0x0x0x", "#GGGGGGGG", "#1F77B4"}) {
+        const std::string text = std::string(R"({
+            "schemaVersion": 1, "slideId": "x", "sceneIndex": 0, "annotations": [
+              {"id": "a1", "type": "rectangle",
+               "geometry": {"type": "rectangle",
+                            "topLeft": {"x": 0.0, "y": 0.0},
+                            "bottomRight": {"x": 1.0, "y": 1.0}},
+               "properties": {"color": ")") + color + R"("}}
+            ]})";
+        REQUIRE(parseAnnotationDocument(text).error == ParseError::InvalidField);
+    }
+}
