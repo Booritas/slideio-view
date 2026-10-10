@@ -1387,6 +1387,11 @@ struct ViewportWidget::Impl
     core::PointF drawAnchorSlide;
     core::PointF drawCurrentSlide;
 
+    // Moving a selected annotation, and telling a click from a pan-drag.
+    core::PointF moveLastSlide;
+    std::string movingId;
+    bool moved = false;
+
     // GL state
     bool glInitialized = false;
 
@@ -2246,8 +2251,7 @@ void ViewportWidget::closeSlide()
         m_impl->scheduler->stop();
     }
 
-    m_impl->annotations->clear();
-    m_impl->drawing = false;
+    resetAnnotationState();
     m_impl->controller.reset();
     m_impl->scheduler.reset();
     m_impl->pyramid.reset();
@@ -2349,6 +2353,11 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
                      opId, m_impl->openOpId.load());
         return;
     }
+
+    // Redundant while every open path calls closeSlide() first; it guards a
+    // future path that does not. After the stale check so a discarded result
+    // cannot wipe the current slide's annotations.
+    resetAnnotationState();
 
     if (!result.success) {
         // Nothing is on screen for the problem to be about. Left standing it
@@ -2669,6 +2678,19 @@ void ViewportWidget::setActiveTool(AnnotationTool tool)
 AnnotationTool ViewportWidget::activeTool() const
 {
     return m_impl->activeTool;
+}
+
+void ViewportWidget::resetAnnotationState()
+{
+    // Annotations must never survive into a different slide. Nothing here is
+    // persisted, so a stale model can only produce a clinical misassociation --
+    // one slide's marks drawn over another's tissue.
+    m_impl->annotations->clear();
+    m_impl->drawing = false;
+    m_impl->dragOwner = DragOwner::None;
+    m_impl->dragButton = Qt::NoButton;
+    m_impl->movingId.clear();
+    m_impl->moved = false;
 }
 
 void ViewportWidget::updateCursor()
@@ -3319,16 +3341,41 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
         return;
     }
 
+    std::string pressHitId;
+    if (m_impl->controller) {
+        double slideX = 0.0;
+        double slideY = 0.0;
+        m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
+        const double tolerance = screenToleranceToSlide(kHitToleranceScreenPixels,
+                                                        m_impl->controller->viewport().scale());
+        pressHitId = m_impl->annotations->hitTest(core::PointF{slideX, slideY}, tolerance);
+        m_impl->moveLastSlide = core::PointF{slideX, slideY};
+    }
+
     const DragOwner owner = resolveDragOwner(event->button(), event->modifiers(),
                                              m_impl->spaceHeld, m_impl->activeTool,
-                                             false);
+                                             !pressHitId.empty());
 
     if (owner == DragOwner::Pan) {
         m_impl->dragOwner = DragOwner::Pan;
         m_impl->dragButton = event->button();
         m_impl->lastMousePos = event->pos();
+        m_impl->movingId.clear();
+        m_impl->moved = false;
         updateCursor();
         event->accept();
+        return;
+    }
+
+    if (owner == DragOwner::MoveAnnotation) {
+        m_impl->dragOwner = DragOwner::MoveAnnotation;
+        m_impl->dragButton = event->button();
+        m_impl->movingId = pressHitId;
+        m_impl->moved = false;
+        m_impl->annotations->setSelected(pressHitId);
+        updateCursor();
+        event->accept();
+        update();
         return;
     }
 
@@ -3394,6 +3441,15 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
         update();
     }
 
+    // A left click with no drag and no annotation under it clears the
+    // selection; the Navigate tool doubles as select.
+    if (m_impl->dragOwner == DragOwner::Pan && !m_impl->moved && event->button() == Qt::LeftButton) {
+        m_impl->annotations->clearSelection();
+        update();
+    }
+    m_impl->movingId.clear();
+    m_impl->moved = false;
+
     m_impl->dragOwner = DragOwner::None;
     m_impl->dragButton = Qt::NoButton;
     updateCursor();
@@ -3407,9 +3463,33 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event)
         m_impl->controller->pan(static_cast<double>(delta.x()),
                                 static_cast<double>(delta.y()));
         m_impl->lastMousePos = event->pos();
+        m_impl->moved = true;
         emit viewportChanged();
         update();
         event->accept();
+    }
+
+    if (m_impl->dragOwner == DragOwner::MoveAnnotation && m_impl->controller
+        && !m_impl->movingId.empty()) {
+        double slideX = 0.0;
+        double slideY = 0.0;
+        m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
+
+        const double dx = slideX - m_impl->moveLastSlide.x;
+        const double dy = slideY - m_impl->moveLastSlide.y;
+        m_impl->moveLastSlide = core::PointF{slideX, slideY};
+
+        if (const core::Annotation* current = m_impl->annotations->find(m_impl->movingId)) {
+            const core::RectF box = current->boundingBox();
+            m_impl->annotations->setGeometry(
+                m_impl->movingId,
+                core::RectangleGeometry{
+                    core::PointF{box.x + dx, box.y + dy},
+                    core::PointF{box.x + box.width + dx, box.y + box.height + dy}});
+            m_impl->moved = true;
+        }
+        event->accept();
+        update();
     }
 
     if (m_impl->dragOwner == DragOwner::Tool && m_impl->drawing && m_impl->controller) {
@@ -3476,6 +3556,28 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
         m_impl->spaceHeld = true;
         updateCursor();
         event->accept();
+        return;
+    }
+
+    if (event->key() == Qt::Key_Delete && !m_impl->annotations->selectedId().empty()) {
+        m_impl->annotations->remove(m_impl->annotations->selectedId());
+        event->accept();
+        update();
+        return;
+    }
+
+    if (event->key() == Qt::Key_Escape) {
+        // Cancels a draw in progress, then falls back to leaving the tool.
+        if (m_impl->drawing) {
+            m_impl->drawing = false;
+            m_impl->dragOwner = DragOwner::None;
+            m_impl->dragButton = Qt::NoButton;
+            updateCursor();
+        } else {
+            setActiveTool(AnnotationTool::Pan);
+        }
+        event->accept();
+        update();
         return;
     }
 
