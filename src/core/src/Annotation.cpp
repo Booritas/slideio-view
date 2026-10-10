@@ -14,6 +14,16 @@ Annotation::Annotation(std::string id, AnnotationType type, AnnotationGeometry g
     m_metadata.modifiedAt = m_metadata.createdAt;
 }
 
+Annotation::Annotation(std::string id, AnnotationType type, AnnotationGeometry geometry,
+                       AnnotationProperties properties, AnnotationMetadata metadata)
+    : m_id(std::move(id))
+    , m_type(type)
+    , m_geometry(std::move(geometry))
+    , m_properties(std::move(properties))
+    , m_metadata(std::move(metadata))
+{
+}
+
 const std::string& Annotation::id() const
 {
     return m_id;
