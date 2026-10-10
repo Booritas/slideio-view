@@ -16,6 +16,11 @@ inline constexpr std::chrono::milliseconds kAutosaveBackstop{30000};
 ///
 /// Pure so it can be tested: no test suite creates a QCoreApplication, so a
 /// QTimer never fires in a test. The timer calls this; the decision lives here.
+///
+/// `lastSave` must be a real instant, not a default-constructed time_point: a
+/// caller that leaves it at the epoch makes `now - lastSave` enormous, so the
+/// backstop fires on the first dirty tick and the debounce never applies. A
+/// document that has not been saved yet should use the time it was loaded.
 bool shouldAutosave(bool dirty,
                     std::chrono::steady_clock::time_point lastMutation,
                     std::chrono::steady_clock::time_point lastSave,
