@@ -74,3 +74,79 @@ TEST_CASE("instants before 1970 are out of range and are rejected", "[core][Iso8
     std::chrono::system_clock::time_point out{};
     REQUIRE_FALSE(parseIso8601Utc("1969-12-31T23:59:59Z", out));
 }
+
+TEST_CASE("parsing rejects dates that do not exist", "[core][Iso8601]")
+{
+    // These normalise to a different day under timegm/_mkgmtime, which would
+    // silently move the date an annotation was recorded.
+    std::chrono::system_clock::time_point out{};
+    REQUIRE_FALSE(parseIso8601Utc("2026-02-30T00:00:00Z", out));
+    REQUIRE_FALSE(parseIso8601Utc("2026-04-31T00:00:00Z", out));
+    REQUIRE_FALSE(parseIso8601Utc("2025-02-29T00:00:00Z", out));  // not a leap year
+    REQUIRE_FALSE(parseIso8601Utc("2026-01-00T00:00:00Z", out));
+}
+
+TEST_CASE("parsing accepts a real leap day", "[core][Iso8601]")
+{
+    std::chrono::system_clock::time_point out{};
+    REQUIRE(parseIso8601Utc("2024-02-29T12:00:00Z", out));
+    REQUIRE(formatIso8601Utc(out) == "2024-02-29T12:00:00Z");
+    REQUIRE(parseIso8601Utc("2000-02-29T00:00:00Z", out));   // divisible by 400
+    REQUIRE_FALSE(parseIso8601Utc("1900-02-29T00:00:00Z", out));  // divisible by 100
+}
+
+TEST_CASE("parsing rejects signs and spaces inside numeric fields", "[core][Iso8601]")
+{
+    // All exactly 20 characters with the separators in the right places.
+    std::chrono::system_clock::time_point out{};
+    REQUIRE_FALSE(parseIso8601Utc("2026-+3-05T04:07:09Z", out));
+    REQUIRE_FALSE(parseIso8601Utc("2026- 3-05T04:07:09Z", out));
+    REQUIRE_FALSE(parseIso8601Utc("+026-03-05T04:07:09Z", out));
+    REQUIRE_FALSE(parseIso8601Utc("2026-03-05T04:07:-9Z", out));
+}
+
+TEST_CASE("parsing rejects a leap second", "[core][Iso8601]")
+{
+    std::chrono::system_clock::time_point out{};
+    REQUIRE_FALSE(parseIso8601Utc("2026-03-05T04:07:60Z", out));
+}
+
+TEST_CASE("every instant before the epoch is rejected, not just the last second",
+          "[core][Iso8601]")
+{
+    // The sentinel-based check caught only 23:59:59 on POSIX.
+    std::chrono::system_clock::time_point out{};
+    REQUIRE_FALSE(parseIso8601Utc("1969-12-31T23:59:59Z", out));
+    REQUIRE_FALSE(parseIso8601Utc("1969-12-31T23:59:58Z", out));
+    REQUIRE_FALSE(parseIso8601Utc("1900-01-01T00:00:00Z", out));
+    REQUIRE_FALSE(parseIso8601Utc("0001-01-01T00:00:00Z", out));
+}
+
+TEST_CASE("the epoch itself is accepted", "[core][Iso8601]")
+{
+    std::chrono::system_clock::time_point out{};
+    REQUIRE(parseIso8601Utc("1970-01-01T00:00:00Z", out));
+    REQUIRE(out == std::chrono::system_clock::from_time_t(0));
+}
+
+TEST_CASE("formatting declines instants it cannot represent", "[core][Iso8601]")
+{
+    REQUIRE(formatIso8601Utc(std::chrono::system_clock::from_time_t(-1)).empty());
+    REQUIRE(formatIso8601Utc(std::chrono::system_clock::from_time_t(-86400)).empty());
+}
+
+TEST_CASE("the round trip holds across a wide span of dates", "[core][Iso8601]")
+{
+    // Month ends, leap boundaries and a century boundary, formatted then parsed
+    // then formatted again.
+    const char* samples[] = {
+        "1970-01-01T00:00:00Z", "1999-12-31T23:59:59Z", "2000-01-01T00:00:00Z",
+        "2000-02-29T23:59:59Z", "2024-02-29T00:00:00Z", "2026-03-05T04:07:09Z",
+        "2038-01-19T03:14:08Z", "2100-02-28T12:34:56Z", "9999-12-31T23:59:59Z",
+    };
+    for (const char* sample : samples) {
+        std::chrono::system_clock::time_point parsed{};
+        REQUIRE(parseIso8601Utc(sample, parsed));
+        REQUIRE(formatIso8601Utc(parsed) == sample);
+    }
+}
