@@ -42,11 +42,25 @@ bool isRepresentable(const AnnotationGeometry& geometry)
     return isFinitePoint(rectangle.topLeft) && isFinitePoint(rectangle.bottomRight);
 }
 
+// The domains of the two float properties, shared by the writer and the reader.
+// They live together because a value one side accepts and the other rejects
+// means this application wrote a file it cannot open.
+constexpr double kMinLineWidth = 0.01;
+constexpr double kMaxLineWidth = 1000.0;
+constexpr double kMinFillOpacity = 0.0;
+constexpr double kMaxFillOpacity = 1.0;
+
+bool inClosedRange(double value, double min, double max)
+{
+    return std::isfinite(value) && value >= min && value <= max;
+}
+
 bool isRepresentable(const AnnotationProperties& properties)
 {
-    // Same reason as the geometry check: JSON has no NaN or infinity, nlohmann
-    // writes null, and the file will not parse back.
-    return std::isfinite(properties.lineWidth) && std::isfinite(properties.fillOpacity);
+    // The same bounds the parser enforces: refusing to write a value we would
+    // refuse to read keeps every file this application produces loadable by it.
+    return inClosedRange(properties.lineWidth, kMinLineWidth, kMaxLineWidth)
+        && inClosedRange(properties.fillOpacity, kMinFillOpacity, kMaxFillOpacity);
 }
 
 std::string formatColor(const Color& color)
@@ -302,11 +316,11 @@ bool readAnnotation(const json& value, Annotation& out, std::string& problem)
         properties.label = readString(source, "label", properties.label);
         properties.classification = readString(source, "classification", properties.classification);
         properties.notes = readString(source, "notes", properties.notes);
-        if (!readBoundedFloat(source, "lineWidth", 0.01, 1000.0, properties.lineWidth)) {
+        if (!readBoundedFloat(source, "lineWidth", kMinLineWidth, kMaxLineWidth, properties.lineWidth)) {
             problem = "properties.lineWidth is not a number in 0.01..1000";
             return false;
         }
-        if (!readBoundedFloat(source, "fillOpacity", 0.0, 1.0, properties.fillOpacity)) {
+        if (!readBoundedFloat(source, "fillOpacity", kMinFillOpacity, kMaxFillOpacity, properties.fillOpacity)) {
             problem = "properties.fillOpacity is not a number in 0..1";
             return false;
         }

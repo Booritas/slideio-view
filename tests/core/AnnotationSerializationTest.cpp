@@ -646,3 +646,39 @@ TEST_CASE("colours decode across the whole range", "[core][AnnotationSerializati
     REQUIRE(lower.error == ParseError::None);
     REQUIRE(lower.document.annotations.front().properties().color.g == 0xCD);
 }
+
+TEST_CASE("the serializer never writes a document the parser would refuse",
+          "[core][AnnotationSerialization]")
+{
+    // The two sides share one set of bounds. If they ever drift, this fails.
+    AnnotationDocument document;
+    document.slideId = "a3f8c2e1b4d50697";
+    document.annotations.emplace_back("a1", AnnotationType::Rectangle,
+                                      RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
+
+    const double outOfRange[] = {0.0, -1.0, 2000.0};
+    for (double value : outOfRange) {
+        AnnotationProperties properties = document.annotations.front().properties();
+        properties.lineWidth = static_cast<float>(value);
+        document.annotations.front().setProperties(properties);
+        REQUIRE(serializeAnnotationDocument(document).empty());
+    }
+
+    for (double value : {-0.5, 1.5}) {
+        AnnotationProperties properties = document.annotations.front().properties();
+        properties.lineWidth = 2.0f;
+        properties.fillOpacity = static_cast<float>(value);
+        document.annotations.front().setProperties(properties);
+        REQUIRE(serializeAnnotationDocument(document).empty());
+    }
+
+    // And the defaults, which must always survive the round trip.
+    AnnotationProperties defaults;
+    document.annotations.front().setProperties(defaults);
+    const std::string json = serializeAnnotationDocument(document);
+    REQUIRE_FALSE(json.empty());
+    const ParseResult parsed = parseAnnotationDocument(json);
+    REQUIRE(parsed.error == ParseError::None);
+    REQUIRE(parsed.document.annotations.front().properties().lineWidth == defaults.lineWidth);
+    REQUIRE(parsed.document.annotations.front().properties().fillOpacity == defaults.fillOpacity);
+}
