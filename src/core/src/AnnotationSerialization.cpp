@@ -15,7 +15,10 @@ namespace slideio::viewer::core
 namespace
 {
 
-using nlohmann::json;
+// ordered_json, not json: the default sorts keys alphabetically, which buries
+// slideId and schemaVersion below the whole annotations array. This format
+// exists to be read by a human with a text editor.
+using json = nlohmann::ordered_json;
 
 constexpr const char* kRectangleTypeName = "rectangle";
 
