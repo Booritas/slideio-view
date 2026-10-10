@@ -148,6 +148,27 @@ TEST_CASE("invalid UTF-8 in a string refuses to serialize rather than throwing",
     REQUIRE(serializeAnnotationDocument(document).empty());
 }
 
+TEST_CASE("the document is written in the documented field order",
+          "[core][AnnotationSerialization]")
+{
+    // The format is meant to be opened in a text editor, so the slide's
+    // identity has to come before the annotation array rather than after it.
+    const std::string json = serializeAnnotationDocument(makeDocument());
+
+    const std::size_t schemaVersion = json.find("\"schemaVersion\"");
+    const std::size_t slideId = json.find("\"slideId\"");
+    const std::size_t sceneIndex = json.find("\"sceneIndex\"");
+    const std::size_t slide = json.find("\"slide\":");      // with the colon:
+    const std::size_t annotations = json.find("\"annotations\"");
+
+    REQUIRE(schemaVersion != std::string::npos);
+    REQUIRE(annotations != std::string::npos);
+    REQUIRE(schemaVersion < slideId);
+    REQUIRE(slideId < sceneIndex);
+    REQUIRE(sceneIndex < slide);
+    REQUIRE(slide < annotations);
+}
+
 TEST_CASE("a colour is written as #RRGGBBAA in upper case", "[core][AnnotationSerialization]")
 {
     const std::string json = serializeAnnotationDocument(makeDocument());
