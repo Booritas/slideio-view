@@ -533,3 +533,116 @@ TEST_CASE("a colour with signs, spaces or a 0x prefix inside a field is rejected
         REQUIRE(parseAnnotationDocument(text).error == ParseError::InvalidField);
     }
 }
+
+TEST_CASE("a failure partway through leaves nothing of the document behind",
+          "[core][AnnotationSerialization]")
+{
+    // The first annotation is valid and the second is not. If the parser
+    // returned what it had managed so far, a caller could save it back over a
+    // file that still holds both.
+    const ParseResult result = parseAnnotationDocument(R"({
+        "schemaVersion": 1, "slideId": "a3f8c2e1b4d50697", "sceneIndex": 2,
+        "slide": {"fileName": "case001_HE.svs"},
+        "annotations": [
+          {"id": "good", "type": "rectangle",
+           "geometry": {"type": "rectangle",
+                        "topLeft": {"x": 0.0, "y": 0.0},
+                        "bottomRight": {"x": 1.0, "y": 1.0}}},
+          {"id": "bad", "type": "rectangle",
+           "geometry": {"type": "hexagon"}}
+        ]})");
+
+    REQUIRE(result.error == ParseError::InvalidField);
+    REQUIRE(result.document.annotations.empty());
+    REQUIRE(result.document.slideId.empty());
+    REQUIRE(result.document.sceneIndex == 0);
+    REQUIRE(result.document.schemaVersion == kCurrentSchemaVersion);
+    REQUIRE(result.document.slide.fileName.empty());
+}
+
+TEST_CASE("the schema version must be a sane positive integer",
+          "[core][AnnotationSerialization]")
+{
+    const char* bad[] = {
+        R"({"schemaVersion": 0, "slideId": "x", "annotations": []})",
+        R"({"schemaVersion": -1, "slideId": "x", "annotations": []})",
+        R"({"schemaVersion": 4294967297, "slideId": "x", "annotations": []})",
+    };
+    for (const char* text : bad) {
+        const ParseResult result = parseAnnotationDocument(text);
+        REQUIRE(result.error != ParseError::None);
+        REQUIRE(result.document.annotations.empty());
+    }
+}
+
+TEST_CASE("the scene index must be a non-negative integer that fits",
+          "[core][AnnotationSerialization]")
+{
+    // It becomes part of the file name, so a negative or truncated value names
+    // a file that belongs to a different scene.
+    REQUIRE(parseAnnotationDocument(
+                R"({"schemaVersion": 1, "slideId": "x", "sceneIndex": -1, "annotations": []})")
+                .error == ParseError::InvalidField);
+    REQUIRE(parseAnnotationDocument(
+                R"({"schemaVersion": 1, "slideId": "x", "sceneIndex": 1.5, "annotations": []})")
+                .error == ParseError::InvalidField);
+    REQUIRE(parseAnnotationDocument(
+                R"({"schemaVersion": 1, "slideId": "x", "sceneIndex": 4294967296, "annotations": []})")
+                .error == ParseError::InvalidField);
+}
+
+TEST_CASE("a document with no slide id is rejected", "[core][AnnotationSerialization]")
+{
+    REQUIRE(parseAnnotationDocument(R"({"schemaVersion": 1, "annotations": []})").error
+            == ParseError::InvalidField);
+    REQUIRE(parseAnnotationDocument(
+                R"({"schemaVersion": 1, "slideId": "", "annotations": []})")
+                .error == ParseError::InvalidField);
+}
+
+TEST_CASE("out-of-domain float properties are rejected", "[core][AnnotationSerialization]")
+{
+    auto withProperty = [](const char* json) {
+        return std::string(R"({"schemaVersion": 1, "slideId": "x", "sceneIndex": 0,
+            "annotations": [{"id": "a1", "type": "rectangle",
+              "geometry": {"type": "rectangle", "topLeft": {"x": 0.0, "y": 0.0},
+                           "bottomRight": {"x": 1.0, "y": 1.0}},
+              "properties": {)") + json + "}}]}";
+    };
+
+    // 1e300 is a finite double and an infinite float.
+    REQUIRE(parseAnnotationDocument(withProperty(R"("lineWidth": 1e300)")).error
+            == ParseError::InvalidField);
+    REQUIRE(parseAnnotationDocument(withProperty(R"("lineWidth": -2.0)")).error
+            == ParseError::InvalidField);
+    REQUIRE(parseAnnotationDocument(withProperty(R"("fillOpacity": 5.0)")).error
+            == ParseError::InvalidField);
+    REQUIRE(parseAnnotationDocument(withProperty(R"("fillOpacity": -0.5)")).error
+            == ParseError::InvalidField);
+    REQUIRE(parseAnnotationDocument(withProperty(R"("lineWidth": 2.5)")).error
+            == ParseError::None);
+}
+
+TEST_CASE("colours decode across the whole range", "[core][AnnotationSerialization]")
+{
+    auto colorOf = [](const char* text) {
+        const std::string json = std::string(R"({"schemaVersion": 1, "slideId": "x",
+            "sceneIndex": 0, "annotations": [{"id": "a1", "type": "rectangle",
+              "geometry": {"type": "rectangle", "topLeft": {"x": 0.0, "y": 0.0},
+                           "bottomRight": {"x": 1.0, "y": 1.0}},
+              "properties": {"color": ")") + text + R"("}}]})";
+        return parseAnnotationDocument(json);
+    };
+
+    const ParseResult black = colorOf("#00000000");
+    REQUIRE(black.error == ParseError::None);
+    REQUIRE(black.document.annotations.front().properties().color.a == 0x00);
+
+    const ParseResult white = colorOf("#FFFFFFFF");
+    REQUIRE(white.error == ParseError::None);
+    REQUIRE(white.document.annotations.front().properties().color.r == 0xFF);
+
+    const ParseResult lower = colorOf("#abcdef01");
+    REQUIRE(lower.error == ParseError::None);
+    REQUIRE(lower.document.annotations.front().properties().color.g == 0xCD);
+}
