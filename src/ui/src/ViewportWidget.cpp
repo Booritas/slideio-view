@@ -2,6 +2,9 @@
 #include "slideio/viewer/ui/PathDisplay.h"
 #include "slideio/viewer/ui/ViewportController.h"
 
+#include "slideio/viewer/app/AnnotationModel.h"
+#include "slideio/viewer/core/Annotation.h"
+#include "slideio/viewer/core/AnnotationGeometry.h"
 #include "slideio/viewer/core/CoordinateSystem.h"
 #include "slideio/viewer/core/Histogram.h"
 #include "slideio/viewer/core/ISlideSource.h"
@@ -20,6 +23,7 @@
 #include <QImage>
 #include <QMetaObject>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QTimer>
 #include <QOpenGLFunctions_3_3_Core>
 #include <QOpenGLShaderProgram>
@@ -1378,6 +1382,11 @@ struct ViewportWidget::Impl
     Qt::MouseButton dragButton = Qt::NoButton;
     QPoint lastMousePos;
 
+    std::unique_ptr<app::AnnotationModel> annotations;
+    bool drawing = false;
+    core::PointF drawAnchorSlide;
+    core::PointF drawCurrentSlide;
+
     // GL state
     bool glInitialized = false;
 
@@ -1865,6 +1874,8 @@ ViewportWidget::ViewportWidget(QWidget* parent)
     setAttribute(Qt::WA_OpaquePaintEvent, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
     setAutoFillBackground(false);
+
+    m_impl->annotations = std::make_unique<app::AnnotationModel>();
 }
 
 ViewportWidget::~ViewportWidget()
@@ -2235,6 +2246,8 @@ void ViewportWidget::closeSlide()
         m_impl->scheduler->stop();
     }
 
+    m_impl->annotations->clear();
+    m_impl->drawing = false;
     m_impl->controller.reset();
     m_impl->scheduler.reset();
     m_impl->pyramid.reset();
@@ -2573,6 +2586,72 @@ void ViewportWidget::reopenCurrentScene()
         openAuxImage(filePath, auxName, driverId);
     } else {
         openScene(filePath, sceneIndex, driverId);
+    }
+}
+
+app::AnnotationModel* ViewportWidget::annotationModel() const
+{
+    return m_impl->annotations.get();
+}
+
+void ViewportWidget::paintAnnotations(QPainter& painter)
+{
+    if (!m_impl->controller) {
+        return;
+    }
+
+    const core::Viewport& vp = m_impl->controller->viewport();
+
+    // Slide -> screen is done point by point rather than by installing a
+    // QTransform on the painter: a world transform scales the pen with the
+    // geometry, and FR-ANN-11 fixes line width in SCREEN pixels.
+    const auto toScreen = [&vp](core::PointF slidePos) {
+        double sx = 0.0;
+        double sy = 0.0;
+        vp.slideToScreen(slidePos.x, slidePos.y, sx, sy);
+        return QPointF(sx, sy);
+    };
+
+    const auto screenRect = [&toScreen](const core::RectF& box) {
+        const QPointF a = toScreen(core::PointF{box.x, box.y});
+        const QPointF b = toScreen(core::PointF{box.x + box.width, box.y + box.height});
+        return QRectF(a, b).normalized();
+    };
+
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const std::string& selectedId = m_impl->annotations->selectedId();
+
+    for (const core::Annotation& annotation : m_impl->annotations->annotations()) {
+        const core::AnnotationProperties& props = annotation.properties();
+        const QColor stroke(props.color.r, props.color.g, props.color.b, props.color.a);
+        QColor fill = stroke;
+        fill.setAlphaF(props.fillOpacity);
+
+        painter.setPen(QPen(stroke, props.lineWidth));
+        painter.setBrush(fill);
+        painter.drawRect(screenRect(annotation.boundingBox()));
+    }
+
+    // The selected annotation is drawn again, last, so a later annotation
+    // cannot occlude the selection.
+    if (!selectedId.empty()) {
+        if (const core::Annotation* selected = m_impl->annotations->find(selectedId)) {
+            const QRectF box = screenRect(selected->boundingBox());
+            painter.setPen(QPen(QColor(0xFF, 0xFF, 0xFF), 1.0, Qt::DashLine));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRect(box);
+        }
+    }
+
+    // The rectangle being dragged right now is not in the model yet.
+    if (m_impl->drawing) {
+        const QRectF preview =
+            QRectF(toScreen(m_impl->drawAnchorSlide), toScreen(m_impl->drawCurrentSlide))
+                .normalized();
+        painter.setPen(QPen(QColor(0xE6, 0x7E, 0x22), 2.0, Qt::DashLine));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRect(preview);
     }
 }
 
@@ -3221,6 +3300,11 @@ void ViewportWidget::paintGL()
         m_impl->snapshotActive = false;
         m_impl->captureSnapshotTexture(this, viewport);
     }
+
+    // Painted last, after the snapshot capture, so annotations stay out of the
+    // zoom-snapshot texture and do not smear with the blurry backdrop.
+    QPainter painter(this);
+    paintAnnotations(painter);
 }
 
 void ViewportWidget::mousePressEvent(QMouseEvent* event)
@@ -3245,13 +3329,19 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
         return;
     }
 
-    if (owner == DragOwner::Tool) {
-        // Task 7 begins the rectangle here. Claim the drag so it does not fall
-        // through to panning.
+    if (owner == DragOwner::Tool && m_impl->controller) {
+        double slideX = 0.0;
+        double slideY = 0.0;
+        m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
+
         m_impl->dragOwner = DragOwner::Tool;
         m_impl->dragButton = event->button();
+        m_impl->drawing = true;
+        m_impl->drawAnchorSlide = core::PointF{slideX, slideY};
+        m_impl->drawCurrentSlide = m_impl->drawAnchorSlide;
         updateCursor();
         event->accept();
+        update();
         return;
     }
 
@@ -3267,6 +3357,24 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
     if (m_impl->dragOwner == DragOwner::None || event->button() != m_impl->dragButton) {
         QOpenGLWidget::mouseReleaseEvent(event);
         return;
+    }
+
+    if (m_impl->dragOwner == DragOwner::Tool && m_impl->drawing) {
+        m_impl->drawing = false;
+
+        const core::AnnotationGeometry geometry =
+            core::RectangleGeometry{m_impl->drawAnchorSlide, m_impl->drawCurrentSlide};
+        const core::RectF box = core::boundingBox(geometry);
+
+        // A press with no drag is a misclick, not a zero-area shape. The
+        // geometry is normalised by boundingBox, so a right-to-left or
+        // bottom-to-top drag produces a valid positive-extent rectangle here.
+        if (box.width > 0.0 && box.height > 0.0) {
+            const std::string id =
+                m_impl->annotations->add(core::AnnotationType::Rectangle, geometry);
+            m_impl->annotations->setSelected(id);
+        }
+        update();
     }
 
     m_impl->dragOwner = DragOwner::None;
@@ -3285,6 +3393,15 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event)
         emit viewportChanged();
         update();
         event->accept();
+    }
+
+    if (m_impl->dragOwner == DragOwner::Tool && m_impl->drawing && m_impl->controller) {
+        double slideX = 0.0;
+        double slideY = 0.0;
+        m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
+        m_impl->drawCurrentSlide = core::PointF{slideX, slideY};
+        event->accept();
+        update();
     }
 
     if (m_impl->controller) {

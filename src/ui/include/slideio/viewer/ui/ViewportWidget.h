@@ -14,6 +14,13 @@
 #include <string>
 #include <vector>
 
+class QPainter;
+
+namespace slideio::viewer::app
+{
+class AnnotationModel;
+}
+
 namespace slideio::viewer::ui
 {
 
@@ -103,6 +110,10 @@ public:
     void setActiveTool(AnnotationTool tool);
     [[nodiscard]] AnnotationTool activeTool() const;
 
+    /// The open slide's annotations. Owned by the widget, as the viewport
+    /// controller is; never null. Cleared whenever the open slide changes.
+    [[nodiscard]] app::AnnotationModel* annotationModel() const;
+
     // The colour profile of the scene currently being read. Default-constructed
     // when no slide is open.
     core::ColorProfileInfo activeColorProfileInfo() const;
@@ -136,6 +147,7 @@ protected:
 
 private:
     void updateCursor();
+    void paintAnnotations(QPainter& painter);
     void installSceneOpenResult(uint64_t opId, SceneOpenResult result);
 
     // Drops the GPU textures of every tile not in `keep`'s colour mode so the
