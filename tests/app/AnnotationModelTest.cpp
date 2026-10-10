@@ -469,3 +469,42 @@ TEST_CASE("replaceAll skips annotations with an empty id", "[app][AnnotationMode
     REQUIRE(model.annotations().size() == 1);
     REQUIRE(model.annotations().front().id() == "ok");
 }
+
+TEST_CASE("insert refuses an id already in the model", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    model.insert(core::Annotation("same", core::AnnotationType::Rectangle,
+                                  core::RectangleGeometry{core::PointF{0.0, 0.0},
+                                                          core::PointF{1.0, 1.0}}));
+
+    int added = 0;
+    QObject::connect(&model, &app::AnnotationModel::annotationAdded,
+                     &model, [&added](const std::string&) { ++added; });
+
+    model.insert(core::Annotation("same", core::AnnotationType::Rectangle,
+                                  core::RectangleGeometry{core::PointF{5.0, 5.0},
+                                                          core::PointF{6.0, 6.0}}));
+
+    REQUIRE(model.annotations().size() == 1);
+    REQUIRE(added == 0);
+    // The original is the one that survived, not the newcomer.
+    const auto& box = std::get<core::RectangleGeometry>(model.annotations().front().geometry());
+    REQUIRE(box.topLeft.x == 0.0);
+}
+
+TEST_CASE("replaceAll drops duplicate ids", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    std::vector<core::Annotation> loaded;
+    loaded.emplace_back("one", core::AnnotationType::Rectangle,
+                        core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    loaded.emplace_back("one", core::AnnotationType::Rectangle,
+                        core::RectangleGeometry{core::PointF{5.0, 5.0}, core::PointF{6.0, 6.0}});
+    loaded.emplace_back("two", core::AnnotationType::Rectangle,
+                        core::RectangleGeometry{core::PointF{9.0, 9.0}, core::PointF{10.0, 10.0}});
+    model.replaceAll(std::move(loaded));
+
+    REQUIRE(model.annotations().size() == 2);
+    REQUIRE(model.annotations()[0].id() == "one");
+    REQUIRE(model.annotations()[1].id() == "two");
+}

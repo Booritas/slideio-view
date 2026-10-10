@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <set>
 #include <utility>
 
 namespace slideio::viewer::app
@@ -42,7 +43,11 @@ std::string AnnotationModel::add(core::AnnotationType type, core::AnnotationGeom
 
 void AnnotationModel::insert(core::Annotation annotation)
 {
-    if (annotation.id().empty()) {
+    // An empty id cannot be found, removed or moved, and a duplicate makes
+    // hitTest (which scans in reverse) and find (which takes the first match)
+    // disagree about which shape the user is pointing at. Both are states this
+    // model cannot resolve, so neither is stored.
+    if (annotation.id().empty() || find(annotation.id()) != nullptr) {
         return;
     }
     const std::string id = annotation.id();
@@ -52,10 +57,17 @@ void AnnotationModel::insert(core::Annotation annotation)
 
 void AnnotationModel::replaceAll(std::vector<core::Annotation> annotations)
 {
-    annotations.erase(std::remove_if(annotations.begin(), annotations.end(),
-                                     [](const core::Annotation& a) { return a.id().empty(); }),
-                      annotations.end());
-    m_annotations = std::move(annotations);
+    // Entries the model cannot resolve -- an empty id, or an id already kept --
+    // are dropped, the same rule insert() applies one at a time.
+    std::vector<core::Annotation> kept;
+    std::set<std::string> seenIds;
+    kept.reserve(annotations.size());
+    for (core::Annotation& annotation : annotations) {
+        if (!annotation.id().empty() && seenIds.insert(annotation.id()).second) {
+            kept.push_back(std::move(annotation));
+        }
+    }
+    m_annotations = std::move(kept);
 
     // Cleared directly rather than through clearSelection(), which would emit
     // selectionChanged before modelReset: a listener would see a selection
