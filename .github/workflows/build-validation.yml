@@ -101,17 +101,25 @@ jobs:
             libxcb-shape0-dev libxcb-sync-dev libxcb-xfixes0-dev libxcb-xinerama0-dev \
             libxcb-xkb-dev libfontconfig1-dev libfreetype6-dev libdbus-1-dev
 
-      - name: Read the SlideIO submodule revision
+      # The macOS floor reaches SlideIO and its dependencies through the
+      # environment, not through a conan setting, so their package ids do not
+      # change with it -- see build-template.sh. Both caches carry it in the key,
+      # or a tree built for the runner's SDK would be restored and reused.
+      - name: Read the cache inputs
         id: slideio_rev
         shell: bash
-        run: echo "sha=$(git -C extern/slideio rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "sha=$(git -C extern/slideio rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [ "${RUNNER_OS}" = "macOS" ]; then
+            echo "macos=-macos$(tr -d '[:space:]' < conan/macos-deployment-target)" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Cache Conan packages
         uses: actions/cache@v4
         with:
           path: ~/.conan2
-          key: conan-${{ matrix.os }}-${{ hashFiles('conanfile.py', 'conan/profiles/**') }}
-          restore-keys: conan-${{ matrix.os }}-
+          key: conan-${{ matrix.os }}${{ steps.slideio_rev.outputs.macos }}-${{ hashFiles('conanfile.py', 'conan/profiles/**') }}
+          restore-keys: conan-${{ matrix.os }}${{ steps.slideio_rev.outputs.macos }}-
 
       # build-template.sh skips the (long) SlideIO build when this tree is
       # present, so restoring it is what keeps SlideIO off the critical path.
@@ -126,7 +134,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: extern/slideio/build/install
-          key: slideio-v2-${{ matrix.os }}-${{ steps.slideio_rev.outputs.sha }}
+          key: slideio-v2-${{ matrix.os }}${{ steps.slideio_rev.outputs.macos }}-${{ steps.slideio_rev.outputs.sha }}
 
       # A restored cache is trusted by build-template.sh on the strength of one
       # header. Check it carries libraries too before letting the build rely on it.
@@ -152,7 +160,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: extern/slideio/build/install
-          key: slideio-v2-${{ matrix.os }}-${{ steps.slideio_rev.outputs.sha }}
+          key: slideio-v2-${{ matrix.os }}${{ steps.slideio_rev.outputs.macos }}-${{ steps.slideio_rev.outputs.sha }}
 
       - name: Test
         shell: bash
