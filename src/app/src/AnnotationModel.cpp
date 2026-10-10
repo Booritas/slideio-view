@@ -3,6 +3,7 @@
 #include <QUuid>
 
 #include <algorithm>
+#include <chrono>
 #include <utility>
 
 namespace slideio::viewer::app
@@ -28,9 +29,51 @@ AnnotationModel::~AnnotationModel() = default;
 std::string AnnotationModel::add(core::AnnotationType type, core::AnnotationGeometry geometry)
 {
     std::string id = generateId();
-    m_annotations.emplace_back(id, type, std::move(geometry));
+    core::AnnotationMetadata metadata;
+    metadata.author = m_defaultAuthor;
+    const auto now = std::chrono::system_clock::now();
+    metadata.createdAt = now;
+    metadata.modifiedAt = now;
+
+    m_annotations.emplace_back(id, type, std::move(geometry), core::AnnotationProperties{}, metadata);
     emit annotationAdded(id);
     return id;
+}
+
+void AnnotationModel::insert(core::Annotation annotation)
+{
+    if (annotation.id().empty()) {
+        return;
+    }
+    const std::string id = annotation.id();
+    m_annotations.push_back(std::move(annotation));
+    emit annotationAdded(id);
+}
+
+void AnnotationModel::replaceAll(std::vector<core::Annotation> annotations)
+{
+    m_annotations = std::move(annotations);
+
+    // Cleared directly rather than through clearSelection(), which would emit
+    // selectionChanged before modelReset: a listener would see a selection
+    // change for a model it has not been told was replaced yet.
+    const bool hadSelection = !m_selectedId.empty();
+    m_selectedId.clear();
+
+    emit modelReset();
+    if (hadSelection) {
+        emit selectionChanged(m_selectedId);
+    }
+}
+
+void AnnotationModel::setDefaultAuthor(std::string author)
+{
+    m_defaultAuthor = std::move(author);
+}
+
+const std::string& AnnotationModel::defaultAuthor() const
+{
+    return m_defaultAuthor;
 }
 
 bool AnnotationModel::remove(const std::string& id)
