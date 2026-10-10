@@ -354,6 +354,9 @@ TEST_CASE("a slide id mismatch is referred to the resolver, never resolved silen
         REQUIRE(resolverCalls == 1);
         REQUIRE(model.annotations().empty());
         REQUIRE_FALSE(service.isActive());
+        REQUIRE_FALSE(service.isDirty());
+        REQUIRE(service.flush().status == core::SaveStatus::NothingToDo);
+        REQUIRE(repository.saveCount == 0);
     }
 
     SECTION("read-only loads but never saves")
@@ -367,6 +370,7 @@ TEST_CASE("a slide id mismatch is referred to the resolver, never resolved silen
 
         REQUIRE(model.annotations().size() == 1);
         REQUIRE_FALSE(service.isActive());
+        REQUIRE_FALSE(service.isDirty());
         model.remove("a1");
         service.flush();
         REQUIRE(repository.saveCount == 0);
@@ -389,6 +393,29 @@ TEST_CASE("a slide id mismatch is referred to the resolver, never resolved silen
         REQUIRE(service.flush().status == core::SaveStatus::Saved);
         REQUIRE(repository.lastSaved.slideId == "the-open-slide");
     }
+}
+
+TEST_CASE("re-association is written even when the user draws nothing",
+          "[app][AnnotationPersistenceService]")
+{
+    // Otherwise the mismatch dialog returns on every single open.
+    FakeRepository repository;
+    repository.nextLoad = loadedWith("a-different-slide", 0, {rectangle("a1")});
+
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+    service.setMismatchResolver([](const core::AnnotationDocument&, const core::SlideProvenance&) {
+        return AnnotationPersistenceService::MismatchChoice::Reassociate;
+    });
+    service.beginSlide({"the-open-slide", 0}, provenance());
+
+    REQUIRE(service.isActive());
+    REQUIRE(service.isDirty());
+
+    REQUIRE(service.flush().status == core::SaveStatus::Saved);
+    REQUIRE(repository.saveCount == 1);
+    REQUIRE(repository.lastSaved.slideId == "the-open-slide");
+    REQUIRE(repository.lastSaved.annotations.size() == 1);
 }
 
 TEST_CASE("with no resolver installed a mismatch is treated as read-only",

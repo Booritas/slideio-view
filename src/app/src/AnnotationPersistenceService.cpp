@@ -109,6 +109,7 @@ void AnnotationPersistenceService::beginSlide(const core::AnnotationKey& key,
     }
 
     bool writable = true;
+    bool reassociated = false;
     std::vector<core::Annotation> annotations = loaded.document.annotations;
 
     // Both halves of the key: an absent sceneIndex parses as 0, so comparing the
@@ -130,6 +131,7 @@ void AnnotationPersistenceService::beginSlide(const core::AnnotationKey& key,
             // The document adopts this slide's id on the next save; m_key
             // already holds it.
             writable = true;
+            reassociated = true;
             break;
         }
     }
@@ -142,6 +144,13 @@ void AnnotationPersistenceService::beginSlide(const core::AnnotationKey& key,
     m_model.replaceAll(std::move(annotations));
     m_loading = false;
     m_dirty = false;
+    // Re-association is a change to the document -- it adopts this slide's id --
+    // so it has to be written even if the user never draws anything. Without
+    // this the mismatch dialog returns on every open, forever.
+    if (reassociated) {
+        m_dirty = true;
+        m_lastMutation = std::chrono::steady_clock::now();
+    }
     setActive(writable);
 }
 
@@ -168,6 +177,7 @@ core::SaveResult AnnotationPersistenceService::flush()
 
     if (result.status == core::SaveStatus::Saved) {
         m_dirty = false;
+        emit saved(QString::fromStdString(result.path));
     } else {
         // Left dirty on purpose so the next tick retries -- but move the
         // mutation stamp forward, or "the debounce has already elapsed" stays
@@ -199,6 +209,12 @@ core::SaveResult AnnotationPersistenceService::endSlide()
             break;
         }
         result = flush();
+        if (attempt == kMaxRetries - 1 && isFailure(result)) {
+            // Distinct from the per-attempt saveFailed: this one says the
+            // service stopped trying and the work is being dropped.
+            emit saveAbandoned(QString::fromStdString(result.path),
+                               QString::fromStdString(result.message));
+        }
     }
 
     m_autosaveTimer->stop();

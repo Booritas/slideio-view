@@ -48,7 +48,6 @@ public:
     /// Stamped into the metadata of annotations created through add().
     /// Self-asserted and unverified: it identifies, it does not authenticate.
     void setDefaultAuthor(std::string author);
-    [[nodiscard]] const std::string& defaultAuthor() const;
 
     /// False when `id` is unknown. Clears the selection if it named `id`.
     bool remove(const std::string& id);

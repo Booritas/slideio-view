@@ -1045,7 +1045,9 @@ void MainWindow::Impl::buildAnnotationPersistence()
             box.setWindowTitle(tr("Annotations could not be saved"));
             box.setText(tr("%1 annotation(s) could not be saved and will be lost if you continue.")
                             .arg(annotationCount));
-            box.setInformativeText(tr("%1\n\n%2")
+            box.setInformativeText(tr("%1\n\n%2\n\nRetry tries the same folder again, up to five times, "
+                                      "and then the annotations are discarded. To keep them, choose "
+                                      "Choose Another Folder.")
                                        .arg(QString::fromStdString(failure.message),
                                             QString::fromStdString(failure.path)));
             QPushButton* retry = box.addButton(tr("Retry"), QMessageBox::AcceptRole);
@@ -1104,6 +1106,20 @@ void MainWindow::Impl::buildAnnotationPersistence()
                              tr("%1\n\n%2\n\nYour annotations are still open and will be "
                                 "retried. Choose another folder in Preferences if this "
                                 "keeps happening.")
+                                 .arg(message, QDir::toNativeSeparators(path)));
+                     });
+
+    // A write that reached disk ends the run of bad luck, so the next distinct
+    // failure is reported again even if the slide was never reopened.
+    QObject::connect(annotationPersistence.get(), &app::AnnotationPersistenceService::saved,
+                     owner, [this](const QString&) { saveFailureReported = false; });
+
+    QObject::connect(annotationPersistence.get(), &app::AnnotationPersistenceService::saveAbandoned,
+                     owner, [this](const QString& path, const QString& message) {
+                         QMessageBox::critical(
+                             owner, tr("Annotations were discarded"),
+                             tr("Saving failed repeatedly, so the annotations for this slide "
+                                "were discarded.\n\n%1\n\n%2")
                                  .arg(message, QDir::toNativeSeparators(path)));
                      });
 

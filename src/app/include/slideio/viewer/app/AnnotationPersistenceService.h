@@ -92,6 +92,11 @@ public:
 signals:
     void loadFailed(const QString& path, const QString& message);
     void saveFailed(const QString& path, const QString& message);
+    /// A write reached disk. Lets the ui forget a failure it has already reported.
+    void saved(const QString& path);
+    /// endSlide() exhausted its retries and is dropping the annotations. Distinct
+    /// from saveFailed, which fires for every individual attempt.
+    void saveAbandoned(const QString& path, const QString& message);
     /// Whether annotations can be created and written right now. The ui layer
     /// enables and disables the drawing tools from this.
     void activeChanged(bool active);

@@ -214,7 +214,9 @@ The transparency requirement is not met by choosing a good default. It is met
 by the user being able to get to the files:
 
 - **File ▸ Open Annotations Folder** — `QDesktopServices::openUrl` on the
-  workspace. Disabled until the directory exists.
+  workspace. It stays enabled before the directory exists and explains where
+  the folder will be created. A greyed-out item tells a new user nothing; the
+  explanation tells them where their work will go.
 - **A new `PreferencesDialog`** with exactly two fields: the workspace path
   with a browse button, and the user name from §8. No preferences dialog
   exists in the codebase today; this is the minimum one, built to be extended.
@@ -225,8 +227,13 @@ leaving it where they put it.
 
 ### 4.2 A broken workspace is never silently replaced
 
-If the configured workspace is missing or not writable at save time, the
-application reports it, naming the path, and holds the save. It does **not**
+The workspace directory is created on demand: `save()` calls `mkpath` on the
+root, so a workspace that is missing at save time is recreated rather than
+reported. The repository cannot distinguish "never created" (§4, lazy
+creation) from "deleted since", and treating the first as an error would
+contradict the lazy-creation rule. Only a genuinely unwritable location -- a
+read-only share, a path blocked by a file, a permissions failure -- is reported,
+naming the path, with the save held. It does **not**
 fall back to the default directory. A silent fallback puts the user's work
 somewhere they have no reason to look.
 
@@ -584,7 +591,11 @@ The `QTimer` becomes a dumb clock that asks it.
 **core-tests** — the whole of serialization, which is where the data-loss bugs
 live:
 
-- Round-trip: document to JSON to document, every field equal.
+- Round-trip: document to JSON to document, every field equal. This holds
+  exactly only for second-aligned timestamps: `AnnotationModel::add()` stamps
+  `system_clock::now()` with sub-second precision and `formatIso8601Utc`
+  truncates to whole seconds, so the first save/load loses up to 999 ms and the
+  result is exact thereafter.
 - Every `ParseError`: truncated JSON, a JSON array at the root, a missing
   `annotations` key, a string where a number belongs, an unknown geometry
   `type`.

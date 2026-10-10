@@ -253,7 +253,7 @@ TEST_CASE("a slide id that could escape the workspace is refused",
     REQUIRE(dir.isValid());
     JsonAnnotationRepository repository(dir.path().toStdString());
 
-    const char* unsafe[] = {"../escape", "..", "a/b", "a\b", "C:evil", "has space", "pct%2fsep"};
+    const char* unsafe[] = {"../escape", "..", "a/b", "a\\b", "C:evil", "has space", "pct%2fsep"};
     for (const char* id : unsafe) {
         REQUIRE(repository.load({id, 0}).status == LoadStatus::Unreadable);
 
@@ -263,6 +263,10 @@ TEST_CASE("a slide id that could escape the workspace is refused",
 
     // Nothing was created anywhere.
     REQUIRE_FALSE(QFileInfo::exists(dir.path() + "/annotations"));
+
+    // A genuine "../escape" write would land beside the workspace, not in it.
+    const QDir parent(QFileInfo(dir.path()).absolutePath());
+    REQUIRE(parent.entryList({"*.annotations.json"}, QDir::Files).isEmpty());
 }
 
 TEST_CASE("a percent sequence in a slide id is not substituted into",

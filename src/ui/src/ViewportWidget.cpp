@@ -2486,7 +2486,9 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
             provenance.height = m_impl->slideInfo.height;
 
             // Reads the file on the UI thread, unlike ICC resolution in openScene; a slow
-            // or dead share will stall the open until the filesystem times out.
+            // or dead share will stall the open until the filesystem times out. The
+            // autosave flush() has the same exposure every two seconds on a dead
+            // network share.
             m_impl->persistence->beginSlide({m_impl->currentSlideId, m_impl->currentSceneIndex}, provenance);
 
             // beginSlide can come back inactive: an unreadable or malformed

@@ -86,11 +86,6 @@ void AnnotationModel::setDefaultAuthor(std::string author)
     m_defaultAuthor = std::move(author);
 }
 
-const std::string& AnnotationModel::defaultAuthor() const
-{
-    return m_defaultAuthor;
-}
-
 bool AnnotationModel::remove(const std::string& id)
 {
     // Copy before touching anything: `id` may alias m_selectedId, or an
