@@ -393,6 +393,12 @@ struct MainWindow::Impl
             viewportWidget->setActiveTool(AnnotationTool::Rectangle);
         });
 
+        QObject::connect(viewportWidget, &ViewportWidget::activeToolChanged, owner,
+                         [this](AnnotationTool tool) {
+                             panToolAction->setChecked(tool == AnnotationTool::Pan);
+                             rectangleToolAction->setChecked(tool == AnnotationTool::Rectangle);
+                         });
+
         QObject::connect(manageSlideProfilesAction, &QAction::triggered, owner, [this]() {
             const std::string openSlideId = owner->currentSlideId();
             const bool hadOverride =
@@ -623,6 +629,8 @@ struct MainWindow::Impl
             });
 
         QObject::connect(viewportWidget, &ViewportWidget::slideClosed, owner, [this]() {
+            // A drawing tool must never be active with no slide open.
+            viewportWidget->setActiveTool(AnnotationTool::Pan);
             closeAction->setEnabled(false);
             minimapWidget->clearThumbnail();
             statusBarManager->updateCursorPosition(0.0, 0.0);

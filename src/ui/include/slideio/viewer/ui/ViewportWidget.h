@@ -148,6 +148,7 @@ protected:
 private:
     void updateCursor();
     void paintAnnotations(QPainter& painter);
+    void resetAnnotationState();
     void installSceneOpenResult(uint64_t opId, SceneOpenResult result);
 
     // Drops the GPU textures of every tile not in `keep`'s colour mode so the
