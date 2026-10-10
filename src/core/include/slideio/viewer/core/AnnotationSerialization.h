@@ -17,6 +17,7 @@ namespace slideio::viewer::core
 /// empty string. Either produces a file that will not parse back. Callers must
 /// treat an empty result as a failed save rather than writing it out.
 std::string serializeAnnotationDocument(const AnnotationDocument& document);
+
 enum class ParseError
 {
     None,
@@ -28,7 +29,8 @@ enum class ParseError
     /// schemaVersion is higher than this build understands.
     UnsupportedFutureVersion,
     /// The shape is right but a value is not: wrong type, unknown enum,
-    /// unparseable timestamp, non-finite coordinate.
+    /// unparseable timestamp, an out-of-range number. (A coordinate such as 1e400
+    /// never gets this far: the JSON lexer rejects it as MalformedJson.)
     InvalidField,
 };
 

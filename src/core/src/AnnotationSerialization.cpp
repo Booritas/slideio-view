@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <exception>
+#include <limits>
 #include <utility>
 #include <variant>
 
@@ -195,16 +196,39 @@ std::string readString(const json& parent, const char* key, const std::string& f
     return parent.at(key).get<std::string>();
 }
 
-float readFloat(const json& parent, const char* key, float fallback)
+/// Reads an integer that must fit in an int. nlohmann's get<int>() casts
+/// without checking, so 4294967297 silently becomes 1 -- which would walk
+/// straight through the schema-version gate.
+bool readBoundedInt(const json& value, int& out)
 {
-    if (!parent.contains(key) || !parent.at(key).is_number()) {
-        return fallback;
+    if (!value.is_number_integer()) {
+        return false;
     }
-    const double value = parent.at(key).get<double>();
-    if (!std::isfinite(value)) {
-        return fallback;
+    const int64_t wide = value.get<int64_t>();
+    if (wide < std::numeric_limits<int>::min() || wide > std::numeric_limits<int>::max()) {
+        return false;
     }
-    return static_cast<float>(value);
+    out = static_cast<int>(wide);
+    return true;
+}
+
+/// `min` and `max` bound the value in the double domain, before the narrowing
+/// to float -- 1e300 is a finite double and an infinite float.
+bool readBoundedFloat(const json& parent, const char* key, double min, double max, float& out)
+{
+    if (!parent.contains(key)) {
+        return true;        // absent keeps the caller's default
+    }
+    const json& value = parent.at(key);
+    if (!value.is_number()) {
+        return false;
+    }
+    const double wide = value.get<double>();
+    if (!std::isfinite(wide) || wide < min || wide > max) {
+        return false;
+    }
+    out = static_cast<float>(wide);
+    return true;
 }
 
 /// Absent is fine (the field is optional); present but unparseable is not,
@@ -278,8 +302,14 @@ bool readAnnotation(const json& value, Annotation& out, std::string& problem)
         properties.label = readString(source, "label", properties.label);
         properties.classification = readString(source, "classification", properties.classification);
         properties.notes = readString(source, "notes", properties.notes);
-        properties.lineWidth = readFloat(source, "lineWidth", properties.lineWidth);
-        properties.fillOpacity = readFloat(source, "fillOpacity", properties.fillOpacity);
+        if (!readBoundedFloat(source, "lineWidth", 0.01, 1000.0, properties.lineWidth)) {
+            problem = "properties.lineWidth is not a number in 0.01..1000";
+            return false;
+        }
+        if (!readBoundedFloat(source, "fillOpacity", 0.0, 1.0, properties.fillOpacity)) {
+            problem = "properties.fillOpacity is not a number in 0..1";
+            return false;
+        }
         if (source.contains("color")) {
             if (!source.at("color").is_string()
                 || !parseColor(source.at("color").get<std::string>(), properties.color)) {
@@ -322,7 +352,10 @@ ParseResult parseDocument(std::string_view text)
                        "the file has no numeric schemaVersion, so it is not an annotation file");
     }
 
-    const int version = root.at("schemaVersion").get<int>();
+    int version = 0;
+    if (!readBoundedInt(root.at("schemaVersion"), version) || version < 1) {
+        return failure(ParseError::InvalidField, "schemaVersion is not a positive integer");
+    }
     if (version > kCurrentSchemaVersion) {
         return failure(ParseError::UnsupportedFutureVersion,
                        "the file uses schema version " + std::to_string(version)
@@ -332,12 +365,15 @@ ParseResult parseDocument(std::string_view text)
 
     AnnotationDocument document;
     document.schemaVersion = version;
-    document.slideId = readString(root, "slideId", {});
+    if (!root.contains("slideId") || !root.at("slideId").is_string()
+        || root.at("slideId").get<std::string>().empty()) {
+        return failure(ParseError::InvalidField, "slideId is missing or not a non-empty string");
+    }
+    document.slideId = root.at("slideId").get<std::string>();
     if (root.contains("sceneIndex")) {
-        if (!root.at("sceneIndex").is_number_integer()) {
-            return failure(ParseError::InvalidField, "sceneIndex is not an integer");
+        if (!readBoundedInt(root.at("sceneIndex"), document.sceneIndex) || document.sceneIndex < 0) {
+            return failure(ParseError::InvalidField, "sceneIndex is not a non-negative integer");
         }
-        document.sceneIndex = root.at("sceneIndex").get<int>();
     }
 
     if (root.contains("slide") && root.at("slide").is_object()) {
