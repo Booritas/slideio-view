@@ -4,7 +4,7 @@ from conan.tools.cmake import cmake_layout, CMakeDeps, CMakeToolchain
 
 class SlideioViewerConan(ConanFile):
     name = "slideio-viewer"
-    version = "0.1.1"
+    version = "0.1.2"
     settings = "os", "compiler", "build_type", "arch"
     # Pairs with the SLIDEIO_VIEWER_BUILD_BENCHMARKS CMake option; pass
     # -o "&:with_benchmarks=True" with it. Off by default because nothing else
