@@ -25,7 +25,7 @@ Sub-project E as originally scoped was too large for one plan. It is split:
 | **E3** | Write-ahead log, incremental save (architecture §9.4) | Deferred — premature at the hundreds-of-annotations scale the model is built for |
 
 Also out of scope and named here so nobody looks for them: import/export
-(sub-project G), encryption at rest (NFR-SEC-04, a "Should"), and crash
+(sub-project H), encryption at rest (NFR-SEC-04, a "Should"), and crash
 session recovery (NFR-REL-04, which needs E3's WAL).
 
 ### 1.1 Follow-ups this design closes
@@ -64,9 +64,9 @@ to them. QuPath binds entries to images by URI, which breaks when a slide
 moves; our content-derived `computeSlideId` does not.
 
 **The native format is our own JSON; GeoJSON is an export format in
-sub-project G.** FR-ANN-27 says "JSON format (GeoJSON-based)". Taken
+sub-project H.** FR-ANN-27 says "JSON format (GeoJSON-based)". Taken
 literally, that makes the stored record of what a clinician drew a GeoJSON
-`FeatureCollection` — which has no ellipse, so sub-project C's ellipses would
+`FeatureCollection` — which has no ellipse, so sub-project A's ellipses would
 be stored as polygon approximations, or as an approximation plus exact
 parameters in a foreign member that can disagree with it. A native format
 must not be lossy, and under EU MDR and the EU AI Act's traceability
@@ -163,9 +163,9 @@ silent loss of another scene's work.
 Architecture §9.2's schema is ahead of the code in three places. Version 1
 omits all three rather than emitting nulls:
 
-- `layers` — no layer concept exists (sub-project D).
+- `layers` — no layer concept exists (sub-project A, which owns layers).
 - `confidence` — no AI-assisted annotation exists (Stage 5).
-- `calibrationSource` — no measurement calibration exists (sub-project H).
+- `calibrationSource` — no measurement calibration exists (sub-project G).
 
 Each arrives with its sub-project, as a schema version bump. Absence is
 cheaper to add to than a field full of nulls is to give meaning to.
@@ -559,7 +559,7 @@ annotation `author` field is derived and which is not editable per annotation.
 An author name is personal data, and it travels inside a file users will send
 to colleagues. Under GDPR that makes its handling a design concern rather than
 an afterthought: this design puts it in exactly one place in the schema so that
-NFR-SEC-03's "export for sharing" redaction, in sub-project G, has a single
+NFR-SEC-03's "export for sharing" redaction, in sub-project H, has a single
 field to strip rather than a search to perform.
 
 ---
@@ -662,7 +662,7 @@ Named so that their absence reads as a decision rather than an oversight.
 - **No crash recovery.** Up to the autosave interval of work is lost on a hard
   kill. NFR-REL-04 wants better; it needs E3.
 - **No clamping to the slide extent.** See §1.1.
-- **No import or export.** Sub-project G.
+- **No import or export.** Sub-project H.
 - **No encryption.** NFR-SEC-04 is a "Should", and an institutional keystore is
   a project of its own.
 - **No migration code.** Only version 1 exists. The branch is specified in §3.4

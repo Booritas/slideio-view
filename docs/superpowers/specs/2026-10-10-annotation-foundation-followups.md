@@ -16,7 +16,7 @@ the reports are gone.
 
 ---
 
-## Must be fixed before the next geometry type (sub-project C)
+## Must be fixed before the next geometry type (one each in A, B and C)
 
 These are guarded by `static_assert(std::variant_size_v<core::AnnotationGeometry> == 1)`
 at both sites, so **widening the variant fails to compile until they are addressed.**

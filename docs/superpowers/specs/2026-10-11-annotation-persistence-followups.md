@@ -24,25 +24,34 @@ not cover.
 
 ## Not yet verified at all
 
-0. **Nothing in this sub-project has been run against a real slide.** No test
-   suite creates a `QApplication`, so no widget can be constructed in a test,
-   and every implementer was barred from launching the viewer. The whole
+0. **Most of this sub-project has still not been run against a real slide.** No
+   test suite creates a `QApplication`, so no widget can be constructed in a
+   test, and every implementer was barred from launching the viewer. The
    subsystem's value rests on behaviours only the running application
-   exercises. The checks that matter most, in order:
+   exercises.
 
-   1. Draw two rectangles, close the slide, reopen — both return.
-   2. With rectangles on screen, change the slide's ICC profile. **This is the
-      defect that justified the design** (foundation follow-up item 4): the
-      slide reopens through `closeSlide()` and the annotations must still be
-      there.
-   3. Open an associated image (label or macro). The Rectangle tool is disabled.
-   4. The file at `<Documents>/SlideIO Viewer/annotations/<id>.s0.annotations.json`
-      opens in a text editor as readable JSON naming the slide.
-   5. Hand-break a saved file's JSON, reopen: a dialog names the file and the
+   **Verified by the user, 2026-10-11:** annotation creation and saving work.
+
+   Still unverified, in the order they matter:
+
+   1. **With rectangles on screen, change the slide's ICC profile.** This is
+      the defect that justified the whole design (foundation follow-up item 4):
+      the slide reopens through `closeSlide()`, and the annotations must still
+      be there. **The single most important outstanding check.**
+   2. Hand-break a saved file's JSON, reopen: a dialog names the file and the
       problem, the tool is disabled, and **the broken file is unchanged on disk
-      afterwards**. This is the governing rule of the whole design.
-   6. Change a saved file's `slideId`, reopen: the three-way mismatch dialog
-      appears, and each of its three outcomes behaves as §7 describes.
+      afterwards**. This is the governing rule of the whole design, and the one
+      failure that would cost a clinician their work.
+   3. Change a saved file's `slideId`, reopen: the three-way mismatch dialog
+      appears, and each of its three outcomes behaves as §7 describes. Note
+      that "Use for This Slide" must survive a close *without drawing* — that
+      was a late fix and is the shape of bug that reappears.
+   4. Open an associated image (label or macro). The Rectangle tool is disabled.
+   5. On a read-only slide (resolve a mismatch as "Open Read-Only"), try to drag
+      an annotation and to press Delete. Neither must change anything, and the
+      status bar should say why.
+   6. Draw, then quit the application **without closing the slide**. The work
+      must be on disk — that path is `closeEvent`, not autosave.
 
 ---
 
@@ -175,16 +184,27 @@ in the code it covers.
 
 ## Owned by a later sub-project
 
+**The Stage 3 sub-project decomposition lives in
+`2026-10-08-annotation-foundation-design.md`, under "Where this sits in Stage 3".**
+A — domain model; B — overlay rendering; C — drawing tools and interaction;
+D — undo/redo; E — model, persistence, autosave, locking; F — list, properties
+and layer panels; G — measurement and calibration; H — import/export. Layers
+belong to A, not to a sub-project of their own.
+
 These are carried from `2026-10-10-annotation-foundation-followups.md` and
 remain open.
 
-- **Sub-project C (more geometry types)** — items 1, 2 and 3 of the foundation
-  list: the move handler rebuilds every annotation as a `RectangleGeometry`;
-  `paintAnnotations` has no per-type dispatch; `AnnotationType` and the geometry
-  variant are independent constructor arguments. All three are guarded by
+- **Widening `AnnotationGeometry` spans A, B and C** — items 1, 2 and 3 of the
+  foundation list, one per sub-project: `AnnotationType` and the geometry
+  variant are independent constructor arguments and can disagree (**A**, the
+  domain model); `paintAnnotations` has no per-type dispatch and always draws a
+  bounding box (**B**, overlay rendering); the move handler rebuilds every
+  annotation as a `RectangleGeometry` (**C**, drawing tools and interaction).
+  All three are guarded by
   `static_assert(std::variant_size_v<core::AnnotationGeometry> == 1)`, so
-  **widening the variant fails to compile until they are addressed** — which is
-  deliberate, the alternative being silent data corruption.
+  **adding a second geometry type fails to compile until they are addressed** —
+  which is deliberate, the alternative being silent data corruption the first
+  time someone dragged an ellipse.
 - **Sub-project F (panels)** — items 7 and 8: `ViewportWidget` never connects to
   `AnnotationModel`'s signals (it repaints because it is the only mutator, which
   stops being true the moment a panel edits an annotation), and the app-layer
@@ -195,10 +215,12 @@ remain open.
 - **Sub-project E3** — write-ahead log and incremental save, and with it
   NFR-REL-04 crash recovery. Up to one autosave interval of work is lost on a
   hard kill.
-- **Sub-project G** — import and export, including the GeoJSON interchange that
-  FR-ANN-27 originally called for as the native format, and NFR-SEC-03's
-  "export for sharing" redaction, which §8 of the design spec was written to
-  make implementable.
+- **Sub-project H** — import and export (QuPath GeoJSON, ASAP XML, CSV),
+  including the GeoJSON interchange that FR-ANN-27 originally called for as the
+  native format, and NFR-SEC-03's "export for sharing" redaction, which §8 of
+  the design spec was written to make implementable.
+- **Sub-project G** — measurement and calibration, which is where
+  `calibrationSource` (omitted from schema version 1, §3.3) arrives.
 
 ---
 
