@@ -88,6 +88,25 @@ TEST_CASE("hitTest works on an inverted rectangle", "[core][AnnotationGeometry]"
     REQUIRE(hitTest(rect(110.0, 70.0, 10.0, 20.0), PointF{50.0, 40.0}, 0.0));
 }
 
+// Foundation follow-up item 12. A zero-extent rectangle is real data, not a
+// malformed one: withMinimumExtent exists precisely because integer mouse
+// deltas make a short horizontal or vertical drag land with no extent on one
+// axis. Such a shape must still be selectable within the click tolerance, or
+// the user draws something they can never select again.
+TEST_CASE("hitTest respects tolerance on a degenerate rectangle", "[core][AnnotationGeometry]")
+{
+    const AnnotationGeometry point = rect(10.0, 20.0, 10.0, 20.0);
+    REQUIRE(hitTest(point, PointF{10.0, 20.0}, 0.0));
+    REQUIRE(hitTest(point, PointF{13.0, 20.0}, 5.0));
+    REQUIRE(hitTest(point, PointF{10.0, 24.0}, 5.0));
+    REQUIRE_FALSE(hitTest(point, PointF{20.0, 20.0}, 5.0));
+
+    // Zero extent on one axis only -- the common case, from a short drag.
+    const AnnotationGeometry line = rect(10.0, 20.0, 110.0, 20.0);
+    REQUIRE(hitTest(line, PointF{50.0, 23.0}, 5.0));
+    REQUIRE_FALSE(hitTest(line, PointF{50.0, 27.0}, 5.0));
+}
+
 TEST_CASE("typeOf reports a rectangle", "[core][AnnotationGeometry]")
 {
     REQUIRE(typeOf(rect(0.0, 0.0, 10.0, 10.0)) == AnnotationType::Rectangle);

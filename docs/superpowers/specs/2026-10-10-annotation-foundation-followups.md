@@ -134,11 +134,11 @@ way it did.
 12. **Tolerance on a degenerate rectangle is untested.** `hitTest` with a
     zero-extent box and a non-zero tolerance. Add in C.
 
-    **Still open as of 2026-10-12.** The geometry-widening design (§8.1)
-    scheduled this test, but `tests/core/AnnotationGeometryTest.cpp` has none:
-    the degenerate-shape cases there are a zero-extent `boundingBox` (no
-    tolerance), and a polygon with identical vertices. Close this when a
-    `hitTest` on a zero-extent rectangle with non-zero tolerance exists.
+    **Closed 2026-10-12.** The geometry-widening design (§8.1) scheduled this
+    test and the plan listed it without specifying it, so it was not written
+    until a later check found the gap. `hitTest respects tolerance on a
+    degenerate rectangle` in `tests/core/AnnotationGeometryTest.cpp` now covers
+    a point-like box and a box degenerate on one axis; it passes.
 
 13. **The preview rectangle repeats the committed path's screen-rect
     conversion.** `ViewportWidget.cpp`. Duplication, not a defect.
