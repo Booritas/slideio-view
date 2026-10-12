@@ -547,6 +547,15 @@ struct MainWindow::Impl
                              rectangleToolAction->setEnabled(available);
                              polygonToolAction->setEnabled(available);
                              freehandToolAction->setEnabled(available);
+                             // Mirror that disabled state somewhere the user can
+                             // actually see it. A disabled menu item renders
+                             // identically to an enabled one, and the transient
+                             // message below is gone in four seconds -- so without
+                             // this, a user who reaches for a tool a minute later
+                             // gets silence and no way to learn why. Set before the
+                             // early return, so closing a slide clears it too.
+                             statusBarManager->setAnnotationsBlocked(
+                                 !available && viewportWidget->isSlideOpen(), reason);
                              if (available || !viewportWidget->isSlideOpen()) {
                                  // Either fine, or the transient "no slide" that
                                  // every slide switch emits -- leave the tool alone,

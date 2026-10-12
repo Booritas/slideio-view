@@ -19,6 +19,7 @@ StatusBarManager::StatusBarManager(QObject* parent)
     , m_statusBar(nullptr)
     , m_cursorLabel(nullptr)
     , m_magnificationLabel(nullptr)
+    , m_annotationsLabel(nullptr)
     , m_colorLabel(nullptr)
     , m_loadingIndicator(nullptr)
 {
@@ -45,6 +46,13 @@ void StatusBarManager::setup(QStatusBar* statusBar)
     m_magnificationLabel = new QLabel("100%", m_statusBar);
     m_magnificationLabel->setMinimumWidth(100);
     m_statusBar->addPermanentWidget(m_magnificationLabel);
+
+    // Amber rather than the bar's uniform #CCCCCC: this reports a state the
+    // user is blocked by, not a readout like the cursor position beside it.
+    m_annotationsLabel = new QLabel(QString(), m_statusBar);
+    m_annotationsLabel->setStyleSheet("QLabel { color: #D9A441; padding: 0 8px; }");
+    m_annotationsLabel->setVisible(false);
+    m_statusBar->addPermanentWidget(m_annotationsLabel);
 
     m_colorLabel = new QLabel(QString(), m_statusBar);
     m_colorLabel->setVisible(false);
@@ -106,6 +114,19 @@ void StatusBarManager::setColorManaged(bool managed)
     }
     m_colorLabel->setText(managed ? QStringLiteral("sRGB") : QString());
     m_colorLabel->setVisible(managed);
+}
+
+void StatusBarManager::setAnnotationsBlocked(bool blocked, const QString& reason)
+{
+    if (!m_annotationsLabel) {
+        return;
+    }
+    m_annotationsLabel->setText(blocked ? tr("Annotations disabled") : QString());
+    // The reason is the only place the cause is stated once the transient
+    // message has expired, so it is cleared with the label rather than left
+    // behind to describe a slide that is no longer open.
+    m_annotationsLabel->setToolTip(blocked ? reason : QString());
+    m_annotationsLabel->setVisible(blocked);
 }
 
 void StatusBarManager::showTransientMessage(const QString& text)

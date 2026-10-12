@@ -2,7 +2,8 @@
 
 **Date:** 2026-10-11
 **Updated:** 2026-10-12 — item 0 carries the results of the P1-P17 verification run
-against `main` @ `bc3aeb6`; items 18 and 19 are new, found during it.
+against `main` @ `bc3aeb6`; items 18 and 19 are new, found during it. Item 19 is
+partly fixed (status-bar indicator); its app-wide half remains open.
 **Status:** Open
 **Covers:** `main` @ `ca38c5d` (merge of `annotation-persistence`) and `c819a54`
 **Spec:** `2026-10-10-annotation-persistence-design.md`
@@ -482,13 +483,41 @@ in the code it covers.
     application is broken", and the second most likely is to keep clicking.
 
     Qt delivers no click for a disabled action, so the fix cannot be a message
-    on the attempt. Two directions, neither chosen here: dim disabled text
-    explicitly (a palette `Disabled`/`WindowText` role, or a `QMenu::item:disabled`
-    rule), or — better, because it does not depend on menu styling at all —
-    make the read-only state **persistently** visible the way zoom and `sRGB`
-    already are in the status bar. The second also covers the case where the
-    user never saw the transient message because a `statusTip` hover replaced
-    it, which check P13 notes is easy to do.
+    on the attempt. Two directions: dim disabled text explicitly (a palette
+    `Disabled`/`WindowText` role, or a `QMenu::item:disabled` rule), or — better,
+    because it does not depend on menu styling at all — make the state
+    **persistently** visible the way zoom and `sRGB` already are in the status
+    bar. The second also covers the case where the user never saw the transient
+    message because a `statusTip` hover replaced it, which check P13 notes is
+    easy to do.
+
+    **Partly fixed, 2026-10-12 — the second direction only.** `StatusBarManager`
+    gained `setAnnotationsBlocked(bool, reason)`, built on the same
+    hidden-by-default permanent-label pattern as `setColorManaged`. It shows an
+    amber **"Annotations disabled"** between the magnification and colour
+    readouts, carrying the gate's existing `reason` string verbatim as its
+    tooltip — so the cause stays reachable instead of expiring after four
+    seconds. `MainWindow`'s `annotationsAvailableChanged` handler drives it
+    alongside the three `setEnabled` calls, *before* its early return, so the
+    "No slide is open." emission clears it rather than leaving it stale.
+    `ViewportWidget` is untouched and the signal is unchanged; the transient
+    message is kept, since it is still right at the moment of the event.
+
+    Verified manually (no suite can construct a widget): absent on a normal
+    slide; present with the correct tooltip on a read-only slide **eight seconds
+    after the transient expired**; cleared by File ▸ Close. All four suites pass
+    and the build is warning-free.
+
+    **This item stays open.** The fix makes the *annotation* gate visible; it
+    does nothing about the underlying defect, which is app-wide. Every other
+    disabled action in the application — everything in File and View that
+    greys out when no slide is open — is still indistinguishable from an
+    enabled one. The first direction above is unattempted, and carries a real
+    risk worth knowing before someone starts: Qt's Windows 11 style draws menus
+    natively and may ignore the palette, in which case the only lever is a
+    `QMenu` stylesheet, which switches every menu in the application to
+    stylesheet rendering and changes how they all look. That needs verifying
+    before it is chosen, not after.
 
 ---
 
