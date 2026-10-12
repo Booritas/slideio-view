@@ -13,6 +13,7 @@
 #include <exception>
 #include <limits>
 #include <set>
+#include <type_traits>
 #include <utility>
 #include <variant>
 
@@ -34,13 +35,14 @@ bool isFinitePoint(const PointF& point)
     return std::isfinite(point.x) && std::isfinite(point.y);
 }
 
+bool isRepresentableShape(const RectangleGeometry& rectangle)
+{
+    return isFinitePoint(rectangle.topLeft) && isFinitePoint(rectangle.bottomRight);
+}
+
 bool isRepresentable(const AnnotationGeometry& geometry)
 {
-    static_assert(std::variant_size_v<AnnotationGeometry> == 1,
-                  "A new geometry alternative needs its own finiteness check and its own "
-                  "JSON shape below; silently writing nulls corrupts the file.");
-    const auto& rectangle = std::get<RectangleGeometry>(geometry);
-    return isFinitePoint(rectangle.topLeft) && isFinitePoint(rectangle.bottomRight);
+    return std::visit([](const auto& shape) { return isRepresentableShape(shape); }, geometry);
 }
 
 // The domains of the two float properties, shared by the writer and the reader.
@@ -77,11 +79,8 @@ json pointToJson(const PointF& point)
     return json{{"x", point.x}, {"y", point.y}};
 }
 
-json geometryToJson(const AnnotationGeometry& geometry)
+json shapeToJson(const RectangleGeometry& rectangle)
 {
-    static_assert(std::variant_size_v<AnnotationGeometry> == 1,
-                  "A new geometry alternative needs its own JSON shape here.");
-    const auto& rectangle = std::get<RectangleGeometry>(geometry);
     return json{
         {"type", kRectangleTypeName},
         {"topLeft", pointToJson(rectangle.topLeft)},
@@ -89,12 +88,22 @@ json geometryToJson(const AnnotationGeometry& geometry)
     };
 }
 
-const char* typeName(AnnotationType type)
+json geometryToJson(const AnnotationGeometry& geometry)
 {
-    static_assert(static_cast<int>(AnnotationType::Rectangle) == 0,
-                  "A new AnnotationType needs its own name here.");
-    (void)type;
-    return kRectangleTypeName;
+    return std::visit([](const auto& shape) { return shapeToJson(shape); }, geometry);
+}
+
+/// The annotation-level "type" string. Derived from the geometry, like
+/// Annotation::type() itself, so the two fields of a written file cannot
+/// disagree. On read the field is ignored and the geometry wins.
+const char* geometryTypeName(const AnnotationGeometry& geometry)
+{
+    return std::visit([](const auto& shape) -> const char* {
+        using Shape = std::decay_t<decltype(shape)>;
+        if constexpr (std::is_same_v<Shape, RectangleGeometry>) {
+            return kRectangleTypeName;
+        }
+    }, geometry);
 }
 
 /// Formats `time` into `out`; false when formatIso8601Utc cannot represent it.
@@ -118,7 +127,7 @@ bool annotationToJson(const Annotation& annotation, json& out)
 
     out = json{
         {"id", annotation.id()},
-        {"type", typeName(annotation.type())},
+        {"type", geometryTypeName(annotation.geometry())},
         {"geometry", geometryToJson(annotation.geometry())},
         {"properties", json{
             {"label", properties.label},
@@ -262,22 +271,8 @@ bool readTimestamp(const json& parent, const char* key,
     return true;
 }
 
-bool readGeometry(const json& value, AnnotationGeometry& out, std::string& problem)
+bool readRectangle(const json& value, AnnotationGeometry& out, std::string& problem)
 {
-    static_assert(std::variant_size_v<AnnotationGeometry> == 1,
-                  "A new geometry alternative needs its own branch here.");
-
-    if (!value.is_object() || !value.contains("type") || !value.at("type").is_string()) {
-        problem = "geometry has no type";
-        return false;
-    }
-
-    const std::string type = value.at("type").get<std::string>();
-    if (type != kRectangleTypeName) {
-        problem = "unknown geometry type '" + type + "'";
-        return false;
-    }
-
     RectangleGeometry rectangle;
     if (!value.contains("topLeft") || !readPoint(value.at("topLeft"), rectangle.topLeft)) {
         problem = "geometry.topLeft is not a finite point";
@@ -289,6 +284,27 @@ bool readGeometry(const json& value, AnnotationGeometry& out, std::string& probl
     }
     out = rectangle;
     return true;
+}
+
+bool readGeometry(const json& value, AnnotationGeometry& out, std::string& problem)
+{
+    if (!value.is_object() || !value.contains("type") || !value.at("type").is_string()) {
+        problem = "geometry has no type";
+        return false;
+    }
+
+    const std::string type = value.at("type").get<std::string>();
+    if (type == kRectangleTypeName) {
+        return readRectangle(value, out, problem);
+    }
+
+    // Naming the version is the whole value of this message: schemaVersion
+    // stays at 1 across geometry additions on purpose (design spec 3.2), so an
+    // older build meeting a newer shape fails here rather than at the version
+    // check, and a user needs to be told which it was.
+    problem = "unknown geometry type '" + type
+            + "' -- this file may have been written by a newer version of the viewer";
+    return false;
 }
 
 bool readAnnotation(const json& value, Annotation& out, std::string& problem)
