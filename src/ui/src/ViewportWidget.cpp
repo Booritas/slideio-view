@@ -28,6 +28,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPolygonF>
 #include <QTimer>
 #include <QOpenGLFunctions_3_3_Core>
 #include <QOpenGLShaderProgram>
@@ -2743,8 +2744,7 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
     // A geometry as a screen-space path. core::outline() makes the per-type
     // decision; this is only the Qt conversion, which is why it has no idea
     // what kind of shape it is drawing.
-    const auto screenPath = [&toScreen](const core::AnnotationGeometry& geom) {
-        const core::Outline shape = core::outline(geom);
+    const auto screenPath = [&toScreen](const core::Outline& shape) {
         QPainterPath path;
         // OddEvenFill must match core::hitTest's even-odd ray casting. If these
         // drift apart, a self-intersecting trace is painted solid in regions
@@ -2803,7 +2803,7 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         // An open path is never filled: Qt would close it implicitly to do so,
         // inventing a segment the user never drew.
         painter.setBrush(shape.closed ? QBrush(fill) : QBrush(Qt::NoBrush));
-        painter.drawPath(screenPath(annotation.geometry()));
+        painter.drawPath(screenPath(shape));
     }
 
     // Only the selection outline is redrawn here, last, so a later annotation
@@ -2815,16 +2815,24 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
             // traced polygon a box would say "something in this region is
             // selected", and around a thin diagonal line it would be a large
             // box containing a line.
-            const QPainterPath path = screenPath(selected->geometry());
+            const QPainterPath path = screenPath(core::outline(selected->geometry()));
             painter.setBrush(Qt::NoBrush);
             // Two-tone, and not white alone: brightfield H&E glass and tissue are
             // near-white, and paintGL clears the slide rect to white, so a 1 px
             // white dash was invisible on the commonest slide type. The user
             // presses Delete on the strength of this outline, so it has to read
             // against both a pale slide and a dark background.
-            painter.setPen(QPen(QColor(0x00, 0x00, 0x00), 3.0, Qt::SolidLine));
+            // Round join and cap like the body pen, so the underlay does not
+            // show bevelled corners beneath a rounded stroke on a traced shape.
+            QPen underlay(QColor(0x00, 0x00, 0x00), 3.0, Qt::SolidLine);
+            underlay.setJoinStyle(Qt::RoundJoin);
+            underlay.setCapStyle(Qt::RoundCap);
+            painter.setPen(underlay);
             painter.drawPath(path);
-            painter.setPen(QPen(QColor(0xFF, 0xFF, 0xFF), 1.0, Qt::DashLine));
+            QPen overlay(QColor(0xFF, 0xFF, 0xFF), 1.0, Qt::DashLine);
+            overlay.setJoinStyle(Qt::RoundJoin);
+            overlay.setCapStyle(Qt::RoundCap);
+            painter.setPen(overlay);
             painter.drawPath(path);
         }
     }
@@ -2837,6 +2845,50 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         painter.setPen(QPen(QColor(0xE6, 0x7E, 0x22), 2.0, Qt::DashLine));
         painter.setBrush(Qt::NoBrush);
         painter.drawRect(preview);
+    }
+
+    // The polygon or freehand line being traced, likewise not in the model yet.
+    if (m_impl->pending.active && !m_impl->pending.vertices.empty()) {
+        const QColor previewColor(0xE6, 0x7E, 0x22);
+        QPen previewPen(previewColor, 2.0, Qt::DashLine);
+        previewPen.setJoinStyle(Qt::RoundJoin);
+        previewPen.setCapStyle(Qt::RoundCap);
+        painter.setPen(previewPen);
+        painter.setBrush(Qt::NoBrush);
+
+        QPolygonF placed;
+        placed.reserve(static_cast<int>(m_impl->pending.vertices.size()));
+        for (const core::PointF& vertex : m_impl->pending.vertices) {
+            placed.append(toScreen(vertex));
+        }
+        if (placed.size() > 1) {
+            painter.drawPolyline(placed);
+        }
+
+        // The rubber band from the last placed vertex to the cursor. Safe on a
+        // single vertex: the enclosing guard makes `placed` non-empty.
+        const QPointF cursor = toScreen(m_impl->pending.cursorSlide);
+        painter.drawLine(placed.back(), cursor);
+
+        if (m_impl->pending.closed && placed.size() >= 2) {
+            // A fainter segment back to the first vertex, so the user can see
+            // the shape they will get rather than guess it.
+            QColor ghost = previewColor;
+            ghost.setAlpha(0x60);
+            painter.setPen(QPen(ghost, 2.0, Qt::DotLine));
+            painter.drawLine(cursor, placed.front());
+            painter.setPen(previewPen);
+        }
+
+        // The close target. This marker is the only thing that makes
+        // click-to-close discoverable -- without it the gesture exists but
+        // nobody finds it. Same condition as the press handler's commit.
+        if (m_impl->pending.closed && m_impl->pending.vertices.size() >= core::kMinPolygonVertices
+            && closesOnFirstVertex(m_impl->pending.vertices.front(), m_impl->pending.cursorSlide, vp.scale())) {
+            painter.setBrush(QBrush(previewColor));
+            painter.drawEllipse(placed.front(), kHitToleranceScreenPixels, kHitToleranceScreenPixels);
+            painter.setBrush(Qt::NoBrush);
+        }
     }
 }
 
