@@ -5,6 +5,8 @@
 
 #include <Qt>
 
+#include <cstddef>
+
 namespace slideio::viewer::ui
 {
 
@@ -12,6 +14,8 @@ enum class AnnotationTool
 {
     Pan,
     Rectangle,
+    Polygon,
+    Freehand,
 };
 
 enum class DragOwner
@@ -25,6 +29,35 @@ enum class DragOwner
 /// Screen-space radius within which a click counts as hitting an annotation.
 /// Screen-space so the target stays the same physical size at 1x and at 40x.
 constexpr double kHitToleranceScreenPixels = 6.0;
+
+/// Minimum screen-pixel gap between consecutive points of a trailed trace.
+/// Screen-space, like every other tolerance here, so a trace has the same
+/// density at 1x and at 40x. This is the only control on how many vertices a
+/// freehand outline accumulates -- the serializer deliberately imposes no
+/// maximum, because a dense trace is legitimate data.
+constexpr double kTrailMinScreenPixels = 2.0;
+
+/// True for the tools that build a shape across several press/release pairs.
+/// Those tools need pending-shape state that outlives a drag, which the
+/// Rectangle tool does not.
+[[nodiscard]] bool isNPointTool(AnnotationTool tool);
+
+/// True when the cursor has moved far enough from the last placed vertex to
+/// deserve another one. False for a non-positive scale: with no usable
+/// transform, appending on every event would bury the shape in duplicates.
+[[nodiscard]] bool shouldAppendTrailPoint(core::PointF lastSlide, core::PointF cursorSlide,
+                                          double viewportScale);
+
+/// True when a click at `cursorSlide` lands on the shape's first vertex and so
+/// closes it. Reuses the click-target radius rather than introducing a second
+/// screen-space constant for the same kind of question.
+[[nodiscard]] bool closesOnFirstVertex(core::PointF firstVertexSlide, core::PointF cursorSlide,
+                                       double viewportScale);
+
+/// True when a pending shape has enough vertices to become an annotation.
+/// Mirrors core::kMinPolygonVertices / kMinPolylineVertices: a commit below
+/// them is discarded, the way an undersized rectangle drag already is.
+[[nodiscard]] bool pendingShapeCommits(std::size_t vertexCount, bool closed);
 
 /// Decides who owns a drag beginning with `button`.
 ///

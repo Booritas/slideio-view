@@ -3,6 +3,7 @@
 #include "slideio/viewer/ui/AnnotationInteraction.h"
 
 using namespace slideio::viewer::ui;
+namespace core = slideio::viewer::core;
 
 TEST_CASE("middle button always pans, whatever the tool", "[ui][AnnotationInteraction]")
 {
@@ -155,4 +156,86 @@ TEST_CASE("a non-positive scale rejects every drag", "[ui][AnnotationInteraction
 {
     REQUIRE_FALSE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 300, 300}, 0.0, 6.0));
     REQUIRE_FALSE(dragExceedsMinimumSize(slideio::viewer::core::RectF{0, 0, 300, 300}, -1.0, 6.0));
+}
+
+TEST_CASE("isNPointTool identifies the multi-click tools", "[ui][AnnotationInteraction]")
+{
+    REQUIRE(isNPointTool(AnnotationTool::Polygon));
+    REQUIRE(isNPointTool(AnnotationTool::Freehand));
+    REQUIRE_FALSE(isNPointTool(AnnotationTool::Rectangle));
+    REQUIRE_FALSE(isNPointTool(AnnotationTool::Pan));
+}
+
+TEST_CASE("the new tools own their drags", "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveDragOwner(Qt::LeftButton, Qt::NoModifier, false,
+                             AnnotationTool::Polygon, false) == DragOwner::Tool);
+    REQUIRE(resolveDragOwner(Qt::LeftButton, Qt::NoModifier, false,
+                             AnnotationTool::Freehand, true) == DragOwner::Tool);
+}
+
+// Held space and the middle button pan whatever the tool -- the rule that lets
+// a user reposition the slide without abandoning a half-traced outline.
+TEST_CASE("space and the middle button still pan with an N-point tool active",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveDragOwner(Qt::LeftButton, Qt::NoModifier, true,
+                             AnnotationTool::Polygon, false) == DragOwner::Pan);
+    REQUIRE(resolveDragOwner(Qt::MiddleButton, Qt::NoModifier, false,
+                             AnnotationTool::Polygon, false) == DragOwner::Pan);
+}
+
+// Screen-space, so a trace has the same vertex density at 1x and at 40x.
+TEST_CASE("shouldAppendTrailPoint measures the gap in screen pixels",
+          "[ui][AnnotationInteraction]")
+{
+    // scale 1.0: 1 slide unit is 1 screen pixel, so 2 units clears the 2 px bar.
+    REQUIRE(shouldAppendTrailPoint(core::PointF{0.0, 0.0}, core::PointF{2.0, 0.0}, 1.0));
+    REQUIRE_FALSE(shouldAppendTrailPoint(core::PointF{0.0, 0.0}, core::PointF{1.0, 0.0}, 1.0));
+
+    // scale 0.1 (zoomed out): the same 2 slide units is 0.2 screen pixels.
+    REQUIRE_FALSE(shouldAppendTrailPoint(core::PointF{0.0, 0.0}, core::PointF{2.0, 0.0}, 0.1));
+    REQUIRE(shouldAppendTrailPoint(core::PointF{0.0, 0.0}, core::PointF{20.0, 0.0}, 0.1));
+}
+
+TEST_CASE("shouldAppendTrailPoint measures diagonally", "[ui][AnnotationInteraction]")
+{
+    REQUIRE(shouldAppendTrailPoint(core::PointF{0.0, 0.0}, core::PointF{1.5, 1.5}, 1.0));
+    REQUIRE_FALSE(shouldAppendTrailPoint(core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}, 1.0));
+}
+
+// A non-positive scale means the viewport has no usable transform; appending
+// on every event would bury the shape in duplicate vertices.
+TEST_CASE("shouldAppendTrailPoint refuses a non-positive scale",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE_FALSE(shouldAppendTrailPoint(core::PointF{0.0, 0.0}, core::PointF{1e6, 0.0}, 0.0));
+    REQUIRE_FALSE(shouldAppendTrailPoint(core::PointF{0.0, 0.0}, core::PointF{1e6, 0.0}, -1.0));
+}
+
+TEST_CASE("closesOnFirstVertex uses the click target radius",
+          "[ui][AnnotationInteraction]")
+{
+    // kHitToleranceScreenPixels is 6.0.
+    REQUIRE(closesOnFirstVertex(core::PointF{0.0, 0.0}, core::PointF{5.0, 0.0}, 1.0));
+    REQUIRE_FALSE(closesOnFirstVertex(core::PointF{0.0, 0.0}, core::PointF{7.0, 0.0}, 1.0));
+    // At 40x the same physical target is a fraction of a slide unit.
+    REQUIRE(closesOnFirstVertex(core::PointF{0.0, 0.0}, core::PointF{0.1, 0.0}, 40.0));
+    REQUIRE_FALSE(closesOnFirstVertex(core::PointF{0.0, 0.0}, core::PointF{1.0, 0.0}, 40.0));
+}
+
+TEST_CASE("closesOnFirstVertex refuses a non-positive scale",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE_FALSE(closesOnFirstVertex(core::PointF{0.0, 0.0}, core::PointF{0.0, 0.0}, 0.0));
+}
+
+TEST_CASE("pendingShapeCommits enforces the geometry minimums",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE_FALSE(pendingShapeCommits(0, true));
+    REQUIRE_FALSE(pendingShapeCommits(2, true));
+    REQUIRE(pendingShapeCommits(3, true));
+    REQUIRE_FALSE(pendingShapeCommits(1, false));
+    REQUIRE(pendingShapeCommits(2, false));
 }

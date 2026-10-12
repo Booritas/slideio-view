@@ -1,6 +1,7 @@
 #include "slideio/viewer/ui/AnnotationInteraction.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace slideio::viewer::ui
 {
@@ -57,6 +58,38 @@ core::RectF withMinimumExtent(const core::RectF& box, double minExtentSlideUnits
         result.height = minimum;
     }
     return result;
+}
+
+bool isNPointTool(AnnotationTool tool)
+{
+    return tool == AnnotationTool::Polygon || tool == AnnotationTool::Freehand;
+}
+
+bool shouldAppendTrailPoint(core::PointF lastSlide, core::PointF cursorSlide,
+                            double viewportScale)
+{
+    if (viewportScale <= 0.0) {
+        return false;
+    }
+    const double dxScreen = (cursorSlide.x - lastSlide.x) * viewportScale;
+    const double dyScreen = (cursorSlide.y - lastSlide.y) * viewportScale;
+    return std::hypot(dxScreen, dyScreen) >= kTrailMinScreenPixels;
+}
+
+bool closesOnFirstVertex(core::PointF firstVertexSlide, core::PointF cursorSlide,
+                         double viewportScale)
+{
+    if (viewportScale <= 0.0) {
+        return false;
+    }
+    const double dxScreen = (cursorSlide.x - firstVertexSlide.x) * viewportScale;
+    const double dyScreen = (cursorSlide.y - firstVertexSlide.y) * viewportScale;
+    return std::hypot(dxScreen, dyScreen) <= kHitToleranceScreenPixels;
+}
+
+bool pendingShapeCommits(std::size_t vertexCount, bool closed)
+{
+    return vertexCount >= (closed ? core::kMinPolygonVertices : core::kMinPolylineVertices);
 }
 
 } // namespace slideio::viewer::ui
