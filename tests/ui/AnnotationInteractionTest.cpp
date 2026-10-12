@@ -217,6 +217,7 @@ TEST_CASE("closesOnFirstVertex uses the click target radius",
           "[ui][AnnotationInteraction]")
 {
     // kHitToleranceScreenPixels is 6.0.
+    REQUIRE(closesOnFirstVertex(core::PointF{0.0, 0.0}, core::PointF{6.0, 0.0}, 1.0));
     REQUIRE(closesOnFirstVertex(core::PointF{0.0, 0.0}, core::PointF{5.0, 0.0}, 1.0));
     REQUIRE_FALSE(closesOnFirstVertex(core::PointF{0.0, 0.0}, core::PointF{7.0, 0.0}, 1.0));
     // At 40x the same physical target is a fraction of a slide unit.
@@ -228,6 +229,7 @@ TEST_CASE("closesOnFirstVertex refuses a non-positive scale",
           "[ui][AnnotationInteraction]")
 {
     REQUIRE_FALSE(closesOnFirstVertex(core::PointF{0.0, 0.0}, core::PointF{0.0, 0.0}, 0.0));
+    REQUIRE_FALSE(closesOnFirstVertex(core::PointF{0.0, 0.0}, core::PointF{0.0, 0.0}, -1.0));
 }
 
 TEST_CASE("pendingShapeCommits enforces the geometry minimums",
