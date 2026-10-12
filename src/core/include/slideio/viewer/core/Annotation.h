@@ -9,11 +9,6 @@
 namespace slideio::viewer::core
 {
 
-enum class AnnotationType
-{
-    Rectangle,
-};
-
 struct AnnotationProperties
 {
     std::string label;

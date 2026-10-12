@@ -83,3 +83,50 @@ TEST_CASE("hitTest works on an inverted rectangle", "[core][AnnotationGeometry]"
 {
     REQUIRE(hitTest(rect(110.0, 70.0, 10.0, 20.0), PointF{50.0, 40.0}, 0.0));
 }
+
+TEST_CASE("typeOf reports a rectangle", "[core][AnnotationGeometry]")
+{
+    REQUIRE(typeOf(rect(0.0, 0.0, 10.0, 10.0)) == AnnotationType::Rectangle);
+}
+
+TEST_CASE("outline of a rectangle is four corners, closed", "[core][AnnotationGeometry]")
+{
+    const Outline shape = outline(rect(10.0, 20.0, 110.0, 70.0));
+    REQUIRE(shape.closed);
+    REQUIRE(shape.points.size() == 4);
+    REQUIRE(shape.points[0].x == 10.0);
+    REQUIRE(shape.points[0].y == 20.0);
+    REQUIRE(shape.points[1].x == 110.0);
+    REQUIRE(shape.points[1].y == 20.0);
+    REQUIRE(shape.points[2].x == 110.0);
+    REQUIRE(shape.points[2].y == 70.0);
+    REQUIRE(shape.points[3].x == 10.0);
+    REQUIRE(shape.points[3].y == 70.0);
+}
+
+// An inverted drag is normalised by boundingBox; the outline must agree with
+// it, or a shape would be painted somewhere other than where it hit-tests.
+TEST_CASE("outline normalises an inverted rectangle", "[core][AnnotationGeometry]")
+{
+    const Outline shape = outline(rect(110.0, 70.0, 10.0, 20.0));
+    REQUIRE(shape.points[0].x == 10.0);
+    REQUIRE(shape.points[0].y == 20.0);
+    REQUIRE(shape.points[2].x == 110.0);
+    REQUIRE(shape.points[2].y == 70.0);
+}
+
+TEST_CASE("translated moves a rectangle without resizing it", "[core][AnnotationGeometry]")
+{
+    const RectF box = boundingBox(translated(rect(10.0, 20.0, 110.0, 70.0), 5.0, -3.0));
+    REQUIRE(box.x == 15.0);
+    REQUIRE(box.y == 17.0);
+    REQUIRE(box.width == 100.0);
+    REQUIRE(box.height == 50.0);
+}
+
+TEST_CASE("translated by zero is the identity", "[core][AnnotationGeometry]")
+{
+    const RectF box = boundingBox(translated(rect(10.0, 20.0, 110.0, 70.0), 0.0, 0.0));
+    REQUIRE(box.x == 10.0);
+    REQUIRE(box.y == 20.0);
+}
