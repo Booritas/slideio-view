@@ -6,6 +6,8 @@
 #include <chrono>
 #include <limits>
 #include <string>
+#include <variant>
+#include <vector>
 
 using namespace slideio::viewer::core;
 
@@ -50,6 +52,17 @@ AnnotationDocument makeDocument()
     document.modifiedAt = at(1772683700LL);
     document.annotations.push_back(makeAnnotation());
     return document;
+}
+
+/// A valid one-annotation document whose geometry is `geometryJson` verbatim.
+/// Mirrors the inline raw strings the rest of this file uses, which is how a
+/// hand-edited file reaches the parser.
+std::string documentWithGeometry(const std::string& geometryJson)
+{
+    return std::string(R"({
+        "schemaVersion": 1, "slideId": "x", "sceneIndex": 0, "annotations": [
+          {"id": "a1", "geometry": )") + geometryJson + R"(}
+        ]})";
 }
 
 } // namespace
@@ -729,4 +742,169 @@ TEST_CASE("distinct ids in one document are fine", "[core][AnnotationSerializati
 
     REQUIRE(result.error == ParseError::None);
     REQUIRE(result.document.annotations.size() == 2);
+}
+
+TEST_CASE("a polygon round-trips through the serializer",
+          "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document = makeDocument();
+    document.annotations.clear();
+    document.annotations.push_back(
+        Annotation("poly-1", PolygonGeometry{{PointF{1.5, 2.0}, PointF{30.0, 4.0},
+                                              PointF{10.0, 40.0}}, true}));
+
+    const std::string text = serializeAnnotationDocument(document);
+    REQUIRE_FALSE(text.empty());
+    REQUIRE(text.find("\"polygon\"") != std::string::npos);
+
+    const ParseResult result = parseAnnotationDocument(text);
+    REQUIRE(result.error == ParseError::None);
+    REQUIRE(result.document.annotations.size() == 1);
+
+    const Annotation& back = result.document.annotations.front();
+    REQUIRE(back.type() == AnnotationType::Polygon);
+    const PolygonGeometry& shape = std::get<PolygonGeometry>(back.geometry());
+    REQUIRE(shape.closed);
+    REQUIRE(shape.vertices.size() == 3);
+    REQUIRE(shape.vertices[0].x == 1.5);
+    REQUIRE(shape.vertices[2].y == 40.0);
+}
+
+TEST_CASE("a polyline round-trips and stays open",
+          "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document = makeDocument();
+    document.annotations.clear();
+    document.annotations.push_back(
+        Annotation("line-1", PolygonGeometry{{PointF{0.0, 0.0}, PointF{10.0, 10.0}}, false}));
+
+    const ParseResult result =
+        parseAnnotationDocument(serializeAnnotationDocument(document));
+    REQUIRE(result.error == ParseError::None);
+    const Annotation& back = result.document.annotations.front();
+    REQUIRE(back.type() == AnnotationType::Polyline);
+    REQUIRE_FALSE(std::get<PolygonGeometry>(back.geometry()).closed);
+}
+
+// schemaVersion does not move when a geometry type is added. Bumping it would
+// make every shipped build refuse rectangle-only files during a staggered
+// rollout; not bumping makes an old build fail on the polygon alone and leave
+// the file intact.
+TEST_CASE("adding a geometry type does not bump schemaVersion",
+          "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document = makeDocument();
+    document.annotations.clear();
+    document.annotations.push_back(
+        Annotation("poly-1", PolygonGeometry{{PointF{0.0, 0.0}, PointF{10.0, 0.0},
+                                              PointF{0.0, 10.0}}, true}));
+    REQUIRE(serializeAnnotationDocument(document).find("\"schemaVersion\": 1")
+            != std::string::npos);
+}
+
+// Review Focus 4. A hand-edited file must be rejected with a named problem,
+// not indexed into.
+TEST_CASE("an empty vertices array is rejected", "[core][AnnotationSerialization]")
+{
+    const ParseResult result = parseAnnotationDocument(
+        documentWithGeometry(R"({"type": "polygon", "vertices": []})"));
+    REQUIRE(result.error == ParseError::InvalidField);
+    REQUIRE(result.message.find("vertices") != std::string::npos);
+}
+
+TEST_CASE("a missing vertices key is rejected", "[core][AnnotationSerialization]")
+{
+    const ParseResult result =
+        parseAnnotationDocument(documentWithGeometry(R"({"type": "polygon"})"));
+    REQUIRE(result.error == ParseError::InvalidField);
+    REQUIRE(result.message.find("vertices") != std::string::npos);
+}
+
+TEST_CASE("a vertex that is not an object is rejected",
+          "[core][AnnotationSerialization]")
+{
+    const ParseResult result = parseAnnotationDocument(documentWithGeometry(
+        R"({"type": "polygon", "vertices": [{"x": 0, "y": 0}, 7, {"x": 1, "y": 1}]})"));
+    REQUIRE(result.error == ParseError::InvalidField);
+    REQUIRE(result.message.find("vertices") != std::string::npos);
+}
+
+TEST_CASE("a vertex missing a coordinate is rejected",
+          "[core][AnnotationSerialization]")
+{
+    const ParseResult result = parseAnnotationDocument(documentWithGeometry(
+        R"({"type": "polygon", "vertices": [{"x": 0, "y": 0}, {"x": 1}, {"x": 2, "y": 2}]})"));
+    REQUIRE(result.error == ParseError::InvalidField);
+}
+
+// Note: a literal 1e400 in the file is rejected by the JSON lexer as
+// MalformedJson and never reaches readPolygon -- the header documents this.
+// It is pinned here so the distinction is deliberate rather than a surprise.
+TEST_CASE("an out-of-range vertex literal is malformed JSON",
+          "[core][AnnotationSerialization]")
+{
+    const ParseResult result = parseAnnotationDocument(documentWithGeometry(
+        R"({"type": "polygon",
+            "vertices": [{"x": 0, "y": 0}, {"x": 1e400, "y": 1}, {"x": 2, "y": 2}]})"));
+    REQUIRE(result.error == ParseError::MalformedJson);
+}
+
+TEST_CASE("a two-vertex polygon is rejected", "[core][AnnotationSerialization]")
+{
+    const ParseResult result = parseAnnotationDocument(documentWithGeometry(
+        R"({"type": "polygon", "vertices": [{"x": 0, "y": 0}, {"x": 1, "y": 1}]})"));
+    REQUIRE(result.error == ParseError::InvalidField);
+}
+
+TEST_CASE("a one-vertex polyline is rejected", "[core][AnnotationSerialization]")
+{
+    const ParseResult result = parseAnnotationDocument(documentWithGeometry(
+        R"({"type": "polyline", "vertices": [{"x": 0, "y": 0}]})"));
+    REQUIRE(result.error == ParseError::InvalidField);
+}
+
+// Three collinear vertices are a valid polygon. Pinning this stops a later
+// tightening of "validity" from silently making existing files unloadable.
+TEST_CASE("a collinear polygon is accepted", "[core][AnnotationSerialization]")
+{
+    const ParseResult result = parseAnnotationDocument(documentWithGeometry(
+        R"({"type": "polygon",
+            "vertices": [{"x": 0, "y": 0}, {"x": 1, "y": 0}, {"x": 2, "y": 0}]})"));
+    REQUIRE(result.error == ParseError::None);
+}
+
+// Review Focus 5. The governing rule seen from the writer's side: refusing to
+// write what we would refuse to read is what guarantees the application cannot
+// produce a file it cannot open.
+TEST_CASE("serializing an under-minimum polygon is refused",
+          "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document = makeDocument();
+    document.annotations.clear();
+    document.annotations.push_back(
+        Annotation("bad-1", PolygonGeometry{{PointF{0.0, 0.0}, PointF{1.0, 1.0}}, true}));
+    REQUIRE(serializeAnnotationDocument(document).empty());
+}
+
+TEST_CASE("serializing a polygon with a non-finite vertex is refused",
+          "[core][AnnotationSerialization]")
+{
+    const double infinity = std::numeric_limits<double>::infinity();
+    AnnotationDocument document = makeDocument();
+    document.annotations.clear();
+    document.annotations.push_back(
+        Annotation("bad-2", PolygonGeometry{{PointF{0.0, 0.0}, PointF{infinity, 1.0},
+                                             PointF{2.0, 2.0}}, true}));
+    REQUIRE(serializeAnnotationDocument(document).empty());
+}
+
+// The whole point of holding schemaVersion at 1: an older build must fail on
+// the shape, with a message that explains itself, and must not touch the file.
+TEST_CASE("an unknown geometry type names the likely cause",
+          "[core][AnnotationSerialization]")
+{
+    const ParseResult result = parseAnnotationDocument(
+        documentWithGeometry(R"({"type": "ellipse", "vertices": []})"));
+    REQUIRE(result.error == ParseError::InvalidField);
+    REQUIRE(result.message.find("newer version") != std::string::npos);
 }

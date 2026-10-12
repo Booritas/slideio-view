@@ -132,4 +132,7 @@ TEST_CASE("setGeometry keeps the type consistent with the new shape",
     Annotation annotation("id-1", RectangleGeometry{PointF{0.0, 0.0}, PointF{10.0, 10.0}});
     annotation.setGeometry(RectangleGeometry{PointF{5.0, 5.0}, PointF{25.0, 25.0}});
     REQUIRE(annotation.type() == AnnotationType::Rectangle);
+
+    annotation.setGeometry(PolygonGeometry{{PointF{0.0, 0.0}, PointF{10.0, 0.0}, PointF{0.0, 10.0}}, true});
+    REQUIRE(annotation.type() == AnnotationType::Polygon);
 }

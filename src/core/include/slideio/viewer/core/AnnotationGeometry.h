@@ -2,6 +2,7 @@
 
 #include "slideio/viewer/core/Types.h"
 
+#include <cstddef>
 #include <variant>
 #include <vector>
 
@@ -19,13 +20,36 @@ struct RectangleGeometry
 enum class AnnotationType
 {
     Rectangle,
+    Polygon,
+    Polyline,
 };
 
-/// The variant starts with one alternative and widens as drawing tools land.
-/// std::visit dispatch in the free functions below is identical at one
-/// alternative or six, so the structure is established now without writing
-/// nine geometry types against a transform not yet proven on a real slide.
-using AnnotationGeometry = std::variant<RectangleGeometry>;
+/// A sequence of vertices, closed into a polygon (FR-ANN-03) or left open as a
+/// freehand line (FR-ANN-04).
+///
+/// One type for both, because they differ only in whether the path closes:
+/// the vertices, the bounding box, the translation and the edge hit-test are
+/// identical, and only the closing segment, the fill and the interior test
+/// differ. Two variant alternatives would duplicate all of that to express
+/// one boolean.
+///
+/// Self-intersecting outlines are valid. Pathologists produce them by accident
+/// when tracing quickly, and silently rejecting or repairing someone's outline
+/// is worse than rendering what they drew; the even-odd rule handles them.
+struct PolygonGeometry
+{
+    std::vector<PointF> vertices;
+    bool closed = true;
+};
+
+/// Fewer vertices than this cannot describe the shape: a closed polygon needs
+/// three, an open path two. Enforced by the drawing tool at commit and by the
+/// serializer on both read and write, so the application cannot produce a file
+/// it would refuse to open.
+constexpr std::size_t kMinPolygonVertices = 3;
+constexpr std::size_t kMinPolylineVertices = 2;
+
+using AnnotationGeometry = std::variant<RectangleGeometry, PolygonGeometry>;
 
 /// Always positive-extent: a shape built from an inverted drag is normalised.
 [[nodiscard]] RectF boundingBox(const AnnotationGeometry& geom);

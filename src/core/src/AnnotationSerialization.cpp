@@ -16,6 +16,7 @@
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace slideio::viewer::core
 {
@@ -29,6 +30,8 @@ namespace
 using json = nlohmann::ordered_json;
 
 constexpr const char* kRectangleTypeName = "rectangle";
+constexpr const char* kPolygonTypeName = "polygon";
+constexpr const char* kPolylineTypeName = "polyline";
 
 bool isFinitePoint(const PointF& point)
 {
@@ -38,6 +41,23 @@ bool isFinitePoint(const PointF& point)
 bool isRepresentableShape(const RectangleGeometry& rectangle)
 {
     return isFinitePoint(rectangle.topLeft) && isFinitePoint(rectangle.bottomRight);
+}
+
+bool isRepresentableShape(const PolygonGeometry& poly)
+{
+    // The same minimums the parser enforces. Refusing to write a shape we
+    // would refuse to read is what keeps every file this application produces
+    // loadable by it.
+    const std::size_t minimum = poly.closed ? kMinPolygonVertices : kMinPolylineVertices;
+    if (poly.vertices.size() < minimum) {
+        return false;
+    }
+    for (const PointF& vertex : poly.vertices) {
+        if (!isFinitePoint(vertex)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool isRepresentable(const AnnotationGeometry& geometry)
@@ -88,6 +108,25 @@ json shapeToJson(const RectangleGeometry& rectangle)
     };
 }
 
+/// The geometry "type" string for a polygon-shaped path. Shared by the geometry
+/// object and the annotation-level field, so the closed/open choice is made once.
+const char* polygonTypeName(const PolygonGeometry& poly)
+{
+    return poly.closed ? kPolygonTypeName : kPolylineTypeName;
+}
+
+json shapeToJson(const PolygonGeometry& poly)
+{
+    json vertices = json::array();
+    for (const PointF& vertex : poly.vertices) {
+        vertices.push_back(pointToJson(vertex));
+    }
+    return json{
+        {"type", polygonTypeName(poly)},
+        {"vertices", std::move(vertices)},
+    };
+}
+
 json geometryToJson(const AnnotationGeometry& geometry)
 {
     return std::visit([](const auto& shape) { return shapeToJson(shape); }, geometry);
@@ -102,6 +141,8 @@ const char* geometryTypeName(const AnnotationGeometry& geometry)
         using Shape = std::decay_t<decltype(shape)>;
         if constexpr (std::is_same_v<Shape, RectangleGeometry>) {
             return kRectangleTypeName;
+        } else if constexpr (std::is_same_v<Shape, PolygonGeometry>) {
+            return polygonTypeName(shape);
         } else {
             static_assert(sizeof(Shape) == 0, "A new geometry alternative needs its own type name here.");
         }
@@ -288,6 +329,39 @@ bool readRectangle(const json& value, AnnotationGeometry& out, std::string& prob
     return true;
 }
 
+bool readPolygon(const json& value, bool closed, AnnotationGeometry& out, std::string& problem)
+{
+    if (!value.contains("vertices") || !value.at("vertices").is_array()) {
+        problem = "geometry.vertices is not an array";
+        return false;
+    }
+
+    PolygonGeometry poly;
+    poly.closed = closed;
+    poly.vertices.reserve(value.at("vertices").size());
+    for (const json& entry : value.at("vertices")) {
+        PointF vertex;
+        if (!readPoint(entry, vertex)) {
+            problem = "geometry.vertices contains something that is not a finite point";
+            return false;
+        }
+        poly.vertices.push_back(vertex);
+    }
+
+    // No maximum. A dense freehand trace is legitimate data, and a cap here
+    // would reject a clinician's outline for being careful; density is the
+    // drawing tool's business. By the time this runs the array has already
+    // been parsed and allocated, so a cap would not be a defence anyway.
+    const std::size_t minimum = closed ? kMinPolygonVertices : kMinPolylineVertices;
+    if (poly.vertices.size() < minimum) {
+        problem = "geometry.vertices has fewer than " + std::to_string(minimum) + " points";
+        return false;
+    }
+
+    out = std::move(poly);
+    return true;
+}
+
 bool readGeometry(const json& value, AnnotationGeometry& out, std::string& problem)
 {
     if (!value.is_object() || !value.contains("type") || !value.at("type").is_string()) {
@@ -298,6 +372,12 @@ bool readGeometry(const json& value, AnnotationGeometry& out, std::string& probl
     const std::string type = value.at("type").get<std::string>();
     if (type == kRectangleTypeName) {
         return readRectangle(value, out, problem);
+    }
+    if (type == kPolygonTypeName) {
+        return readPolygon(value, true, out, problem);
+    }
+    if (type == kPolylineTypeName) {
+        return readPolygon(value, false, out, problem);
     }
 
     // Naming the version is the whole value of this message: schemaVersion
