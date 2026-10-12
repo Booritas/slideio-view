@@ -1985,6 +1985,8 @@ Placed before the rectangle commit block, so the selection-click path below cann
 
 - [ ] **Step 6: Commit on double-click**
 
+> **Correction, 2026-10-12.** The original text of this step claimed the second press had already appended a vertex and had the handler `pop_back()` it. That was wrong: Qt sends the double-click event *in place of* the second press, and this override does not forward to `mousePressEvent`, so no duplicate exists. The `pop_back()` deleted a real vertex and silently discarded double-click-closed triangles. Corrected after implementation; the code below is the corrected version and matches design spec 6.3. `commitPendingShape()` also ends the tool drag itself, so the handler no longer resets `dragOwner`/`dragButton`.
+
 Declare `void mouseDoubleClickEvent(QMouseEvent* event) override;` in `ViewportWidget.h` beside the other event handlers, and define:
 
 ```cpp
@@ -1995,16 +1997,13 @@ void ViewportWidget::mouseDoubleClickEvent(QMouseEvent* event)
         return;
     }
 
-    // Qt delivers press, release, doubleClick, release -- so the second press
-    // has already appended a vertex at the closing position. Committing without
-    // dropping it leaves a duplicate final vertex on every polygon closed this
-    // way: invisible on screen, permanent in the file, and an off-by-one in
-    // every vertex count a later sub-project reads.
-    if (!m_impl->pending.vertices.empty()) {
-        m_impl->pending.vertices.pop_back();
-    }
-    m_impl->dragOwner = DragOwner::None;
-    m_impl->dragButton = Qt::NoButton;
+    // Qt sends MouseButtonDblClick in place of the second press, not in
+    // addition to it -- QWidget's default implementation forwards it to
+    // mousePressEvent for exactly that reason. This override does not forward,
+    // so the pair has appended exactly one vertex, placed by its first click,
+    // and that vertex is the one the user double-clicked to position. Removing
+    // it would drop a real point and, on a triangle, take the shape below
+    // kMinPolygonVertices so it was discarded in silence.
     commitPendingShape();
     updateCursor();
     event->accept();
@@ -2104,9 +2103,8 @@ is not. Click places a vertex, drag trails them, double-click or Enter
 commits, a click on vertex 1 closes a polygon, Backspace drops the last
 vertex, Escape discards the shape.
 
-Double-click pops the vertex the second press already placed: Qt delivers
-press, release, doubleClick, release, so committing as-is would leave a
-duplicate final vertex in every file.
+Double-click keeps the vertex its first click placed: Qt sends the
+doubleClick in place of the second press, so no duplicate exists to remove.
 
 The shape is discarded on slide close and on a tool change, and deliberately
 survives focus loss -- the comment at focusOutEvent says why, since the line
