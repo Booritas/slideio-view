@@ -2751,16 +2751,22 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         // Two transforms to decide, against transforming every vertex of a
         // trace that is not on screen. A dense freehand outline can carry
         // thousands of points and the viewport repaints on every pan frame.
+        const core::AnnotationProperties& props = annotation.properties();
         const core::RectF box = annotation.boundingBox();
+        // Padded by the stroke extent: QRectF::intersects is false for a rect
+        // with zero width or height, which would hide a degenerate annotation
+        // that is fully on screen, and a pen reaching in from just outside the
+        // widget must still be drawn.
+        const double margin = props.lineWidth / 2.0 + 1.0;
         const QRectF bounds =
             QRectF(toScreen(core::PointF{box.x, box.y}),
                    toScreen(core::PointF{box.x + box.width, box.y + box.height}))
-                .normalized();
+                .normalized()
+                .adjusted(-margin, -margin, margin, margin);
         if (!bounds.intersects(QRectF(widgetRect))) {
             continue;
         }
 
-        const core::AnnotationProperties& props = annotation.properties();
         const QColor stroke(props.color.r, props.color.g, props.color.b, props.color.a);
         QColor fill = stroke;
         fill.setAlphaF(props.fillOpacity);
