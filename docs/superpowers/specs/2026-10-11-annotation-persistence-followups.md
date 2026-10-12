@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-11
 **Updated:** 2026-10-12 — item 0 carries the results of the P1-P17 verification run
-against `main` @ `bc3aeb6`; item 18 is new, found during it.
+against `main` @ `bc3aeb6`; items 18 and 19 are new, found during it.
 **Status:** Open
 **Covers:** `main` @ `ca38c5d` (merge of `annotation-persistence`) and `c819a54`
 **Spec:** `2026-10-10-annotation-persistence-design.md`
@@ -280,11 +280,16 @@ not cover.
 
    - **P11 is the one genuinely incomplete check.** Everything else was settled by the
      saved JSON or by an unambiguous behavioural oracle.
-   - **Greying cannot be read from a screenshot in this theme.** `Rectangle`,
-     `Polygon`, `Freehand` and the definitely-enabled `Preferences...` all render at
-     identical peak luma (204) whether enabled or disabled. Two attempts to measure it
-     were dead ends. P12's verdict rests on clicking each item and reading the
-     checkmark, not on appearance — if this check is ever re-run, do the same.
+   - **A disabled menu item is indistinguishable from an enabled one — in the
+     application, not merely in a screenshot.** `Rectangle`, `Polygon`, `Freehand`
+     and the definitely-enabled `Preferences...` all render at identical peak luma
+     (204) whether enabled or disabled. Two attempts to measure the difference were
+     dead ends, and this was first written up as a limitation of reading
+     screenshots; **the project owner confirmed it is a property of the running
+     application.** It is therefore a product observation, not a method note — see
+     item 19. P12's verdict rests on clicking each item and reading the checkmark,
+     never on appearance; anyone re-running this check must do the same, because
+     looking at the menu cannot answer the question.
    - Two mid-run observations were **automation artifacts, not app faults**: an early
      Escape that appeared not to work (the harness had lost viewport focus; tool
      shortcuts are `Qt::WidgetWithChildrenShortcut` and need it, while `Ctrl+0` is
@@ -451,6 +456,39 @@ in the code it covers.
     the-log refusal to load clinical data is a traceability gap, not a cosmetic
     one. One `spdlog` warn line naming the path and the parser's `problem`
     string would close it, and both values are already in hand at the emit site.
+
+19. **A disabled menu item looks exactly like an enabled one, so the whole
+    annotation gate is invisible.** Observed while running P12, 2026-10-12, and
+    **confirmed independently by the project owner**: there is no visual
+    difference at all. Measured peak text luma is identical (204) for the
+    disabled `Rectangle`/`Polygon`/`Freehand Line` and the enabled
+    `Preferences...`.
+
+    Not a theme the application chose. `main.cpp` constructs a plain
+    `QApplication` and sets no style, palette or application-wide stylesheet;
+    the per-widget `setStyleSheet` calls in the panels never touch `QMenu`. The
+    rendering is Qt 6.7.3's default platform style under Windows dark mode, and
+    the application does nothing to distinguish the disabled state from the
+    enabled one.
+
+    **Why this matters more than it looks.** Every gate in this subsystem —
+    read-only slides, associated images, an unidentifiable slide, a file that
+    failed to load — is expressed to the user *only* by disabling the tool
+    actions. `annotationsAvailableChanged` does show its `reason` in the status
+    bar, but that message is transient. A pathologist who opens a read-only
+    slide, dismisses the dialog, works for a minute and then reaches for
+    Polygon sees a normal-looking menu item, clicks it, and gets silence: no
+    tool, no message, no explanation. The most likely reading of that is "the
+    application is broken", and the second most likely is to keep clicking.
+
+    Qt delivers no click for a disabled action, so the fix cannot be a message
+    on the attempt. Two directions, neither chosen here: dim disabled text
+    explicitly (a palette `Disabled`/`WindowText` role, or a `QMenu::item:disabled`
+    rule), or — better, because it does not depend on menu styling at all —
+    make the read-only state **persistently** visible the way zoom and `sRGB`
+    already are in the status bar. The second also covers the case where the
+    user never saw the transient message because a `statusTip` hover replaced
+    it, which check P13 notes is easy to do.
 
 ---
 
