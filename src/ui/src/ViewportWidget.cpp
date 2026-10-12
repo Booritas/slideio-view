@@ -1409,6 +1409,23 @@ struct ViewportWidget::Impl
 
     std::unique_ptr<app::AnnotationModel> annotations;
     bool drawing = false;
+
+    /// A shape being built across several press/release pairs.
+    ///
+    /// Every other piece of in-flight drawing state is bounded by one press
+    /// and its release -- mousePressEvent early-returns while dragOwner is set,
+    /// and `drawing` cannot outlive a release. A polygon lives across many of
+    /// them, with dragOwner back at None in between, so it needs state of its
+    /// own rather than a flag on the drag.
+    struct PendingShape
+    {
+        std::vector<core::PointF> vertices;
+        core::PointF cursorSlide;
+        bool closed = true;
+        bool active = false;
+    };
+    PendingShape pending;
+
     core::PointF drawAnchorSlide;
     core::PointF drawCurrentSlide;
 
@@ -2828,6 +2845,9 @@ void ViewportWidget::setActiveTool(AnnotationTool tool)
     if (m_impl->activeTool == tool) {
         return;
     }
+    // Tool changes need not touch `drawing`, which cannot outlive a press. The
+    // pending shape can, so it has to be dropped here explicitly.
+    discardPendingShape();
     m_impl->activeTool = tool;
     updateCursor();
     emit activeToolChanged(tool);
@@ -2845,6 +2865,10 @@ void ViewportWidget::resetAnnotationState()
     // one slide's marks drawn over another's tissue.
     m_impl->annotations->clear();
     m_impl->drawing = false;
+    // A half-traced shape is never committed on slide close. It is not in the
+    // model, persistence never sees it, and materialising a partial outline
+    // into a saved file would be worse than losing it.
+    discardPendingShape();
     m_impl->dragOwner = DragOwner::None;
     m_impl->dragButton = Qt::NoButton;
     m_impl->movingId.clear();
@@ -2854,6 +2878,32 @@ void ViewportWidget::resetAnnotationState()
     // screen: the eventual real release takes the dragOwner == None early exit
     // in mouseReleaseEvent and never refreshes it.
     updateCursor();
+}
+
+void ViewportWidget::commitPendingShape()
+{
+    if (!m_impl->pending.active) {
+        return;
+    }
+    const bool closed = m_impl->pending.closed;
+    std::vector<core::PointF> vertices = std::move(m_impl->pending.vertices);
+    discardPendingShape();
+
+    // Below the minimum this is not a shape, and is discarded in silence --
+    // the same way an undersized rectangle drag already is.
+    if (!pendingShapeCommits(vertices.size(), closed) || !m_impl->annotationsEditable()) {
+        update();
+        return;
+    }
+    const std::string id = m_impl->annotations->add(core::PolygonGeometry{std::move(vertices), closed});
+    m_impl->annotations->setSelected(id);
+    update();
+}
+
+void ViewportWidget::discardPendingShape()
+{
+    m_impl->pending.vertices.clear();
+    m_impl->pending.active = false;
 }
 
 void ViewportWidget::updateCursor()
@@ -3489,7 +3539,8 @@ void ViewportWidget::paintGL()
 
     // Painted last, after the snapshot capture, so annotations stay out of the
     // zoom-snapshot texture and do not smear with the blurry backdrop.
-    if (!m_impl->annotations->annotations().empty() || m_impl->drawing) {
+    if (!m_impl->annotations->annotations().empty() || m_impl->drawing
+        || m_impl->pending.active) {
         QPainter painter(this);
         paintAnnotations(painter);
     }
@@ -3558,6 +3609,37 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
         double slideY = 0.0;
         m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
 
+        if (isNPointTool(m_impl->activeTool)) {
+            m_impl->dragOwner = DragOwner::Tool;
+            m_impl->dragButton = event->button();
+            m_impl->pressPos = event->pos();
+            m_impl->movingId.clear();
+
+            const core::PointF cursor{slideX, slideY};
+            const double scale = m_impl->controller->viewport().scale();
+
+            if (m_impl->pending.active && m_impl->pending.closed
+                && m_impl->pending.vertices.size() >= core::kMinPolygonVertices
+                && closesOnFirstVertex(m_impl->pending.vertices.front(), cursor, scale)) {
+                commitPendingShape();
+                updateCursor();
+                event->accept();
+                return;
+            }
+
+            if (!m_impl->pending.active) {
+                m_impl->pending.active = true;
+                m_impl->pending.closed = (m_impl->activeTool == AnnotationTool::Polygon);
+                m_impl->pending.vertices.clear();
+            }
+            m_impl->pending.vertices.push_back(cursor);
+            m_impl->pending.cursorSlide = cursor;
+            updateCursor();
+            event->accept();
+            update();
+            return;
+        }
+
         m_impl->dragOwner = DragOwner::Tool;
         m_impl->dragButton = event->button();
         m_impl->pressPos = event->pos();
@@ -3582,6 +3664,19 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
     // own button is still held.
     if (m_impl->dragOwner == DragOwner::None || event->button() != m_impl->dragButton) {
         QOpenGLWidget::mouseReleaseEvent(event);
+        return;
+    }
+
+    // Scoped to a tool drag: a space-held or middle-button pan released
+    // mid-trace must still take the ordinary path below.
+    if (m_impl->pending.active && m_impl->dragOwner == DragOwner::Tool) {
+        // Releasing does not commit. The shape stays pending so the user can
+        // keep tracing or switch to clicking individual vertices.
+        m_impl->dragOwner = DragOwner::None;
+        m_impl->dragButton = Qt::NoButton;
+        updateCursor();
+        event->accept();
+        update();
         return;
     }
 
@@ -3612,8 +3707,7 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
             const core::AnnotationGeometry geometry =
                 core::RectangleGeometry{core::PointF{box.x, box.y},
                                         core::PointF{box.x + box.width, box.y + box.height}};
-            const std::string id =
-                m_impl->annotations->add(geometry);
+            const std::string id = m_impl->annotations->add(geometry);
             m_impl->annotations->setSelected(id);
         }
         update();
@@ -3680,6 +3774,25 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event)
         update();
     }
 
+    if (m_impl->pending.active && m_impl->controller) {
+        double slideX = 0.0;
+        double slideY = 0.0;
+        m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
+        const core::PointF cursor{slideX, slideY};
+        m_impl->pending.cursorSlide = cursor;
+
+        // Trailing only while the button is down: with it up, the move only
+        // drives the rubber band.
+        if (m_impl->dragOwner == DragOwner::Tool && !m_impl->pending.vertices.empty()) {
+            const double scale = m_impl->controller->viewport().scale();
+            if (shouldAppendTrailPoint(m_impl->pending.vertices.back(), cursor, scale)) {
+                m_impl->pending.vertices.push_back(cursor);
+            }
+        }
+        event->accept();
+        update();
+    }
+
     if (m_impl->dragOwner == DragOwner::Tool && m_impl->drawing && m_impl->controller) {
         double slideX = 0.0;
         double slideY = 0.0;
@@ -3734,7 +3847,24 @@ void ViewportWidget::wheelEvent(QWheelEvent* event)
 
 void ViewportWidget::mouseDoubleClickEvent(QMouseEvent* event)
 {
-    QOpenGLWidget::mouseDoubleClickEvent(event);
+    if (!m_impl->pending.active || event->button() != Qt::LeftButton) {
+        QOpenGLWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+
+    // Qt delivers press, release, doubleClick, release -- so the second press
+    // has already appended a vertex at the closing position. Committing without
+    // dropping it leaves a duplicate final vertex on every polygon closed this
+    // way: invisible on screen, permanent in the file, and an off-by-one in
+    // every vertex count a later sub-project reads.
+    if (!m_impl->pending.vertices.empty()) {
+        m_impl->pending.vertices.pop_back();
+    }
+    m_impl->dragOwner = DragOwner::None;
+    m_impl->dragButton = Qt::NoButton;
+    commitPendingShape();
+    updateCursor();
+    event->accept();
 }
 
 void ViewportWidget::keyPressEvent(QKeyEvent* event)
@@ -3744,6 +3874,25 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
         m_impl->spaceHeld = true;
         updateCursor();
         event->accept();
+        return;
+    }
+
+    if (m_impl->pending.active
+        && (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)) {
+        commitPendingShape();
+        event->accept();
+        return;
+    }
+
+    if (m_impl->pending.active && event->key() == Qt::Key_Backspace) {
+        if (!m_impl->pending.vertices.empty()) {
+            m_impl->pending.vertices.pop_back();
+        }
+        if (m_impl->pending.vertices.empty()) {
+            discardPendingShape();
+        }
+        event->accept();
+        update();
         return;
     }
 
@@ -3762,7 +3911,12 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
     if (event->key() == Qt::Key_Escape) {
         bool cancelled = false;
 
-        if (m_impl->drawing) {
+        if (m_impl->pending.active) {
+            discardPendingShape();
+            m_impl->dragOwner = DragOwner::None;
+            m_impl->dragButton = Qt::NoButton;
+            cancelled = true;
+        } else if (m_impl->drawing) {
             m_impl->drawing = false;
             m_impl->dragOwner = DragOwner::None;
             m_impl->dragButton = Qt::NoButton;
@@ -3857,6 +4011,11 @@ void ViewportWidget::focusOutEvent(QFocusEvent* event)
     m_impl->dragOwner = DragOwner::None;
     m_impl->dragButton = Qt::NoButton;
     m_impl->drawing = false;
+    // The pending shape is deliberately NOT discarded here. `drawing` is,
+    // because a drag whose release went to another window is unrecoverable; a
+    // pending polygon holds no button and is not in that position. Alt-tabbing
+    // to check a report mid-trace and coming back to an empty canvas would
+    // destroy minutes of careful work for no reason.
     m_impl->movingId.clear();
     updateCursor();
     update();
