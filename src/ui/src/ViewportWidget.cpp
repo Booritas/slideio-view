@@ -27,6 +27,7 @@
 #include <QMetaObject>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QTimer>
 #include <QOpenGLFunctions_3_3_Core>
 #include <QOpenGLShaderProgram>
@@ -2705,10 +2706,6 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         return;
     }
 
-    static_assert(std::variant_size_v<core::AnnotationGeometry> == 1,
-                  "This assumes Rectangle is the only geometry: it draws every shape from its "
-                  "bounding box. Add per-type dispatch before widening the variant.");
-
     const core::Viewport& vp = m_impl->controller->viewport();
 
     // Slide -> screen is done point by point rather than by installing a
@@ -2721,25 +2718,64 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         return QPointF(sx, sy);
     };
 
-    const auto screenRect = [&toScreen](const core::RectF& box) {
-        const QPointF a = toScreen(core::PointF{box.x, box.y});
-        const QPointF b = toScreen(core::PointF{box.x + box.width, box.y + box.height});
-        return QRectF(a, b).normalized();
+    // A geometry as a screen-space path. core::outline() makes the per-type
+    // decision; this is only the Qt conversion, which is why it has no idea
+    // what kind of shape it is drawing.
+    const auto screenPath = [&toScreen](const core::AnnotationGeometry& geom) {
+        const core::Outline shape = core::outline(geom);
+        QPainterPath path;
+        // OddEvenFill must match core::hitTest's even-odd ray casting. If these
+        // drift apart, a self-intersecting trace is painted solid in regions
+        // that test as outside it, and clicking there selects nothing.
+        path.setFillRule(Qt::OddEvenFill);
+        if (shape.points.empty()) {
+            return path;
+        }
+        path.moveTo(toScreen(shape.points.front()));
+        for (std::size_t i = 1; i < shape.points.size(); ++i) {
+            path.lineTo(toScreen(shape.points[i]));
+        }
+        if (shape.closed) {
+            path.closeSubpath();
+        }
+        return path;
     };
 
     painter.setRenderHint(QPainter::Antialiasing, true);
 
     const std::string& selectedId = m_impl->annotations->selectedId();
 
+    const QRect widgetRect = rect();
+
     for (const core::Annotation& annotation : m_impl->annotations->annotations()) {
+        // Two transforms to decide, against transforming every vertex of a
+        // trace that is not on screen. A dense freehand outline can carry
+        // thousands of points and the viewport repaints on every pan frame.
+        const core::RectF box = annotation.boundingBox();
+        const QRectF bounds =
+            QRectF(toScreen(core::PointF{box.x, box.y}),
+                   toScreen(core::PointF{box.x + box.width, box.y + box.height}))
+                .normalized();
+        if (!bounds.intersects(QRectF(widgetRect))) {
+            continue;
+        }
+
         const core::AnnotationProperties& props = annotation.properties();
         const QColor stroke(props.color.r, props.color.g, props.color.b, props.color.a);
         QColor fill = stroke;
         fill.setAlphaF(props.fillOpacity);
 
-        painter.setPen(QPen(stroke, props.lineWidth));
-        painter.setBrush(fill);
-        painter.drawRect(screenRect(annotation.boundingBox()));
+        const core::Outline shape = core::outline(annotation.geometry());
+        // A hand trace is hundreds of short segments at sharp angles, where the
+        // default miter join throws long spikes.
+        QPen pen(stroke, props.lineWidth);
+        pen.setJoinStyle(Qt::RoundJoin);
+        pen.setCapStyle(Qt::RoundCap);
+        painter.setPen(pen);
+        // An open path is never filled: Qt would close it implicitly to do so,
+        // inventing a segment the user never drew.
+        painter.setBrush(shape.closed ? QBrush(fill) : QBrush(Qt::NoBrush));
+        painter.drawPath(screenPath(annotation.geometry()));
     }
 
     // Only the selection outline is redrawn here, last, so a later annotation
@@ -2747,7 +2783,11 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
     // translucent shape.
     if (!selectedId.empty()) {
         if (const core::Annotation* selected = m_impl->annotations->find(selectedId)) {
-            const QRectF box = screenRect(selected->boundingBox());
+            // The outline follows the shape, not its bounding box: around a
+            // traced polygon a box would say "something in this region is
+            // selected", and around a thin diagonal line it would be a large
+            // box containing a line.
+            const QPainterPath path = screenPath(selected->geometry());
             painter.setBrush(Qt::NoBrush);
             // Two-tone, and not white alone: brightfield H&E glass and tissue are
             // near-white, and paintGL clears the slide rect to white, so a 1 px
@@ -2755,9 +2795,9 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
             // presses Delete on the strength of this outline, so it has to read
             // against both a pale slide and a dark background.
             painter.setPen(QPen(QColor(0x00, 0x00, 0x00), 3.0, Qt::SolidLine));
-            painter.drawRect(box);
+            painter.drawPath(path);
             painter.setPen(QPen(QColor(0xFF, 0xFF, 0xFF), 1.0, Qt::DashLine));
-            painter.drawRect(box);
+            painter.drawPath(path);
         }
     }
 
