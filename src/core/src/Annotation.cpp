@@ -5,19 +5,17 @@
 namespace slideio::viewer::core
 {
 
-Annotation::Annotation(std::string id, AnnotationType type, AnnotationGeometry geometry)
+Annotation::Annotation(std::string id, AnnotationGeometry geometry)
     : m_id(std::move(id))
-    , m_type(type)
     , m_geometry(std::move(geometry))
 {
     m_metadata.createdAt = std::chrono::system_clock::now();
     m_metadata.modifiedAt = m_metadata.createdAt;
 }
 
-Annotation::Annotation(std::string id, AnnotationType type, AnnotationGeometry geometry,
+Annotation::Annotation(std::string id, AnnotationGeometry geometry,
                        AnnotationProperties properties, AnnotationMetadata metadata)
     : m_id(std::move(id))
-    , m_type(type)
     , m_geometry(std::move(geometry))
     , m_properties(std::move(properties))
     , m_metadata(std::move(metadata))
@@ -31,7 +29,8 @@ const std::string& Annotation::id() const
 
 AnnotationType Annotation::type() const
 {
-    return m_type;
+    // Derived, never stored: a stored copy could disagree with the shape.
+    return core::typeOf(m_geometry);
 }
 
 const AnnotationGeometry& Annotation::geometry() const

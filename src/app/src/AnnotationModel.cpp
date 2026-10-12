@@ -27,7 +27,7 @@ AnnotationModel::AnnotationModel(QObject* parent)
 
 AnnotationModel::~AnnotationModel() = default;
 
-std::string AnnotationModel::add(core::AnnotationType type, core::AnnotationGeometry geometry)
+std::string AnnotationModel::add(core::AnnotationGeometry geometry)
 {
     std::string id = generateId();
     core::AnnotationMetadata metadata;
@@ -36,7 +36,7 @@ std::string AnnotationModel::add(core::AnnotationType type, core::AnnotationGeom
     metadata.createdAt = now;
     metadata.modifiedAt = now;
 
-    m_annotations.emplace_back(id, type, std::move(geometry), core::AnnotationProperties{}, metadata);
+    m_annotations.emplace_back(id, std::move(geometry), core::AnnotationProperties{}, metadata);
     emit annotationAdded(id);
     return id;
 }

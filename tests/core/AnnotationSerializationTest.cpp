@@ -32,7 +32,7 @@ Annotation makeAnnotation()
     metadata.createdAt = at(1772683629LL);
     metadata.modifiedAt = at(1772683750LL);
 
-    return Annotation("4f1c8e2a-91b7-4d3e-8c15-2a9f7e6b0d44", AnnotationType::Rectangle,
+    return Annotation("4f1c8e2a-91b7-4d3e-8c15-2a9f7e6b0d44",
                       RectangleGeometry{PointF{1200.0, 800.0}, PointF{4400.0, 2600.0}},
                       properties, metadata);
 }
@@ -82,8 +82,7 @@ TEST_CASE("a rectangle writes its own corners, not a normalised box", "[core][An
     document.slideId = "id";
     // Deliberately inverted: the serializer records what was drawn. Normalising
     // here would make a round trip lossy for a drag that went up and left.
-    document.annotations.emplace_back("a1", AnnotationType::Rectangle,
-                                      RectangleGeometry{PointF{400.0, 300.0}, PointF{100.0, 50.0}});
+    document.annotations.emplace_back("a1", RectangleGeometry{PointF{400.0, 300.0}, PointF{100.0, 50.0}});
 
     const std::string json = serializeAnnotationDocument(document);
     const std::size_t topLeft = json.find("\"topLeft\"");
@@ -112,8 +111,7 @@ TEST_CASE("a non-finite line width or fill opacity refuses to serialize",
 {
     AnnotationDocument document;
     document.slideId = "id";
-    document.annotations.emplace_back("a1", AnnotationType::Rectangle,
-                                      RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
+    document.annotations.emplace_back("a1", RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
 
     SECTION("line width")
     {
@@ -137,8 +135,7 @@ TEST_CASE("invalid UTF-8 in a string refuses to serialize rather than throwing",
 {
     AnnotationDocument document;
     document.slideId = "id";
-    document.annotations.emplace_back("a1", AnnotationType::Rectangle,
-                                      RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
+    document.annotations.emplace_back("a1", RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
 
     AnnotationProperties properties = document.annotations.front().properties();
     properties.label = std::string("bad\xC3");   // truncated two-byte sequence
@@ -179,8 +176,7 @@ TEST_CASE("the default annotation colour survives verbatim", "[core][AnnotationS
 {
     AnnotationDocument document;
     document.slideId = "id";
-    document.annotations.emplace_back("a1", AnnotationType::Rectangle,
-                                      RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
+    document.annotations.emplace_back("a1", RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
 
     const std::string json = serializeAnnotationDocument(document);
     REQUIRE(json.find("\"color\": \"#E67E22FF\"") != std::string::npos);
@@ -195,17 +191,14 @@ TEST_CASE("the serializer refuses ids the parser would reject",
 
     SECTION("an empty id")
     {
-        document.annotations.emplace_back("", AnnotationType::Rectangle,
-                                          RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
+        document.annotations.emplace_back("", RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
         REQUIRE(serializeAnnotationDocument(document).empty());
     }
 
     SECTION("two annotations sharing an id")
     {
-        document.annotations.emplace_back("same", AnnotationType::Rectangle,
-                                          RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
-        document.annotations.emplace_back("same", AnnotationType::Rectangle,
-                                          RectangleGeometry{PointF{5.0, 5.0}, PointF{6.0, 6.0}});
+        document.annotations.emplace_back("same", RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
+        document.annotations.emplace_back("same", RectangleGeometry{PointF{5.0, 5.0}, PointF{6.0, 6.0}});
         REQUIRE(serializeAnnotationDocument(document).empty());
     }
 }
@@ -220,16 +213,14 @@ TEST_CASE("a non-finite coordinate refuses to serialize", "[core][AnnotationSeri
     SECTION("NaN")
     {
         const double nan = std::numeric_limits<double>::quiet_NaN();
-        document.annotations.emplace_back("a1", AnnotationType::Rectangle,
-                                          RectangleGeometry{PointF{0.0, 0.0}, PointF{nan, 1.0}});
+        document.annotations.emplace_back("a1", RectangleGeometry{PointF{0.0, 0.0}, PointF{nan, 1.0}});
         REQUIRE(serializeAnnotationDocument(document).empty());
     }
 
     SECTION("infinity")
     {
         const double inf = std::numeric_limits<double>::infinity();
-        document.annotations.emplace_back("a1", AnnotationType::Rectangle,
-                                          RectangleGeometry{PointF{0.0, inf}, PointF{1.0, 1.0}});
+        document.annotations.emplace_back("a1", RectangleGeometry{PointF{0.0, inf}, PointF{1.0, 1.0}});
         REQUIRE(serializeAnnotationDocument(document).empty());
     }
 }
@@ -261,8 +252,7 @@ TEST_CASE("a timestamp that cannot be formatted refuses to serialize", "[core][A
         document.slideId = "id";
         AnnotationMetadata metadata;
         metadata.createdAt = beforeEpoch;
-        document.annotations.emplace_back("a1", AnnotationType::Rectangle,
-                                          RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}},
+        document.annotations.emplace_back("a1", RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}},
                                           AnnotationProperties{}, metadata);
         REQUIRE(serializeAnnotationDocument(document).empty());
     }
@@ -273,8 +263,7 @@ TEST_CASE("a timestamp that cannot be formatted refuses to serialize", "[core][A
         document.slideId = "id";
         AnnotationMetadata metadata;
         metadata.modifiedAt = beforeEpoch;
-        document.annotations.emplace_back("a1", AnnotationType::Rectangle,
-                                          RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}},
+        document.annotations.emplace_back("a1", RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}},
                                           AnnotationProperties{}, metadata);
         REQUIRE(serializeAnnotationDocument(document).empty());
     }
@@ -286,8 +275,7 @@ TEST_CASE("a double needing full precision is written at full precision",
     AnnotationDocument document;
     document.slideId = "id";
     const double awkward = 0.1 + 0.2;   // 0.30000000000000004
-    document.annotations.emplace_back("a1", AnnotationType::Rectangle,
-                                      RectangleGeometry{PointF{awkward, 0.0}, PointF{1.0, 1.0}});
+    document.annotations.emplace_back("a1", RectangleGeometry{PointF{awkward, 0.0}, PointF{1.0, 1.0}});
 
     const std::string json = serializeAnnotationDocument(document);
     REQUIRE(json.find("0.30000000000000004") != std::string::npos);
@@ -351,8 +339,7 @@ TEST_CASE("an inverted rectangle round-trips with its corners as drawn",
 {
     AnnotationDocument document;
     document.slideId = "id";
-    document.annotations.emplace_back("a1", AnnotationType::Rectangle,
-                                      RectangleGeometry{PointF{400.0, 300.0}, PointF{100.0, 50.0}});
+    document.annotations.emplace_back("a1", RectangleGeometry{PointF{400.0, 300.0}, PointF{100.0, 50.0}});
 
     const ParseResult result = parseAnnotationDocument(serializeAnnotationDocument(document));
     REQUIRE(result.error == ParseError::None);
@@ -370,8 +357,7 @@ TEST_CASE("a double needing full precision survives the round trip",
     AnnotationDocument document;
     document.slideId = "id";
     const double awkward = 0.1 + 0.2;
-    document.annotations.emplace_back("a1", AnnotationType::Rectangle,
-                                      RectangleGeometry{PointF{awkward, 0.0}, PointF{1.0, 1.0}});
+    document.annotations.emplace_back("a1", RectangleGeometry{PointF{awkward, 0.0}, PointF{1.0, 1.0}});
 
     const ParseResult result = parseAnnotationDocument(serializeAnnotationDocument(document));
     REQUIRE(result.error == ParseError::None);
@@ -677,8 +663,7 @@ TEST_CASE("the serializer never writes a document the parser would refuse",
     // The two sides share one set of bounds. If they ever drift, this fails.
     AnnotationDocument document;
     document.slideId = "a3f8c2e1b4d50697";
-    document.annotations.emplace_back("a1", AnnotationType::Rectangle,
-                                      RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
+    document.annotations.emplace_back("a1", RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
 
     const double outOfRange[] = {0.0, -1.0, 2000.0};
     for (double value : outOfRange) {

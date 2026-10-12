@@ -28,7 +28,7 @@ public:
     AnnotationModel& operator=(const AnnotationModel&) = delete;
 
     /// Stores a new annotation under a freshly generated id, which is returned.
-    std::string add(core::AnnotationType type, core::AnnotationGeometry geometry);
+    std::string add(core::AnnotationGeometry geometry);
 
     /// Stores `annotation` under the id it already carries, with its metadata
     /// exactly as given. This is the loading path: `add()` mints a fresh id and

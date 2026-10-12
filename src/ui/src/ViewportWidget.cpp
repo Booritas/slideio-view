@@ -3562,7 +3562,7 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
                 core::RectangleGeometry{core::PointF{box.x, box.y},
                                         core::PointF{box.x + box.width, box.y + box.height}};
             const std::string id =
-                m_impl->annotations->add(core::AnnotationType::Rectangle, geometry);
+                m_impl->annotations->add(geometry);
             m_impl->annotations->setSelected(id);
         }
         update();

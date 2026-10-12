@@ -345,10 +345,9 @@ bool readAnnotation(const json& value, Annotation& out, std::string& problem)
         }
     }
 
-    // The type is derived from the geometry rather than read: the two are
-    // independent in the constructor and a file must not be able to make them
-    // disagree.
-    out = Annotation(value.at("id").get<std::string>(), AnnotationType::Rectangle,
+    // The type is derived from the geometry rather than read: a file must not
+    // be able to make them disagree.
+    out = Annotation(value.at("id").get<std::string>(),
                      std::move(geometry), std::move(properties), std::move(metadata));
     return true;
 }
@@ -421,8 +420,7 @@ ParseResult parseDocument(std::string_view text)
     // honest answer is that the document is malformed.
     std::set<std::string> seenIds;
     for (const json& entry : root.at("annotations")) {
-        Annotation annotation("", AnnotationType::Rectangle,
-                              RectangleGeometry{PointF{}, PointF{}});
+        Annotation annotation("", RectangleGeometry{PointF{}, PointF{}});
         if (!readAnnotation(entry, annotation, problem)) {
             return failure(ParseError::InvalidField, problem);
         }

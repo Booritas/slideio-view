@@ -24,8 +24,7 @@ AnnotationDocument makeDocument(const std::string& slideId, int sceneIndex)
     document.sceneIndex = sceneIndex;
     document.slide.fileName = "case001_HE.svs";
     document.slide.path = "D:/data/case001_HE.svs";
-    document.annotations.emplace_back("a1", AnnotationType::Rectangle,
-                                      RectangleGeometry{PointF{10.0, 20.0}, PointF{110.0, 70.0}});
+    document.annotations.emplace_back("a1", RectangleGeometry{PointF{10.0, 20.0}, PointF{110.0, 70.0}});
     return document;
 }
 
@@ -81,11 +80,9 @@ TEST_CASE("two scenes of one slide do not collide", "[infra][JsonAnnotationRepos
     JsonAnnotationRepository repository(dir.path().toStdString());
 
     AnnotationDocument scene0 = makeDocument("same-slide", 0);
-    scene0.annotations.front() = Annotation("from-scene-0", AnnotationType::Rectangle,
-                                            RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
+    scene0.annotations.front() = Annotation("from-scene-0", RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
     AnnotationDocument scene1 = makeDocument("same-slide", 1);
-    scene1.annotations.front() = Annotation("from-scene-1", AnnotationType::Rectangle,
-                                            RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
+    scene1.annotations.front() = Annotation("from-scene-1", RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}});
 
     REQUIRE(repository.save(scene0).status == SaveStatus::Saved);
     REQUIRE(repository.save(scene1).status == SaveStatus::Saved);

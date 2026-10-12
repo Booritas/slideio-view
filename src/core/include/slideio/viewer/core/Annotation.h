@@ -35,12 +35,12 @@ struct AnnotationMetadata
 class Annotation
 {
 public:
-    Annotation(std::string id, AnnotationType type, AnnotationGeometry geometry);
+    Annotation(std::string id, AnnotationGeometry geometry);
 
     /// Restores an annotation exactly as stored, including its timestamps.
     /// Loading must not restamp createdAt/modifiedAt the way the constructor
     /// above does, and creation must be able to supply an author.
-    Annotation(std::string id, AnnotationType type, AnnotationGeometry geometry,
+    Annotation(std::string id, AnnotationGeometry geometry,
                AnnotationProperties properties, AnnotationMetadata metadata);
 
     [[nodiscard]] const std::string& id() const;
@@ -57,7 +57,6 @@ public:
 
 private:
     std::string m_id;
-    AnnotationType m_type;
     AnnotationGeometry m_geometry;
     AnnotationProperties m_properties;
     AnnotationMetadata m_metadata;

@@ -20,7 +20,7 @@ core::AnnotationGeometry rect(double x0, double y0, double x1, double y1)
 
 std::string addRect(app::AnnotationModel& model, double x0, double y0, double x1, double y1)
 {
-    return model.add(core::AnnotationType::Rectangle, rect(x0, y0, x1, y1));
+    return model.add(rect(x0, y0, x1, y1));
 }
 
 } // namespace
@@ -306,9 +306,8 @@ TEST_CASE("clear emits selectionChanged when a selection existed", "[app][Annota
 TEST_CASE("insert keeps the id the annotation already carries", "[app][AnnotationModel]")
 {
     app::AnnotationModel model;
-    model.insert(core::Annotation("stored-id-42", core::AnnotationType::Rectangle,
-                                  core::RectangleGeometry{core::PointF{0.0, 0.0},
-                                                          core::PointF{10.0, 10.0}}));
+    model.insert(core::Annotation("stored-id-42",
+                                  core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{10.0, 10.0}}));
 
     REQUIRE(model.annotations().size() == 1);
     REQUIRE(model.annotations().front().id() == "stored-id-42");
@@ -325,9 +324,7 @@ TEST_CASE("insert preserves stored metadata rather than restamping it",
 
     app::AnnotationModel model;
     model.setDefaultAuthor("me");
-    model.insert(core::Annotation("a1", core::AnnotationType::Rectangle,
-                                  core::RectangleGeometry{core::PointF{0.0, 0.0},
-                                                          core::PointF{1.0, 1.0}},
+    model.insert(core::Annotation("a1", core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}},
                                   core::AnnotationProperties{}, metadata));
 
     const core::Annotation* loaded = model.find("a1");
@@ -344,9 +341,7 @@ TEST_CASE("insert emits annotationAdded", "[app][AnnotationModel]")
     QObject::connect(&model, &app::AnnotationModel::annotationAdded,
                      &model, [&added](const std::string&) { ++added; });
 
-    model.insert(core::Annotation("a1", core::AnnotationType::Rectangle,
-                                  core::RectangleGeometry{core::PointF{0.0, 0.0},
-                                                          core::PointF{1.0, 1.0}}));
+    model.insert(core::Annotation("a1", core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}}));
     REQUIRE(added == 1);
 }
 
@@ -354,8 +349,7 @@ TEST_CASE("replaceAll swaps the contents and emits one modelReset",
           "[app][AnnotationModel]")
 {
     app::AnnotationModel model;
-    model.add(core::AnnotationType::Rectangle,
-              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
 
     int resets = 0;
     int adds = 0;
@@ -364,10 +358,8 @@ TEST_CASE("replaceAll swaps the contents and emits one modelReset",
                      &model, [&adds](const std::string&) { ++adds; });
 
     std::vector<core::Annotation> loaded;
-    loaded.emplace_back("x1", core::AnnotationType::Rectangle,
-                        core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{2.0, 2.0}});
-    loaded.emplace_back("x2", core::AnnotationType::Rectangle,
-                        core::RectangleGeometry{core::PointF{3.0, 3.0}, core::PointF{4.0, 4.0}});
+    loaded.emplace_back("x1", core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{2.0, 2.0}});
+    loaded.emplace_back("x2", core::RectangleGeometry{core::PointF{3.0, 3.0}, core::PointF{4.0, 4.0}});
     model.replaceAll(std::move(loaded));
 
     REQUIRE(model.annotations().size() == 2);
@@ -380,9 +372,7 @@ TEST_CASE("replaceAll swaps the contents and emits one modelReset",
 TEST_CASE("replaceAll clears the selection", "[app][AnnotationModel]")
 {
     app::AnnotationModel model;
-    const std::string id = model.add(core::AnnotationType::Rectangle,
-                                     core::RectangleGeometry{core::PointF{0.0, 0.0},
-                                                             core::PointF{1.0, 1.0}});
+    const std::string id = model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
     model.setSelected(id);
     REQUIRE_FALSE(model.selectedId().empty());
 
@@ -408,9 +398,7 @@ TEST_CASE("add stamps the configured default author", "[app][AnnotationModel]")
 {
     app::AnnotationModel model;
     model.setDefaultAuthor("jdoe");
-    const std::string id = model.add(core::AnnotationType::Rectangle,
-                                     core::RectangleGeometry{core::PointF{0.0, 0.0},
-                                                             core::PointF{1.0, 1.0}});
+    const std::string id = model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
 
     const core::Annotation* created = model.find(id);
     REQUIRE(created != nullptr);
@@ -422,9 +410,7 @@ TEST_CASE("add stamps the configured default author", "[app][AnnotationModel]")
 TEST_CASE("add with no configured author leaves it empty", "[app][AnnotationModel]")
 {
     app::AnnotationModel model;
-    const std::string id = model.add(core::AnnotationType::Rectangle,
-                                     core::RectangleGeometry{core::PointF{0.0, 0.0},
-                                                             core::PointF{1.0, 1.0}});
+    const std::string id = model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
     REQUIRE(model.find(id)->metadata().author.empty());
 }
 
@@ -436,9 +422,7 @@ TEST_CASE("insert rejects an annotation with an empty id", "[app][AnnotationMode
     QObject::connect(&model, &app::AnnotationModel::annotationAdded,
                      &model, [&added](const std::string&) { ++added; });
 
-    model.insert(core::Annotation("", core::AnnotationType::Rectangle,
-                                  core::RectangleGeometry{core::PointF{0.0, 0.0},
-                                                          core::PointF{1.0, 1.0}}));
+    model.insert(core::Annotation("", core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}}));
     REQUIRE(model.annotations().empty());
     REQUIRE(added == 0);
 }
@@ -462,8 +446,8 @@ TEST_CASE("replaceAll skips annotations with an empty id", "[app][AnnotationMode
 {
     app::AnnotationModel model;
     std::vector<core::Annotation> loaded;
-    loaded.emplace_back("", core::AnnotationType::Rectangle, rect(0.0, 0.0, 1.0, 1.0));
-    loaded.emplace_back("ok", core::AnnotationType::Rectangle, rect(2.0, 2.0, 3.0, 3.0));
+    loaded.emplace_back("", rect(0.0, 0.0, 1.0, 1.0));
+    loaded.emplace_back("ok", rect(2.0, 2.0, 3.0, 3.0));
     model.replaceAll(std::move(loaded));
 
     REQUIRE(model.annotations().size() == 1);
@@ -473,17 +457,13 @@ TEST_CASE("replaceAll skips annotations with an empty id", "[app][AnnotationMode
 TEST_CASE("insert refuses an id already in the model", "[app][AnnotationModel]")
 {
     app::AnnotationModel model;
-    model.insert(core::Annotation("same", core::AnnotationType::Rectangle,
-                                  core::RectangleGeometry{core::PointF{0.0, 0.0},
-                                                          core::PointF{1.0, 1.0}}));
+    model.insert(core::Annotation("same", core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}}));
 
     int added = 0;
     QObject::connect(&model, &app::AnnotationModel::annotationAdded,
                      &model, [&added](const std::string&) { ++added; });
 
-    model.insert(core::Annotation("same", core::AnnotationType::Rectangle,
-                                  core::RectangleGeometry{core::PointF{5.0, 5.0},
-                                                          core::PointF{6.0, 6.0}}));
+    model.insert(core::Annotation("same", core::RectangleGeometry{core::PointF{5.0, 5.0}, core::PointF{6.0, 6.0}}));
 
     REQUIRE(model.annotations().size() == 1);
     REQUIRE(added == 0);
@@ -496,12 +476,9 @@ TEST_CASE("replaceAll drops duplicate ids", "[app][AnnotationModel]")
 {
     app::AnnotationModel model;
     std::vector<core::Annotation> loaded;
-    loaded.emplace_back("one", core::AnnotationType::Rectangle,
-                        core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
-    loaded.emplace_back("one", core::AnnotationType::Rectangle,
-                        core::RectangleGeometry{core::PointF{5.0, 5.0}, core::PointF{6.0, 6.0}});
-    loaded.emplace_back("two", core::AnnotationType::Rectangle,
-                        core::RectangleGeometry{core::PointF{9.0, 9.0}, core::PointF{10.0, 10.0}});
+    loaded.emplace_back("one", core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    loaded.emplace_back("one", core::RectangleGeometry{core::PointF{5.0, 5.0}, core::PointF{6.0, 6.0}});
+    loaded.emplace_back("two", core::RectangleGeometry{core::PointF{9.0, 9.0}, core::PointF{10.0, 10.0}});
     model.replaceAll(std::move(loaded));
 
     REQUIRE(model.annotations().size() == 2);

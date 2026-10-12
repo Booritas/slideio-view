@@ -13,7 +13,7 @@ namespace
 
 Annotation makeRect(std::string id = "a1")
 {
-    return Annotation(std::move(id), AnnotationType::Rectangle,
+    return Annotation(std::move(id),
                       RectangleGeometry{PointF{10.0, 20.0}, PointF{110.0, 70.0}});
 }
 
@@ -115,4 +115,21 @@ TEST_CASE("setProperties replaces the properties", "[core][Annotation]")
 
     REQUIRE(annotation.properties().label == "tumour margin");
     REQUIRE(annotation.properties().lineWidth == 4.0f);
+}
+
+// The type is not storable independently of the shape, so it cannot drift
+// from it. Before this, the two were separate constructor arguments.
+TEST_CASE("Annotation derives its type from its geometry", "[core][Annotation]")
+{
+    const Annotation annotation("id-1",
+                                RectangleGeometry{PointF{0.0, 0.0}, PointF{10.0, 10.0}});
+    REQUIRE(annotation.type() == AnnotationType::Rectangle);
+}
+
+TEST_CASE("setGeometry keeps the type consistent with the new shape",
+          "[core][Annotation]")
+{
+    Annotation annotation("id-1", RectangleGeometry{PointF{0.0, 0.0}, PointF{10.0, 10.0}});
+    annotation.setGeometry(RectangleGeometry{PointF{5.0, 5.0}, PointF{25.0, 25.0}});
+    REQUIRE(annotation.type() == AnnotationType::Rectangle);
 }

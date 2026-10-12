@@ -58,8 +58,7 @@ core::SlideProvenance provenance()
 
 core::Annotation rectangle(const std::string& id)
 {
-    return core::Annotation(id, core::AnnotationType::Rectangle,
-                            core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    return core::Annotation(id, core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
 }
 
 core::LoadResult loadedWith(const std::string& slideId, int sceneIndex,
@@ -131,28 +130,22 @@ TEST_CASE("a mutation marks the model dirty", "[app][AnnotationPersistenceServic
 
     SECTION("adding")
     {
-        model.add(core::AnnotationType::Rectangle,
-                  core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+        model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
         REQUIRE(service.isDirty());
     }
 
     SECTION("moving")
     {
-        const std::string id = model.add(core::AnnotationType::Rectangle,
-                                         core::RectangleGeometry{core::PointF{0.0, 0.0},
-                                                                 core::PointF{1.0, 1.0}});
+        const std::string id = model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
         service.flush();
         REQUIRE_FALSE(service.isDirty());
-        model.setGeometry(id, core::RectangleGeometry{core::PointF{5.0, 5.0},
-                                                      core::PointF{6.0, 6.0}});
+        model.setGeometry(id, core::RectangleGeometry{core::PointF{5.0, 5.0}, core::PointF{6.0, 6.0}});
         REQUIRE(service.isDirty());
     }
 
     SECTION("removing")
     {
-        const std::string id = model.add(core::AnnotationType::Rectangle,
-                                         core::RectangleGeometry{core::PointF{0.0, 0.0},
-                                                                 core::PointF{1.0, 1.0}});
+        const std::string id = model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
         service.flush();
         model.remove(id);
         REQUIRE(service.isDirty());
@@ -168,9 +161,7 @@ TEST_CASE("changing the selection does not mark the model dirty",
     AnnotationPersistenceService service(repository, model);
     service.beginSlide({"slide-1", 0}, provenance());
 
-    const std::string id = model.add(core::AnnotationType::Rectangle,
-                                     core::RectangleGeometry{core::PointF{0.0, 0.0},
-                                                             core::PointF{1.0, 1.0}});
+    const std::string id = model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
     service.flush();
     REQUIRE_FALSE(service.isDirty());
 
@@ -187,8 +178,7 @@ TEST_CASE("flush writes the model and clears the dirty flag",
     AnnotationPersistenceService service(repository, model);
     service.beginSlide({"slide-7", 2}, provenance());
 
-    model.add(core::AnnotationType::Rectangle,
-              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
     REQUIRE(service.flush().status == core::SaveStatus::Saved);
 
     REQUIRE(repository.saveCount == 1);
@@ -236,16 +226,14 @@ TEST_CASE("endSlide flushes and then goes inactive",
     AnnotationPersistenceService service(repository, model);
     service.beginSlide({"slide-1", 0}, provenance());
 
-    model.add(core::AnnotationType::Rectangle,
-              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
     service.endSlide();
 
     REQUIRE(repository.saveCount == 1);
     REQUIRE_FALSE(service.isActive());
 
     // A mutation after endSlide belongs to nobody and must not be written.
-    model.add(core::AnnotationType::Rectangle,
-              core::RectangleGeometry{core::PointF{2.0, 2.0}, core::PointF{3.0, 3.0}});
+    model.add(core::RectangleGeometry{core::PointF{2.0, 2.0}, core::PointF{3.0, 3.0}});
     service.flush();
     REQUIRE(repository.saveCount == 1);
 }
@@ -274,8 +262,7 @@ TEST_CASE("an empty slide id never becomes active", "[app][AnnotationPersistence
     REQUIRE_FALSE(service.isActive());
     REQUIRE(repository.loadCount == 0);
 
-    model.add(core::AnnotationType::Rectangle,
-              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
     service.flush();
     REQUIRE(repository.saveCount == 0);
 }
@@ -307,8 +294,7 @@ TEST_CASE("a malformed file leaves the service inactive and never saves over it"
     REQUIRE(failedPath == "/fake/broken.json");
     REQUIRE(failedMessage.contains("valid JSON"));
 
-    model.add(core::AnnotationType::Rectangle,
-              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
     service.flush();
     REQUIRE(repository.saveCount == 0);
 }
@@ -324,8 +310,7 @@ TEST_CASE("a future schema version also blocks saving",
     service.beginSlide({"future-slide", 0}, provenance());
 
     REQUIRE_FALSE(service.isActive());
-    model.add(core::AnnotationType::Rectangle,
-              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
     service.flush();
     REQUIRE(repository.saveCount == 0);
 }
@@ -388,8 +373,7 @@ TEST_CASE("a slide id mismatch is referred to the resolver, never resolved silen
         REQUIRE(model.annotations().size() == 1);
         REQUIRE(service.isActive());
 
-        model.add(core::AnnotationType::Rectangle,
-                  core::RectangleGeometry{core::PointF{9.0, 9.0}, core::PointF{10.0, 10.0}});
+        model.add(core::RectangleGeometry{core::PointF{9.0, 9.0}, core::PointF{10.0, 10.0}});
         REQUIRE(service.flush().status == core::SaveStatus::Saved);
         REQUIRE(repository.lastSaved.slideId == "the-open-slide");
     }
@@ -448,8 +432,7 @@ TEST_CASE("a failed save is reported and leaves the model dirty",
     QObject::connect(&service, &AnnotationPersistenceService::saveFailed, &service,
                      [&](const QString& path, const QString&) { reportedPath = path; });
 
-    model.add(core::AnnotationType::Rectangle,
-              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
     REQUIRE(service.flush().status == core::SaveStatus::NotWritable);
 
     REQUIRE(reportedPath == "/fake/path");
@@ -469,8 +452,7 @@ TEST_CASE("a save that fails while closing asks the resolver",
     AnnotationModel model;
     AnnotationPersistenceService service(repository, model);
     service.beginSlide({"slide-1", 0}, provenance());
-    model.add(core::AnnotationType::Rectangle,
-              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
 
     int asked = 0;
     int reportedCount = -1;
@@ -502,8 +484,7 @@ TEST_CASE("saveFailed is silent during endSlide with a resolver but still fires 
     AnnotationModel model;
     AnnotationPersistenceService service(repository, model);
     service.beginSlide({"slide-1", 0}, provenance());
-    model.add(core::AnnotationType::Rectangle,
-              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
 
     int failedSignals = 0;
     QObject::connect(&service, &AnnotationPersistenceService::saveFailed, &service,
@@ -530,8 +511,7 @@ TEST_CASE("Retry re-attempts the save and succeeds once the cause is fixed",
     AnnotationModel model;
     AnnotationPersistenceService service(repository, model);
     service.beginSlide({"slide-1", 0}, provenance());
-    model.add(core::AnnotationType::Rectangle,
-              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
 
     int asked = 0;
     service.setSaveFailureResolver(
@@ -560,8 +540,7 @@ TEST_CASE("with no resolver a failing close still completes",
     AnnotationModel model;
     AnnotationPersistenceService service(repository, model);
     service.beginSlide({"slide-1", 0}, provenance());
-    model.add(core::AnnotationType::Rectangle,
-              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
 
     service.endSlide();
     REQUIRE_FALSE(service.isActive());
@@ -574,8 +553,7 @@ TEST_CASE("a successful close never asks the resolver",
     AnnotationModel model;
     AnnotationPersistenceService service(repository, model);
     service.beginSlide({"slide-1", 0}, provenance());
-    model.add(core::AnnotationType::Rectangle,
-              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
 
     int asked = 0;
     service.setSaveFailureResolver([&](const core::SaveResult&, int) {
@@ -633,8 +611,7 @@ TEST_CASE("clearing the model under an active service stops it writing",
     AnnotationPersistenceService service(repository, model);
     service.beginSlide({"slide-1", 0}, provenance());
 
-    model.add(core::AnnotationType::Rectangle,
-              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
     REQUIRE(service.isDirty());
 
     model.clear();
@@ -659,8 +636,7 @@ TEST_CASE("a failed save stays dirty and a flush with nothing to do says so",
     QObject::connect(&service, &AnnotationPersistenceService::saveFailed, &service,
                      [&failures](const QString&, const QString&) { ++failures; });
 
-    model.add(core::AnnotationType::Rectangle,
-              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
     REQUIRE(service.flush().status == core::SaveStatus::Failed);
     // An explicit flush always attempts the write; the debounce only paces the timer.
     REQUIRE(service.flush().status == core::SaveStatus::Failed);
@@ -689,8 +665,7 @@ TEST_CASE("a resolver that always retries cannot wedge the close",
     AnnotationModel model;
     AnnotationPersistenceService service(repository, model);
     service.beginSlide({"slide-1", 0}, provenance());
-    model.add(core::AnnotationType::Rectangle,
-              core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
 
     int asked = 0;
     service.setSaveFailureResolver([&](const core::SaveResult&, int) {
