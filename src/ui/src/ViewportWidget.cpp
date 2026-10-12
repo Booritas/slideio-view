@@ -2906,6 +2906,7 @@ void ViewportWidget::setActiveTool(AnnotationTool tool)
     endToolDrag();
     m_impl->activeTool = tool;
     updateCursor();
+    update();
     emit activeToolChanged(tool);
 }
 
@@ -2952,6 +2953,15 @@ void ViewportWidget::endToolDrag()
 void ViewportWidget::commitPendingShape()
 {
     if (!m_impl->pending.active) {
+        return;
+    }
+    // A gesture that cannot produce a valid shape is not a close. Leave the
+    // trace alive rather than destroying it: a double-click or Enter one
+    // vertex short of the minimum used to take the whole pending shape with
+    // it, silently, which on a two-click polygon is every vertex the user had
+    // placed. The click-to-close path in mousePressEvent makes the same test
+    // before it calls here, and falls through to placing another vertex.
+    if (!pendingShapeCommits(m_impl->pending.vertices.size(), m_impl->pending.closed)) {
         return;
     }
     const bool closed = m_impl->pending.closed;
@@ -3970,7 +3980,12 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
             m_impl->pending.vertices.pop_back();
         }
         if (m_impl->pending.vertices.empty()) {
+            // Pair discard with endToolDrag the way Escape does: a drag still
+            // owned by the tool with nothing pending would let its release fall
+            // into the selection-click path below.
             discardPendingShape();
+            endToolDrag();
+            updateCursor();
         }
         event->accept();
         update();

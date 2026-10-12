@@ -264,7 +264,7 @@ struct MainWindow::Impl
         rectangleToolAction->setShortcut(QKeySequence("R"));
         rectangleToolAction->setStatusTip("Draw a rectangular annotation by dragging");
 
-        polygonToolAction = new QAction("&Polygon", owner);
+        polygonToolAction = new QAction("P&olygon", owner);
         polygonToolAction->setCheckable(true);
         polygonToolAction->setShortcut(QKeySequence("P"));
         polygonToolAction->setStatusTip("Draw a polygon by clicking points, or by dragging to trace");

@@ -159,6 +159,15 @@ not cover.
        selects nothing, so this is believed harmless. It has the same shape as the
        bug check P8 covers, which was just fixed, and nobody has seen it.
 
+   P16. **With a half-traced polygon on screen, press `V` to switch to the pan tool.**
+       The preview must disappear immediately, without any further mouse movement.
+       *Break:* the orange outline stays painted until an unrelated pan or zoom.
+
+   P17. **With the Polygon tool, click one vertex then double-click.** The trace must
+       still be live — the rubber band still follows the cursor and further clicks
+       still place vertices.
+       *Break:* everything vanishes, no annotation, no message.
+
    **Order and slide state**
 
    Run once, on one slide, in this order: **P1, P2, P3, P10, P9, P5, P8, P15, P7, P11, P6, then P4,
