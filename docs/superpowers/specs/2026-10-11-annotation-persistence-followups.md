@@ -54,47 +54,141 @@ not cover.
       must be on disk — that path is `closeEvent`, not autosave.
 
    **Polygon and freehand line, added 2026-10-12 — none of these has been run.**
-   The geometry-widening work (`2026-10-12-annotation-geometry-widening-design.md`)
-   landed with every implementer barred from launching the viewer, and its
-   integration lives inside a widget no suite can construct. Every check below
-   is outstanding.
+   Nobody has run the viewer at any point across the geometry-widening work
+   (`2026-10-12-annotation-geometry-widening-design.md`); every implementer was
+   barred from it, and the integration lives inside a widget no suite can
+   construct. This is the first execution of any of this code, and the list is
+   for the project owner. It comes from the final whole-branch review of
+   `annotation-geometry` at commit `8d2039b`. Numbered P1-P15 so as not to
+   collide with the checks above. Priority order; each says what a break looks
+   like.
 
-   7. **Trace a polygon and close it three ways:** click on vertex 1 (the
-      marker should appear as you approach it), double-click, and Enter. Each
-      produces a filled outline following the points you placed.
-   8. **Count the vertices in the saved JSON after closing a polygon by
-      double-click.** For N placed points the file must contain exactly N
-      entries in `vertices`. This is the check that settles the design spec's
-      §6.3 error empirically: that section first claimed the double-click's
-      second press had already added a vertex, and was corrected after
-      implementation. A duplicate or a missing vertex is invisible on screen,
-      so it can only be seen in the file. Try it with a triangle as well — a
-      wrongly dropped vertex there would discard the shape outright.
-   9. **Escape mid-trace** discards the shape; **Backspace** drops one vertex at
-      a time and the preview shortens.
-   10. **Alt-tab away mid-trace and come back.** The pending shape is still
-       there. This is the asymmetry most likely to be broken silently later.
-   11. **Switch tools mid-trace.** The pending shape is gone.
-   12. **Drag a committed polygon.** It keeps its shape and vertex count — it
-       does not become a rectangle. This is the regression foundation item 1
-       was filed to prevent.
-   13. **Click inside the notch of a concave polygon.** Nothing selects. Click
-       inside the solid part: it selects, and the selection outline follows the
-       shape rather than a box.
-   14. **Close the slide and reopen it.** The polygon is back, unchanged.
-   15. **Trace a freehand line.** It is not filled, and its two ends are not
-       joined.
-   16. **Trail density:** hold the button and trace quickly. The outline follows
-       the cursor without visible corners, and the saved file's vertex count is
-       proportional to the on-screen length, not to the time taken.
-   17. **Confirm the status-bar hint reads correctly for the Freehand tool as
-       well as Polygon.** Both tools share the same gestures and the same text
-       (`MainWindow.cpp`, the `activeToolChanged` handler), so it should be
-       accurate for both, but nobody has seen it on screen. The text does not
-       mention click-on-vertex-1, which closes a polygon but not a freehand
-       line.
-   18. **A build predating this work, shown a file containing a polygon,**
-       refuses to load, names the type, and leaves the file unchanged on disk.
+   P1. **Count the vertices in the saved JSON after closing a polygon by double-click
+      — on a triangle.** For N placed points the file must hold exactly N entries.
+      *Break:* a dropped vertex takes a triangle below `kMinPolygonVertices` and it
+      vanishes silently at commit; an extra one is invisible on screen and permanent
+      in the file. This settles the §6.3 double-click question empirically and is the
+      single most valuable item here.
+
+   P2. **Drag a committed polygon.** It keeps its shape and vertex count.
+      *Break:* it snaps to a rectangle — `core::translated` is not on the move path,
+      the regression foundation item 1 exists to prevent.
+
+   P3. **Click inside the notch of a concave polygon, then inside the solid part.**
+      The notch selects nothing; the solid part selects.
+      *Break:* clicking the notch selects — the paint fill rule and `core::hitTest`'s
+      even-odd ray casting disagree. Also check the **selection outline traces the
+      polygon's edges, not a box around it**; a box means `screenPath(core::outline(...))`
+      is not on the selection path.
+
+   P4. **Close the slide and reopen it.** The polygon returns unchanged — same vertex
+      count, same position over the same tissue.
+      *Break:* absent (the flush-before-reset ordering broke), or visibly different —
+      a lost or reordered vertex shows as one wrong corner, which at a glance reads as
+      "roughly right". Compare against the saved JSON from check P1, not by eye.
+
+   P5. **Alt-tab away mid-trace and come back.** The half-traced shape is still there,
+      rubber band following the cursor again.
+      *Break:* empty canvas — minutes of tracing gone with no warning. `CLAUDE.md` calls this "designed to, not yet observed"; this check is what would observe it. This is a
+      deliberate asymmetry with the line directly above it in `focusOutEvent`, and the
+      thing most likely to be "tidied up" by a future change.
+
+   P6. **Trace a freehand line.** Not filled; its two ends not joined.
+      *Break:* a translucent fill appears, or a straight segment joins the last point
+      back to the first — Qt inventing a segment the pathologist never drew.
+
+   P7. **Place vertices with slow, deliberate single clicks, then count them in the file.**
+      *Break:* more vertices than clicks. Hand jitter between press and release can
+      trail a second point, because the trail threshold (2.0 screen px) is tighter than
+      the rectangle tool's misclick threshold (6.0). Cosmetic on screen, permanent in
+      the record. This was deliberately left unchanged rather than tuned blind.
+
+   P8. **Switch tools with the button still held mid-trace** — press `R` during a polygon
+      drag, then release.
+      *Break:* an annotation selects or deselects on that release. Per spec §6.6 a
+      release under a drawing tool should do nothing.
+
+   P9. **Escape mid-trace, and Backspace repeatedly.** Escape discards the whole pending
+      shape; each Backspace drops exactly one vertex and the preview visibly shortens;
+      Backspace past the first vertex ends the trace cleanly.
+      *Break:* Backspace dropping two at once, or the preview not updating until the
+      next mouse move.
+
+   P10. **Close a polygon all three ways** — click vertex 1, double-click, Enter — and
+       watch for the **close marker**, a filled orange dot on vertex 1 as the cursor
+       comes within ~6 px.
+       *Break:* the marker appears but clicking does not close (preview and press-handler
+       conditions have drifted apart), or it never appears, in which case click-to-close
+       is undiscoverable even though it works.
+
+   P11. **Trace quickly with the button held.** The outline follows the cursor smoothly
+       without visible corners; the file's vertex count is proportional to on-screen
+       path length, not to how long you took.
+       *Break:* a few long straight segments (trailing is not firing), or thousands of
+       points from a short trace (the threshold is not applied in screen space).
+
+   P12. **On a read-only slide** (resolve a slide-ID mismatch as "Open Read-Only"):
+       Polygon and Freehand are greyed out exactly as Rectangle is.
+       *Break:* either is clickable. There is a second, inner guard that shows the
+       status-bar "cannot be changed" message after a full trace — **if you ever see
+       that message, the outer gate failed and a completed outline was just lost.**
+
+   P13. **Read the status-bar hint with Freehand selected, not just Polygon.** Both tools
+       share "Click to add points, double-click or Enter to finish, Esc to cancel".
+       *Notice:* it is accurate for both — they share every gesture and differ only in
+       whether the path closes — but it omits click-on-vertex-1, which closes a polygon
+       and does nothing for a freehand line. Judge whether that reads as misleading.
+       Also notice how long it survives: it is transient, so a `statusTip` hover or any
+       later message replaces it, possibly before a first trace is finished.
+
+   P14. **A build predating this branch, shown a file containing a polygon:** it must
+       refuse to load, name the geometry type, and **leave the file unchanged on disk.**
+       *Break:* it loads partially, or — far worse — overwrites the file with only the
+       rectangles it could parse, destroying every polygon in it. Check the modification
+       timestamp, not just the contents: a silent rewrite that happens to preserve the
+       text today is still the bug. This validates the decision not to bump
+       `schemaVersion`; if it fails, that decision needs revisiting, not the code.
+
+   P15. **Switch tools mid-*move*-drag** — drag a committed annotation, press a tool
+       key with the button still held, then release.
+       *Break:* anything beyond the move completing. The tool change leaves the
+       move owner set, and the release commits the move through its own arm and
+       selects nothing, so this is believed harmless. It has the same shape as the
+       bug check P8 covers, which was just fixed, and nobody has seen it.
+
+   **Order and slide state**
+
+   Run once, on one slide, in this order: **P1, P2, P3, P10, P9, P5, P8, P15, P7, P11, P6, then P4,
+   then P12, P13, P14.**
+
+   Checks P1-P3 and P5-P11 accumulate state on one slide; check P4 (close and reopen) is the
+   one that *consumes* it. By then there will be a polygon, a freehand line and a
+   fast-traced outline in the model, so the reopen exercises several shapes at once.
+
+   - **Start without existing saved annotations.** Open a slide with no annotation file,
+     so check P4's reopen is unambiguous — anything that returns came from this session.
+     Then reopen that slide a *second* time as a bonus: the shapes should load from disk
+     and be immediately draggable and selectable, which exercises the load path rather
+     than the in-memory one.
+
+   - **A multi-scene slide is worth one extra pass, and is the most valuable extra
+     available.** Draw a polygon on scene 0, switch to scene 1, draw a different one,
+     switch back. Each scene's shapes must stay with their own scene. Annotation files
+     are keyed by (slide ID, scene index) precisely so scene 0's coordinates are never
+     drawn over scene 1's tissue. **A misassociation here is the most clinically serious
+     failure on this list** — marks on the wrong tissue, looking entirely plausible. No
+     single-scene slide can reach it.
+
+   - **A read-only slide is needed only for check P12**, reached the real way: open a
+     slide whose stored file mismatches and resolve the dialog as "Open Read-Only". Do
+     not simulate it by making the file read-only on disk — that is a different path and
+     will not tell you whether the tool-gating signal fired.
+
+   - **Use a brightfield H&E slide** for the selection-outline half of check P3. The
+     two-tone selection pen (black 3.0 solid beneath white 1.0 dashed) exists because a
+     plain white dash was invisible against near-white glass and tissue. A dark-background
+     fluorescence slide shows the outline clearly and tells you nothing about the case
+     that pen was written for.
 
 ---
 
