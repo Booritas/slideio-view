@@ -6,6 +6,7 @@
 #include "slideio/viewer/infra/JsonAnnotationRepository.h"
 #include "slideio/viewer/infra/QSettingsColorProfileOverrideStore.h"
 #include "slideio/viewer/ui/AboutDialog.h"
+#include "slideio/viewer/ui/AnnotationInteraction.h"
 #include "slideio/viewer/ui/AnnotationSettings.h"
 #include "slideio/viewer/ui/AppPaths.h"
 #include "slideio/viewer/ui/AssociatedImageWindow.h"
@@ -129,6 +130,8 @@ struct MainWindow::Impl
     QAction* manageSlideProfilesAction = nullptr;
     QAction* panToolAction = nullptr;
     QAction* rectangleToolAction = nullptr;
+    QAction* polygonToolAction = nullptr;
+    QAction* freehandToolAction = nullptr;
     QAction* preferencesAction = nullptr;
     QAction* openAnnotationsFolderAction = nullptr;
     QAction* aboutAction = nullptr;
@@ -261,6 +264,16 @@ struct MainWindow::Impl
         rectangleToolAction->setShortcut(QKeySequence("R"));
         rectangleToolAction->setStatusTip("Draw a rectangular annotation by dragging");
 
+        polygonToolAction = new QAction("&Polygon", owner);
+        polygonToolAction->setCheckable(true);
+        polygonToolAction->setShortcut(QKeySequence("P"));
+        polygonToolAction->setStatusTip("Draw a polygon by clicking points, or by dragging to trace");
+
+        freehandToolAction = new QAction("&Freehand Line", owner);
+        freehandToolAction->setCheckable(true);
+        freehandToolAction->setShortcut(QKeySequence("F"));
+        freehandToolAction->setStatusTip("Draw an open freehand line");
+
         // These are the only bare-letter shortcuts in the application; every
         // other one here is modifier-qualified. Qt matches shortcuts before the
         // key reaches the focus widget, so at the default window scope "v" and
@@ -271,16 +284,22 @@ struct MainWindow::Impl
         // out of the way everywhere else.
         panToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         rectangleToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        polygonToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        freehandToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
 
         auto* toolGroup = new QActionGroup(owner);
         toolGroup->setExclusive(true);
         toolGroup->addAction(panToolAction);
         toolGroup->addAction(rectangleToolAction);
+        toolGroup->addAction(polygonToolAction);
+        toolGroup->addAction(freehandToolAction);
         // Spec §6: no drawing tools without a slide. Enabled and disabled from
         // ViewportWidget::annotationsAvailableChanged, which says more than
         // "a slide is open": an associated image and a slide whose annotation
         // file would not parse both leave it off.
         rectangleToolAction->setEnabled(false);
+        polygonToolAction->setEnabled(false);
+        freehandToolAction->setEnabled(false);
 
         openAnnotationsFolderAction = new QAction("Open &Annotations Folder", owner);
         openAnnotationsFolderAction->setStatusTip(
@@ -349,6 +368,8 @@ struct MainWindow::Impl
         QMenu* toolsMenu = owner->menuBar()->addMenu("&Tools");
         toolsMenu->addAction(panToolAction);
         toolsMenu->addAction(rectangleToolAction);
+        toolsMenu->addAction(polygonToolAction);
+        toolsMenu->addAction(freehandToolAction);
         // There is no Edit menu, so Preferences lives here. setMenuRole() moves
         // it to the application menu on macOS regardless.
         toolsMenu->addSeparator();
@@ -453,11 +474,14 @@ struct MainWindow::Impl
         // menu still shows "V" and "R" either way.
         viewportWidget->addAction(panToolAction);
         viewportWidget->addAction(rectangleToolAction);
+        viewportWidget->addAction(polygonToolAction);
+        viewportWidget->addAction(freehandToolAction);
 
         QObject::connect(panToolAction, &QAction::triggered, owner, [this]() {
             viewportWidget->setActiveTool(AnnotationTool::Pan);
         });
-        QObject::connect(rectangleToolAction, &QAction::triggered, owner, [this]() {
+        // Every drawing tool is gated on an identity, not just Rectangle.
+        auto selectDrawingTool = [this](AnnotationTool tool) {
             if (!annotationSettings->hasUserName()) {
                 // FR-USER-01: creation is blocked until an identity is
                 // configured. Asked here, on the first attempt to annotate,
@@ -472,7 +496,16 @@ struct MainWindow::Impl
                     return;
                 }
             }
-            viewportWidget->setActiveTool(AnnotationTool::Rectangle);
+            viewportWidget->setActiveTool(tool);
+        };
+        QObject::connect(rectangleToolAction, &QAction::triggered, owner, [selectDrawingTool]() {
+            selectDrawingTool(AnnotationTool::Rectangle);
+        });
+        QObject::connect(polygonToolAction, &QAction::triggered, owner, [selectDrawingTool]() {
+            selectDrawingTool(AnnotationTool::Polygon);
+        });
+        QObject::connect(freehandToolAction, &QAction::triggered, owner, [selectDrawingTool]() {
+            selectDrawingTool(AnnotationTool::Freehand);
         });
 
         QObject::connect(preferencesAction, &QAction::triggered, owner, [this]() {
@@ -498,11 +531,22 @@ struct MainWindow::Impl
                          [this](AnnotationTool tool) {
                              panToolAction->setChecked(tool == AnnotationTool::Pan);
                              rectangleToolAction->setChecked(tool == AnnotationTool::Rectangle);
+                             polygonToolAction->setChecked(tool == AnnotationTool::Polygon);
+                             freehandToolAction->setChecked(tool == AnnotationTool::Freehand);
+                             if (isNPointTool(tool)) {
+                                 // A user who clicks once and does not know how
+                                 // to finish has no affordance at all otherwise.
+                                 statusBarManager->showTransientMessage(
+                                     tr("Click to add points, double-click or Enter to "
+                                        "finish, Esc to cancel"));
+                             }
                          });
 
         QObject::connect(viewportWidget, &ViewportWidget::annotationsAvailableChanged, owner,
                          [this](bool available, const QString& reason) {
                              rectangleToolAction->setEnabled(available);
+                             polygonToolAction->setEnabled(available);
+                             freehandToolAction->setEnabled(available);
                              if (available || !viewportWidget->isSlideOpen()) {
                                  // Either fine, or the transient "no slide" that
                                  // every slide switch emits -- leave the tool alone,
@@ -765,6 +809,8 @@ struct MainWindow::Impl
             // drop the user back to Navigate every time they opened the next
             // slide -- re-picking the tool on every slide of a series.
             rectangleToolAction->setEnabled(false);
+            polygonToolAction->setEnabled(false);
+            freehandToolAction->setEnabled(false);
             closeAction->setEnabled(false);
             minimapWidget->clearThumbnail();
             statusBarManager->updateCursorPosition(0.0, 0.0);
