@@ -59,7 +59,10 @@ not cover.
    barred from it, and the integration lives inside a widget no suite can
    construct. This is the first execution of any of this code, and the list is
    for the project owner. It comes from the final whole-branch review of
-   `annotation-geometry` at commit `8d2039b`. Numbered P1-P15 so as not to
+   `annotation-geometry` (038c016..c41b003), whose findings then produced two
+   fix commits, `1bae489` and `8d2039b`; the review predates both fixes, so a
+   check traced back to a defect it found may describe code that has since
+   changed. Numbered P1-P15 so as not to
    collide with the checks above. Priority order; each says what a break looks
    like.
 
