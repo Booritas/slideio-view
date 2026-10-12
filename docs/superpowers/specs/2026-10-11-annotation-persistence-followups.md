@@ -170,8 +170,12 @@ not cover.
 
    **Order and slide state**
 
-   Run once, on one slide, in this order: **P1, P2, P3, P10, P9, P5, P8, P15, P7, P11, P6, then P4,
-   then P12, P13, P14.**
+   Run once, on one slide, in this order: **P1, P2, P3, P10, P17, P9, P16, P5, P8, P15, P7, P11,
+   P6, then P4, then P12, P13, P14.**
+
+   P17 sits beside P10 because both ask what a close gesture does, and P16 after P9 because
+   both end a trace deliberately — P16 last of that group, since switching tools is the one
+   that throws the pending shape away.
 
    Checks P1-P3 and P5-P11 accumulate state on one slide; check P4 (close and reopen) is the
    one that *consumes* it. By then there will be a polygon, a freehand line and a
