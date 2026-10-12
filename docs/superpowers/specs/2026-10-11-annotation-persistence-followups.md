@@ -1,6 +1,8 @@
 # Annotation persistence (E1) — deferred findings and follow-ups
 
 **Date:** 2026-10-11
+**Updated:** 2026-10-12 — item 0 carries the results of the P1-P17 verification run
+against `main` @ `bc3aeb6`; item 18 is new, found during it.
 **Status:** Open
 **Covers:** `main` @ `ca38c5d` (merge of `annotation-persistence`) and `c819a54`
 **Spec:** `2026-10-10-annotation-persistence-design.md`
@@ -24,13 +26,18 @@ not cover.
 
 ## Not yet verified at all
 
-0. **Most of this sub-project has still not been run against a real slide.** No
+0. **Parts of this sub-project have still not been run against a real slide.** No
    test suite creates a `QApplication`, so no widget can be constructed in a
    test, and every implementer was barred from launching the viewer. The
    subsystem's value rests on behaviours only the running application
    exercises.
 
    **Verified by the user, 2026-10-11:** annotation creation and saving work.
+
+   **Verified 2026-10-12:** the whole geometry-widening list, P1-P17 — 16 pass,
+   1 partial (P11), 0 fail. See "Results" at the end of this item. The six
+   numbered checks immediately below are an older, separate list and are
+   **not** covered by that run, except for the parts noted there.
 
    Still unverified, in the order they matter:
 
@@ -53,11 +60,14 @@ not cover.
    6. Draw, then quit the application **without closing the slide**. The work
       must be on disk — that path is `closeEvent`, not autosave.
 
-   **Polygon and freehand line, added 2026-10-12 — none of these has been run.**
-   Nobody has run the viewer at any point across the geometry-widening work
+   **Polygon and freehand line, added 2026-10-12. All of P1-P17 have since been
+   run — see "Results" at the end of this item; what follows describes the list as
+   written, before it was executed.** Nobody had run the viewer at any point across
+   the geometry-widening work
    (`2026-10-12-annotation-geometry-widening-design.md`); every implementer was
    barred from it, and the integration lives inside a widget no suite can
-   construct. This is the first execution of any of this code, and the list is
+   construct. The run below was therefore the first execution of any of this code,
+   and the list is
    for the project owner. It comes from the final whole-branch review of
    `annotation-geometry` (038c016..c41b003), whose findings then produced two
    fix commits, `1bae489` and `8d2039b`; the review predates both fixes, so a
@@ -206,6 +216,96 @@ not cover.
      fluorescence slide shows the outline clearly and tells you nothing about the case
      that pen was written for.
 
+   **Results — P1-P17 run in full, 2026-10-12.** 16 pass, 1 partial, 0 fail. This was
+   the first execution of any of this code. Driven through the GUI with Win32
+   automation against the installed build of `main` @ `bc3aeb6`, on
+   `S1303802-11-HE-DX1.svs` (brightfield H&E, as the note above requires), with a
+   Zeiss CZI for the multi-scene pass and a worktree build at `e86150c` for P14. The
+   saved JSON was the oracle wherever a check could be settled by it; screenshots
+   only for the visual ones. No error, critical, fatal or exception line appeared in
+   the session log across the whole campaign, and nothing crashed.
+
+   | Check | Verdict | Observed |
+   |-------|---------|----------|
+   | P1 | pass | 2 clicks + 1 double-click produced **exactly 3 vertices**. Qt delivers `MouseButtonDblClick` in place of the second press. |
+   | P2 | pass | Every vertex moved by an identical delta; no rectangle conversion. |
+   | P3 | pass | Notch selects nothing, solid part selects; outline traces the edges, not a box. |
+   | P4 | pass | All 5 shapes returned unchanged, including the 32-vertex polyline — exercising the hand-maintained `polyline` reader branch. |
+   | P5 | pass | Focus verifiably stolen by another window; preview identical before and after. |
+   | P6 | pass | Saved as `polyline`, drawn open and unfilled. |
+   | P7 | pass | Click count equalled vertex count in all five trials; no jitter-trailed extras. |
+   | P8 | pass | Pressing `R` mid-drag then releasing selected and deselected nothing, as §6.6 requires. |
+   | P9 | pass | Both halves: Escape and Backspace. |
+   | P10 | pass | All three close gestures: click vertex 1, double-click, Enter. |
+   | P11 | **partial** | 40 drag steps produced 32 vertices, proportional and smooth — but a synthetic drag has none of a real hand's jitter. **Still wants a human hand.** |
+   | P12 | pass | See below. |
+   | P13 | pass | Hint observed for both tools, and its transience observed. |
+   | P14 | pass | See below. |
+   | P15 | pass | Move completed; nothing beyond it. |
+   | P16 | pass | 410 preview pixels cleared the instant `V` was pressed, cursor unmoved. |
+   | P17 | pass | Below-minimum double-click **and** below-minimum Enter both leave the trace alive. |
+   | multi-scene extra | pass | Separate `.s0`/`.s1` files, correct `sceneIndex`, per-scene dimensions. **The most clinically serious failure on this list does not occur.** |
+   | backward-compat (unplanned) | pass | The CZI's `.s0` file held two rectangles written 2026-10-11 by a pre-branch build; the new build read and appended to it without damage. |
+
+   **P1 settles the §6.3 double-click question empirically** — the claim had been
+   reasoned, not observed. Had the original `pop_back` survived, that triangle would
+   have fallen to two vertices and vanished silently at commit.
+
+   **P14 in detail.** The pre-branch build refused the file with
+   `unknown geometry type 'polygon'`, naming the file and stating "The file has not
+   been changed. Annotations are disabled for this slide so it cannot be overwritten."
+   It then wrote nothing: after selecting the Rectangle tool, dragging, waiting past
+   the 2s debounce and closing (which flushes), all four annotation files were
+   byte-identical by SHA-256 with unchanged mtimes. **This validates the decision not
+   to bump `schemaVersion`** — the old build fails on the shape alone, not the
+   version, so a staggered rollout degrades per-shape instead of refusing every
+   rectangle-only file. The gate is stronger than "the service is inactive so it never
+   writes": `annotationsAvailableChanged(false)` disables the tool outright, so the
+   user cannot begin work that would be lost.
+
+   **P12 in detail.** Reached the real way — the stored document's `slideId` was
+   changed to a foreign value so it no longer matched the key it was filed under, the
+   state a re-exported slide produces; no on-disk read-only simulation. The three-way
+   dialog appeared and was resolved as "Open Read-Only"; all 9 annotations loaded and
+   rendered, so this is the genuine read-only path and not an empty model. Clicking
+   `Polygon`, `Freehand Line` and `Rectangle` each at its own screen coordinates left
+   the checkmark on Navigate every time — **Polygon and Freehand are gated exactly as
+   Rectangle is**, which the code confirms (all three get `setEnabled(available)` in
+   the `annotationsAvailableChanged` handler). The break condition never occurred: no
+   drawing tool could be selected at all, so no trace was possible and the inner
+   "cannot be changed" guard was never reached. Read-only also wrote nothing — the
+   foreign `slideId` was still on disk afterwards, never silently re-associated.
+
+   **Caveats on method, so the next reader does not over-trust this.**
+
+   - **P11 is the one genuinely incomplete check.** Everything else was settled by the
+     saved JSON or by an unambiguous behavioural oracle.
+   - **Greying cannot be read from a screenshot in this theme.** `Rectangle`,
+     `Polygon`, `Freehand` and the definitely-enabled `Preferences...` all render at
+     identical peak luma (204) whether enabled or disabled. Two attempts to measure it
+     were dead ends. P12's verdict rests on clicking each item and reading the
+     checkmark, not on appearance — if this check is ever re-run, do the same.
+   - Two mid-run observations were **automation artifacts, not app faults**: an early
+     Escape that appeared not to work (the harness had lost viewport focus; tool
+     shortcuts are `Qt::WidgetWithChildrenShortcut` and need it, while `Ctrl+0` is
+     window-level), and a "no new file" scene-0 alarm (the file already existed from a
+     previous session, so "new file" was simply the wrong oracle — it had grown
+     1750→2571 bytes). One trace attempt was discarded outright after the view panned
+     off-slide.
+   - All test annotations written during the campaign were left in place and every
+     file touched was restored to its original SHA-256.
+
+   **Still unverified after this campaign** — the numbered checks 1-6 above are a
+   separate, older list and were *not* covered, except in part:
+
+   - Checks 1, 2, 4 and 6: untouched.
+   - Check 3: the mismatch dialog appears and **"Open Read-Only" behaves as §7
+     describes**. "Use for This Slide" and "Ignore Them" remain unexercised — and the
+     note that "Use for This Slide" must survive a close *without drawing* is exactly
+     the shape of bug that reappears.
+   - Check 5: only the tool-gating half. **Dragging an annotation and pressing Delete
+     on a read-only slide were not tried**, and those are what check 5 is actually for.
+
 ---
 
 ## User-visible, worth fixing when the area is next touched
@@ -335,6 +435,22 @@ in the code it covers.
     the `system_clock` ceiling that `parseIso8601Utc` documents. Accurate for
     the format side — the clock ceiling binds only the parser — but the pair
     reads asymmetrically.
+
+18. **A refused annotation file leaves no trace in the session log.** Found
+    while running P14, 2026-10-12. When a file is declined — a parse failure, an
+    unsupported version, or an unknown geometry type — the refusal reaches the
+    user as a `QMessageBox` and nothing else. `AnnotationPersistenceService` has
+    no logging at all, and `MainWindow`'s `loadFailed` handler only raises the
+    dialog. Once the user clicks OK, the fact that the viewer declined to load
+    clinical annotation data is gone. The same is true on both sides of the
+    geometry-widening branch, so this is pre-existing and not a regression.
+
+    Listed here rather than under "User-visible" because the behaviour the user
+    sees is correct and well-worded; what is missing is the record. **It may
+    deserve promotion:** for a device under ISO 13485 and EU MDR, a silent-to-
+    the-log refusal to load clinical data is a traceability gap, not a cosmetic
+    one. One `spdlog` warn line naming the path and the parser's `problem`
+    string would close it, and both values are already in hand at the emit site.
 
 ---
 
