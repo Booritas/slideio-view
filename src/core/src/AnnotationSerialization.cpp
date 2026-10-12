@@ -102,6 +102,8 @@ const char* geometryTypeName(const AnnotationGeometry& geometry)
         using Shape = std::decay_t<decltype(shape)>;
         if constexpr (std::is_same_v<Shape, RectangleGeometry>) {
             return kRectangleTypeName;
+        } else {
+            static_assert(sizeof(Shape) == 0, "A new geometry alternative needs its own type name here.");
         }
     }, geometry);
 }
