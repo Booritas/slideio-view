@@ -2891,7 +2891,15 @@ void ViewportWidget::commitPendingShape()
 
     // Below the minimum this is not a shape, and is discarded in silence --
     // the same way an undersized rectangle drag already is.
-    if (!pendingShapeCommits(vertices.size(), closed) || !m_impl->annotationsEditable()) {
+    if (!pendingShapeCommits(vertices.size(), closed)) {
+        update();
+        return;
+    }
+    // A valid shape refused for editability is "you cannot do this here", unlike
+    // the silent misclick above, so the user is told rather than left to lose
+    // a full outline without feedback.
+    if (!m_impl->annotationsEditable()) {
+        emit annotationEditBlocked(readOnlyEditMessage());
         update();
         return;
     }
@@ -3852,14 +3860,13 @@ void ViewportWidget::mouseDoubleClickEvent(QMouseEvent* event)
         return;
     }
 
-    // Qt delivers press, release, doubleClick, release -- so the second press
-    // has already appended a vertex at the closing position. Committing without
-    // dropping it leaves a duplicate final vertex on every polygon closed this
-    // way: invisible on screen, permanent in the file, and an off-by-one in
-    // every vertex count a later sub-project reads.
-    if (!m_impl->pending.vertices.empty()) {
-        m_impl->pending.vertices.pop_back();
-    }
+    // Qt sends MouseButtonDblClick in place of the second press, not in
+    // addition to it -- QWidget's default implementation forwards it to
+    // mousePressEvent for exactly that reason. This override does not forward,
+    // so the pair has appended exactly one vertex, placed by its first click,
+    // and that vertex is the one the user double-clicked to position. Removing
+    // it would drop a real point and, on a triangle, take the shape below
+    // kMinPolygonVertices so it was discarded in silence.
     m_impl->dragOwner = DragOwner::None;
     m_impl->dragButton = Qt::NoButton;
     commitPendingShape();
