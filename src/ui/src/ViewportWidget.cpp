@@ -1413,7 +1413,12 @@ struct ViewportWidget::Impl
     core::PointF drawCurrentSlide;
 
     // Moving a selected annotation.
-    core::PointF moveLastSlide;
+    /// Cursor position in slide space at the moment the move drag began.
+    /// Written once, at press: the drag applies a total delta to
+    /// moveOriginalGeometry rather than accumulating per-event increments, so
+    /// every frame translates a pristine shape instead of the previous frame's
+    /// output. It is also the state an undo stack will want.
+    core::PointF movePressSlide;
     std::string movingId;
     // The geometry the annotation had when it was picked up, so Escape can put
     // it back. There is no undo stack in this slice, so nothing else could.
@@ -3507,7 +3512,7 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
         const double tolerance = screenToleranceToSlide(kHitToleranceScreenPixels,
                                                         m_impl->controller->viewport().scale());
         pressHitId = m_impl->annotations->hitTest(core::PointF{slideX, slideY}, tolerance);
-        m_impl->moveLastSlide = core::PointF{slideX, slideY};
+        m_impl->movePressSlide = core::PointF{slideX, slideY};
     }
 
     DragOwner owner = resolveDragOwner(event->button(), event->modifiers(),
@@ -3660,16 +3665,16 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event)
         double slideY = 0.0;
         m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
 
-        const double dx = slideX - m_impl->moveLastSlide.x;
-        const double dy = slideY - m_impl->moveLastSlide.y;
-        m_impl->moveLastSlide = core::PointF{slideX, slideY};
+        // Total delta from the press, applied to the geometry captured at the
+        // press -- not an increment applied to the previous frame's result.
+        // Escape restores moveOriginalGeometry, so the drag and the cancel now
+        // read the same single source of truth.
+        const double dx = slideX - m_impl->movePressSlide.x;
+        const double dy = slideY - m_impl->movePressSlide.y;
 
-        if (const core::Annotation* current = m_impl->annotations->find(m_impl->movingId)) {
-            static_assert(std::variant_size_v<core::AnnotationGeometry> == 1,
-                          "This assumes Rectangle is the only geometry: it rebuilds the shape from its "
-                          "bounding box. Add per-type dispatch before widening the variant.");
+        if (m_impl->annotations->find(m_impl->movingId) != nullptr) {
             m_impl->annotations->setGeometry(
-                m_impl->movingId, translatedBox(current->boundingBox(), dx, dy));
+                m_impl->movingId, core::translated(m_impl->moveOriginalGeometry, dx, dy));
         }
         event->accept();
         update();

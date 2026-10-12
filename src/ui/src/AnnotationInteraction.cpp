@@ -59,10 +59,4 @@ core::RectF withMinimumExtent(const core::RectF& box, double minExtentSlideUnits
     return result;
 }
 
-core::RectangleGeometry translatedBox(const core::RectF& box, double dx, double dy)
-{
-    return core::RectangleGeometry{core::PointF{box.x + dx, box.y + dy},
-                                   core::PointF{box.x + box.width + dx, box.y + box.height + dy}};
-}
-
 } // namespace slideio::viewer::ui

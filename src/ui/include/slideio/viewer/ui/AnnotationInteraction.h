@@ -71,8 +71,4 @@ constexpr double kHitToleranceScreenPixels = 6.0;
 /// annotation rather than a zero-area one.
 [[nodiscard]] core::RectF withMinimumExtent(const core::RectF& box, double minExtentSlideUnits);
 
-/// `box` translated by a slide-space delta. Returns the geometry the move
-/// handler stores, so the translation is testable without a widget.
-[[nodiscard]] core::RectangleGeometry translatedBox(const core::RectF& box, double dx, double dy);
-
 } // namespace slideio::viewer::ui
