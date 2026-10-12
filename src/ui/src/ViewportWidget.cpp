@@ -2900,6 +2900,10 @@ void ViewportWidget::setActiveTool(AnnotationTool tool)
     // Tool changes need not touch `drawing`, which cannot outlive a press. The
     // pending shape can, so it has to be dropped here explicitly.
     discardPendingShape();
+    // Likewise a tool drag in flight: left alone, its release would miss the
+    // pending-shape guard and fall into the selection-click path, selecting
+    // under a drawing tool. A pan is not ours to end.
+    endToolDrag();
     m_impl->activeTool = tool;
     updateCursor();
     emit activeToolChanged(tool);
@@ -2932,6 +2936,19 @@ void ViewportWidget::resetAnnotationState()
     updateCursor();
 }
 
+void ViewportWidget::endToolDrag()
+{
+    // Only a drag the drawing tool owns. A pan (space or middle button) is
+    // deliberately kept alive across a commit, a cancel or a tool change so the
+    // user can reposition the slide without abandoning a half-traced outline.
+    if (m_impl->dragOwner != DragOwner::Tool) {
+        return;
+    }
+    m_impl->drawing = false;
+    m_impl->dragOwner = DragOwner::None;
+    m_impl->dragButton = Qt::NoButton;
+}
+
 void ViewportWidget::commitPendingShape()
 {
     if (!m_impl->pending.active) {
@@ -2946,8 +2963,7 @@ void ViewportWidget::commitPendingShape()
     // end the drag. Ending it here means the matching release takes the
     // dragOwner == None early exit instead of the selection-click path, which
     // would re-hit-test and could clear the selection set below.
-    m_impl->dragOwner = DragOwner::None;
-    m_impl->dragButton = Qt::NoButton;
+    endToolDrag();
 
     // Below the minimum this is not a shape, and is discarded in silence --
     // the same way an undersized rectangle drag already is.
@@ -3978,8 +3994,7 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
 
         if (m_impl->pending.active) {
             discardPendingShape();
-            m_impl->dragOwner = DragOwner::None;
-            m_impl->dragButton = Qt::NoButton;
+            endToolDrag();
             cancelled = true;
         } else if (m_impl->drawing) {
             m_impl->drawing = false;

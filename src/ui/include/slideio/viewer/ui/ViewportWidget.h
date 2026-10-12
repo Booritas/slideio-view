@@ -164,6 +164,7 @@ private:
     void resetAnnotationState();
     void commitPendingShape();
     void discardPendingShape();
+    void endToolDrag();
     void installSceneOpenResult(uint64_t opId, SceneOpenResult result);
 
     // Drops the GPU textures of every tile not in `keep`'s colour mode so the
