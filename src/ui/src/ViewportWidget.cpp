@@ -2889,6 +2889,14 @@ void ViewportWidget::commitPendingShape()
     std::vector<core::PointF> vertices = std::move(m_impl->pending.vertices);
     discardPendingShape();
 
+    // A commit can happen on a press (click-close), on a double-click or on a
+    // key while the button is held -- never on the release that would normally
+    // end the drag. Ending it here means the matching release takes the
+    // dragOwner == None early exit instead of the selection-click path, which
+    // would re-hit-test and could clear the selection set below.
+    m_impl->dragOwner = DragOwner::None;
+    m_impl->dragButton = Qt::NoButton;
+
     // Below the minimum this is not a shape, and is discarded in silence --
     // the same way an undersized rectangle drag already is.
     if (!pendingShapeCommits(vertices.size(), closed)) {
@@ -3867,8 +3875,6 @@ void ViewportWidget::mouseDoubleClickEvent(QMouseEvent* event)
     // and that vertex is the one the user double-clicked to position. Removing
     // it would drop a real point and, on a triangle, take the shape below
     // kMinPolygonVertices so it was discarded in silence.
-    m_impl->dragOwner = DragOwner::None;
-    m_impl->dragButton = Qt::NoButton;
     commitPendingShape();
     updateCursor();
     event->accept();
