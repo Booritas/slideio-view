@@ -53,6 +53,49 @@ not cover.
    6. Draw, then quit the application **without closing the slide**. The work
       must be on disk — that path is `closeEvent`, not autosave.
 
+   **Polygon and freehand line, added 2026-10-12 — none of these has been run.**
+   The geometry-widening work (`2026-10-12-annotation-geometry-widening-design.md`)
+   landed with every implementer barred from launching the viewer, and its
+   integration lives inside a widget no suite can construct. Every check below
+   is outstanding.
+
+   7. **Trace a polygon and close it three ways:** click on vertex 1 (the
+      marker should appear as you approach it), double-click, and Enter. Each
+      produces a filled outline following the points you placed.
+   8. **Count the vertices in the saved JSON after closing a polygon by
+      double-click.** For N placed points the file must contain exactly N
+      entries in `vertices`. This is the check that settles the design spec's
+      §6.3 error empirically: that section first claimed the double-click's
+      second press had already added a vertex, and was corrected after
+      implementation. A duplicate or a missing vertex is invisible on screen,
+      so it can only be seen in the file. Try it with a triangle as well — a
+      wrongly dropped vertex there would discard the shape outright.
+   9. **Escape mid-trace** discards the shape; **Backspace** drops one vertex at
+      a time and the preview shortens.
+   10. **Alt-tab away mid-trace and come back.** The pending shape is still
+       there. This is the asymmetry most likely to be broken silently later.
+   11. **Switch tools mid-trace.** The pending shape is gone.
+   12. **Drag a committed polygon.** It keeps its shape and vertex count — it
+       does not become a rectangle. This is the regression foundation item 1
+       was filed to prevent.
+   13. **Click inside the notch of a concave polygon.** Nothing selects. Click
+       inside the solid part: it selects, and the selection outline follows the
+       shape rather than a box.
+   14. **Close the slide and reopen it.** The polygon is back, unchanged.
+   15. **Trace a freehand line.** It is not filled, and its two ends are not
+       joined.
+   16. **Trail density:** hold the button and trace quickly. The outline follows
+       the cursor without visible corners, and the saved file's vertex count is
+       proportional to the on-screen length, not to the time taken.
+   17. **Confirm the status-bar hint reads correctly for the Freehand tool as
+       well as Polygon.** Both tools share the same gestures and the same text
+       (`MainWindow.cpp`, the `activeToolChanged` handler), so it should be
+       accurate for both, but nobody has seen it on screen. The text does not
+       mention click-on-vertex-1, which closes a polygon but not a freehand
+       line.
+   18. **A build predating this work, shown a file containing a polygon,**
+       refuses to load, names the type, and leaves the file unchanged on disk.
+
 ---
 
 ## User-visible, worth fixing when the area is next touched
@@ -171,9 +214,12 @@ in the code it covers.
 16. **The annotation-level `"type"` field is parsed but never validated against
     the geometry.** `AnnotationSerialization.cpp`. `"type": "polygon"` with a
     rectangle geometry loads as a rectangle, because the type is derived from
-    the geometry on read. The field is inert today. The `static_assert` on the
-    variant means a second geometry type cannot be added without revisiting
-    this.
+    the geometry on read. The field is inert on read. **Shifted 2026-10-12**
+    (geometry-widening design §3.5): the geometry still wins, always, but the
+    field is now derived from the geometry on write via `core::typeOf()`, so
+    writer and reader cannot disagree about it. It remains in the file for the
+    human reading it in an editor. The `static_assert` that once forced this to
+    be revisited is gone; the second geometry type has been added.
 
 17. **`formatIso8601Utc`'s doc comment names only the year-9999 ceiling**, not
     the `system_clock` ceiling that `parseIso8601Utc` documents. Accurate for
@@ -204,7 +250,8 @@ remain open.
   `static_assert(std::variant_size_v<core::AnnotationGeometry> == 1)`, so
   **adding a second geometry type fails to compile until they are addressed** —
   which is deliberate, the alternative being silent data corruption the first
-  time someone dragged an ellipse.
+  time someone dragged an ellipse. **Closed 2026-10-12** by the polygon and
+  freehand widening; the `static_assert`s are gone, replaced by real dispatch.
 - **Sub-project F (panels)** — items 7 and 8: `ViewportWidget` never connects to
   `AnnotationModel`'s signals (it repaints because it is the only mutator, which
   stops being true the moment a panel edits an annotation), and the app-layer

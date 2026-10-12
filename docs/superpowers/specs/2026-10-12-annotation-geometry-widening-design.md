@@ -423,13 +423,24 @@ try first. Both are cheap, so both are supported. Both `Qt::Key_Return` and
 `Qt::Key_Enter` bind, since the numeric keypad delivers the latter.
 Right-click stays unbound — a context menu will want it.
 
-**Double-click must drop the vertex the second press already placed.** Qt
-delivers `press`, `release`, `doubleClick`, `release` — so by the time
-`mouseDoubleClickEvent` arrives, the second press has already appended a vertex
-at the closing position. Committing without removing it leaves a duplicate
-final vertex on every polygon closed this way: invisible on screen, permanent
-in the file, and an off-by-one in every vertex count a later sub-project reads.
-The handler pops the last vertex before committing.
+**Double-click keeps the vertex it placed.** Qt delivers `press`, `release`,
+`doubleClick`, `release`, and the `doubleClick` is sent *in place of* the second
+press, not in addition to it. Qt's own default
+`QWidget::mouseDoubleClickEvent` is `mousePressEvent(event)`; that forwarding
+exists because no second press arrives, and would double-count if one did.
+`ViewportWidget`'s override does not forward, so the pair appends exactly one
+vertex, placed by its first click, and that is the point the user
+double-clicked to position. The handler commits without removing anything.
+Dropping the last vertex would lose a real point, and on a triangle would leave
+2 vertices, fail the §6.5 minimum and discard the shape in silence.
+
+> **Correction, 2026-10-12.** The original text of this paragraph claimed that
+> the second press had already appended a vertex and that the handler must
+> `pop_back` before committing. That was wrong. It was implemented as written
+> and caught in review, and the implementation was corrected afterwards. The
+> text above is current; a quotation of the earlier claim is out of date. The
+> empirical check is still manual: count the vertices in the saved file (item 0
+> of the persistence follow-ups).
 
 Closing tolerance reuses the existing `kHitToleranceScreenPixels` (6.0) rather
 than introducing a second screen-space constant for the same kind of question.
@@ -578,10 +589,10 @@ Alongside it:
 - `translated()` per type: a polygon keeps its vertex count and its `closed`;
 - `typeOf()` for all three shapes;
 - `boundingBox` over a polygon, including a shape degenerate on one axis;
-- `pendingShapeCommits` is covered in §8.2, but the **double-click duplicate
-  vertex** of §6.3 cannot be: it is event-ordering inside the widget. It is
-  check 1 of §8.3 and must be verified by counting vertices in the saved file,
-  not by eye — the duplicate is invisible on screen;
+- `pendingShapeCommits` is covered in §8.2, but the **double-click vertex
+  count** of §6.3 cannot be: it is event-ordering inside the widget. It must be
+  verified by counting vertices in the saved file, not by eye — a duplicate or
+  a missing vertex is invisible on screen;
 - serializer: round-trip polygon and polyline; reject under-minimum vertex
   counts for each; reject a non-finite vertex; reject an empty or absent
   `vertices` array; the unknown-type message text; `schemaVersion` still 1;
@@ -670,3 +681,11 @@ Not in this increment:
 6. **No profile backs §4.6.** The cull is taken on reasoning, not measurement.
    It is cheap and cannot be wrong in a way that loses data, only in a way that
    fails to help.
+7. **The plan's claim of a green build at every commit did not hold.** Tasks 6
+   and 7 could not be separate commits: the serializer's `std::visit` sites are
+   deliberately exhaustive, so adding `PolygonGeometry` to the variant without
+   its serialisation does not compile. They landed together as `dc40641`. That
+   exhaustiveness is the property the design relies on — the compiler refuses a
+   half-widened variant — and the price is that widening is one atomic change,
+   not two. Accepted; a future geometry type should be planned as one commit
+   covering the variant and every visitor over it.

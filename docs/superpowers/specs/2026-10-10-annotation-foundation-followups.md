@@ -16,9 +16,18 @@ the reports are gone.
 
 ---
 
-## Must be fixed before the next geometry type (one each in A, B and C)
+## Must be fixed before the next geometry type (one each in A, B and C) — 1, 2, 3 CLOSED
 
-These are guarded by `static_assert(std::variant_size_v<core::AnnotationGeometry> == 1)`
+**Closed 2026-10-12** by the polygon and freehand widening
+(`2026-10-12-annotation-geometry-widening-design.md`): item 1 by §5 (the move
+handler now calls `core::translated`), item 2 by §4 (`paintAnnotations` paints
+from `core::outline`), item 3 by §2.2 (`Annotation::type()` delegates to
+`core::typeOf()`; the type is no longer a constructor argument). Kept below
+with the original text, because each records why the decision went the way it
+did. The `static_assert` guard described below was removed when the variant was
+widened; all of its sites were replaced by real dispatch.
+
+These were guarded by `static_assert(std::variant_size_v<core::AnnotationGeometry> == 1)`
 at both sites, so **widening the variant fails to compile until they are addressed.**
 That is deliberate: the alternative was silent data corruption.
 
@@ -124,6 +133,12 @@ way it did.
 
 12. **Tolerance on a degenerate rectangle is untested.** `hitTest` with a
     zero-extent box and a non-zero tolerance. Add in C.
+
+    **Still open as of 2026-10-12.** The geometry-widening design (§8.1)
+    scheduled this test, but `tests/core/AnnotationGeometryTest.cpp` has none:
+    the degenerate-shape cases there are a zero-extent `boundingBox` (no
+    tolerance), and a polygon with identical vertices. Close this when a
+    `hitTest` on a zero-extent rectangle with non-zero tolerance exists.
 
 13. **The preview rectangle repeats the committed path's screen-rect
     conversion.** `ViewportWidget.cpp`. Duplication, not a defect.
