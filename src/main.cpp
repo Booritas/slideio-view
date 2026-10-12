@@ -47,6 +47,19 @@ int main(int argc, char* argv[])
     QApplication app(argc, argv);
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/app.png")));
 
+    // Without this a disabled menu item is pixel-identical to an enabled one.
+    // The Windows 11 style draws menu text through the native theme and ignores
+    // QPalette's Disabled roles -- setting them was measured to change nothing --
+    // so a stylesheet is the only lever that works. It matters because disabling
+    // an action is how this application says "not here": the annotation tools on
+    // a read-only slide or an associated image, File > Close with no slide open.
+    // Said in a colour nobody can see, that reads as the application being broken.
+    //
+    // Deliberately this narrow. The selector touches the one thing it names:
+    // menu geometry, checkmarks, separators and every enabled item render
+    // byte-identically with and without it.
+    app.setStyleSheet(QStringLiteral("QMenu::item:disabled { color: #707070; }"));
+
     slideio::viewer::ui::MainWindow mainWindow;
     mainWindow.show();
 

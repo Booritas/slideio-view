@@ -3,7 +3,7 @@
 **Date:** 2026-10-11
 **Updated:** 2026-10-12 — item 0 carries the results of the P1-P17 verification run
 against `main` @ `bc3aeb6`; items 18 and 19 are new, found during it. Item 19 is
-partly fixed (status-bar indicator); its app-wide half remains open.
+fixed in both halves (status-bar indicator, and dimmed disabled menu text app-wide).
 **Status:** Open
 **Covers:** `main` @ `ca38c5d` (merge of `annotation-persistence`) and `c819a54`
 **Spec:** `2026-10-10-annotation-persistence-design.md`
@@ -508,16 +508,44 @@ in the code it covers.
     after the transient expired**; cleared by File ▸ Close. All four suites pass
     and the build is warning-free.
 
-    **This item stays open.** The fix makes the *annotation* gate visible; it
-    does nothing about the underlying defect, which is app-wide. Every other
-    disabled action in the application — everything in File and View that
-    greys out when no slide is open — is still indistinguishable from an
-    enabled one. The first direction above is unattempted, and carries a real
-    risk worth knowing before someone starts: Qt's Windows 11 style draws menus
-    natively and may ignore the palette, in which case the only lever is a
-    `QMenu` stylesheet, which switches every menu in the application to
-    stylesheet rendering and changes how they all look. That needs verifying
-    before it is chosen, not after.
+    **Closed, 2026-10-12 — the first direction too.** `main.cpp` now sets one
+    application-wide rule:
+
+    ```cpp
+    app.setStyleSheet(QStringLiteral("QMenu::item:disabled { color: #707070; }"));
+    ```
+
+    Chosen by measurement, not assumption. A throwaway build compared three
+    candidates on the same menus with no slide open, where the three drawing
+    tools and File ▸ Close are genuinely disabled and `Preferences...`,
+    `Open Slide...` and `Exit` are enabled references in the same popups:
+
+    | candidate | disabled text | enabled text | outcome |
+    |-----------|---------------|--------------|---------|
+    | unchanged | 204 | 204 | indistinguishable |
+    | `QPalette` `Disabled` roles | 204 | 204 | **ignored by the style** |
+    | `QMenu::item:disabled` rule | **112** | 204 | **adopted** |
+    | Fusion style | dims | — | works, but restyles the whole UI |
+
+    The active style is `windows11`, which draws menu text through the native
+    theme and ignores `QPalette`'s `Disabled` roles outright — so the palette
+    route, which looks like the clean one, cannot work here at all.
+
+    **The stylesheet's blast radius was measured, not assumed**, because the
+    fear that it would restyle every menu is what had deferred it. Rendered
+    menus were diffed pixel-by-pixel against the unstyled build: popup sizes
+    identical (Tools 156×121, File 259×174), and differing pixels confined
+    exactly to the disabled rows — Tools `y=30..84`, File `y=74..84`. Checkmark,
+    highlight bar, separators, submenu arrow and every enabled item are
+    byte-identical. The dock panels that set their own stylesheets
+    (`ChannelMixerPanel`, Scenes, Metadata) showed **0 differing pixels across
+    129,000 sampled**. Four suites pass; build is warning-free.
+
+    **Scope of that evidence:** `windows11` style, Qt 6.7.3, Windows 11 dark
+    mode. The rule is inert where a platform style already dims disabled text,
+    which is the usual behaviour elsewhere, but it has not been looked at on
+    macOS or Linux. `#707070` was picked to be clearly dimmer while staying
+    legible; it is a judgement, not a derived value.
 
 ---
 
