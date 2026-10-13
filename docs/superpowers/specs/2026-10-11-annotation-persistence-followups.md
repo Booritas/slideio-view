@@ -6,8 +6,8 @@ against `main` @ `bc3aeb6`; items 18 and 19 are new, found during it. Item 19 is
 fixed in both halves (status-bar indicator, and dimmed disabled menu text app-wide).
 Item 18 is fixed, 2026-10-13, widened to cover save failures and the mismatch
 resolution; item 0's older check 3 is covered as a side effect. P11 and older
-checks 1, 4, 5 and 6 were verified by the project owner on 2026-10-13, leaving
-only the dialog half of check 2 unverified in item 0.
+checks 1, 2, 4, 5 and 6 were verified by the project owner on 2026-10-13.
+**Item 0 is closed: every check in it has now been run against a real slide.**
 **Status:** Open
 **Covers:** `main` @ `ca38c5d` (merge of `annotation-persistence`) and `c819a54`
 **Spec:** `2026-10-10-annotation-persistence-design.md`
@@ -29,13 +29,16 @@ not cover.
 
 ---
 
-## Not yet verified at all
+## Runtime verification — complete
 
-0. **Parts of this sub-project have still not been run against a real slide.** No
-   test suite creates a `QApplication`, so no widget can be constructed in a
+0. **This sub-project has now been run against real slides — closed 2026-10-13.**
+   No test suite creates a `QApplication`, so no widget can be constructed in a
    test, and every implementer was barred from launching the viewer. The
    subsystem's value rests on behaviours only the running application
-   exercises.
+   exercises, and for two days after it was written none of them had been
+   observed. All of them now have. The checks are kept below, struck through
+   as they were closed, because they are the record of what was verified and
+   how — and because they are the list to re-run when this area next changes.
 
    **Verified by the user, 2026-10-11:** annotation creation and saving work.
 
@@ -52,11 +55,10 @@ not cover.
    without closing the slide, which exercises `closeEvent` rather than autosave
    or `closeSlide()`; the drag-and-Delete half of check 5; and check 4.
 
-   **Still open from the six: the dialog half of check 2, and nothing else.**
-   Its file-unchanged half — the one that governs data safety — is verified,
-   so what remains is whether the dialog names the file and the problem. Every
-   other behaviour in this item has now been observed in the running
-   application.
+   **Nothing in this item is outstanding.** All six numbered checks and all
+   seventeen P-checks have been observed in the running application. This item
+   opened with "most of this sub-project has still not been run against a real
+   slide"; that is no longer true of any part of it.
 
    Still unverified, in the order they matter:
 
@@ -67,10 +69,15 @@ not cover.
       2026-10-13 — passed.** The flush-before-reset ordering in `closeSlide()`
       holds in the running application, which until now had only ever been
       argued. No longer outstanding.
-   2. Hand-break a saved file's JSON, reopen: a dialog names the file and the
+   2. ~~Hand-break a saved file's JSON, reopen:~~ a dialog names the file and the
       problem, the tool is disabled, and **the broken file is unchanged on disk
       afterwards**. This is the governing rule of the whole design, and the one
-      failure that would cost a clinician their work.
+      failure that would cost a clinician their work. **Fully covered:** the
+      file-unchanged half twice over — by check P14 on 2026-10-12 and again by
+      a truncated file on 2026-10-13, which came back byte-identical by SHA-256
+      and produced `Annotations refused … (the file is not valid JSON); file
+      left unchanged` in the log — and the dialog half by the project owner on
+      2026-10-13. **Passed.**
    3. Change a saved file's `slideId`, reopen: the three-way mismatch dialog
       appears, and each of its three outcomes behaves as §7 describes. Note
       that "Use for This Slide" must survive a close *without drawing* — that
