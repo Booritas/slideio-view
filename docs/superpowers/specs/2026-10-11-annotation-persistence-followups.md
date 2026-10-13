@@ -5,8 +5,9 @@
 against `main` @ `bc3aeb6`; items 18 and 19 are new, found during it. Item 19 is
 fixed in both halves (status-bar indicator, and dimmed disabled menu text app-wide).
 Item 18 is fixed, 2026-10-13, widened to cover save failures and the mismatch
-resolution; item 0's older check 3 is covered as a side effect. P11 and the
-ICC-profile check (check 1) were verified by the project owner on 2026-10-13.
+resolution; item 0's older check 3 is covered as a side effect. P11 and older
+checks 1 and 6 were verified by the project owner on 2026-10-13, leaving
+checks 2, 4 and 5 as the only unverified behaviour in item 0.
 **Status:** Open
 **Covers:** `main` @ `ca38c5d` (merge of `annotation-persistence`) and `c819a54`
 **Spec:** `2026-10-10-annotation-persistence-design.md`
@@ -47,7 +48,13 @@ not cover.
    **Verified by the project owner, 2026-10-13:** check 1 below — the ICC
    profile change — on an Olympus VSI slide. That is the defect the whole
    design exists to prevent, and it had been the single most important
-   outstanding check since this document was written.
+   outstanding check since this document was written. Also check 6, quitting
+   without closing the slide, which exercises `closeEvent` rather than autosave
+   or `closeSlide()`.
+
+   **Still open from the six:** checks 2 (its file-unchanged half is verified),
+   4, and 5 (only its tool-gating half). Check 3 was covered on 2026-10-13; see
+   its entry.
 
    Still unverified, in the order they matter:
 
@@ -70,8 +77,11 @@ not cover.
    5. On a read-only slide (resolve a mismatch as "Open Read-Only"), try to drag
       an annotation and to press Delete. Neither must change anything, and the
       status bar should say why.
-   6. Draw, then quit the application **without closing the slide**. The work
-      must be on disk — that path is `closeEvent`, not autosave.
+   6. ~~Draw, then quit the application **without closing the slide**.~~ The work
+      must be on disk — that path is `closeEvent`, not autosave. **Verified by
+      the project owner, 2026-10-13 — passed.** The exit path writes, and it is
+      a distinct route from the autosave and `closeSlide()` paths everything
+      else here exercised.
 
    **Polygon and freehand line, added 2026-10-12. All of P1-P17 have since been
    run — see "Results" at the end of this item; what follows describes the list as
