@@ -6,8 +6,8 @@ against `main` @ `bc3aeb6`; items 18 and 19 are new, found during it. Item 19 is
 fixed in both halves (status-bar indicator, and dimmed disabled menu text app-wide).
 Item 18 is fixed, 2026-10-13, widened to cover save failures and the mismatch
 resolution; item 0's older check 3 is covered as a side effect. P11 and older
-checks 1, 5 and 6 were verified by the project owner on 2026-10-13, leaving
-only check 4 and the dialog half of check 2 unverified in item 0.
+checks 1, 4, 5 and 6 were verified by the project owner on 2026-10-13, leaving
+only the dialog half of check 2 unverified in item 0.
 **Status:** Open
 **Covers:** `main` @ `ca38c5d` (merge of `annotation-persistence`) and `c819a54`
 **Spec:** `2026-10-10-annotation-persistence-design.md`
@@ -50,11 +50,13 @@ not cover.
    design exists to prevent, and it had been the single most important
    outstanding check since this document was written. Also check 6, quitting
    without closing the slide, which exercises `closeEvent` rather than autosave
-   or `closeSlide()`, and the drag-and-Delete half of check 5.
+   or `closeSlide()`; the drag-and-Delete half of check 5; and check 4.
 
-   **Still open from the six:** check 4, and the dialog half of check 2 — its
-   file-unchanged half, which is the one that governs data safety, is verified.
-   Checks 1, 3, 5 and 6 are now covered in full.
+   **Still open from the six: the dialog half of check 2, and nothing else.**
+   Its file-unchanged half — the one that governs data safety — is verified,
+   so what remains is whether the dialog names the file and the problem. Every
+   other behaviour in this item has now been observed in the running
+   application.
 
    Still unverified, in the order they matter:
 
@@ -73,7 +75,11 @@ not cover.
       appears, and each of its three outcomes behaves as §7 describes. Note
       that "Use for This Slide" must survive a close *without drawing* — that
       was a late fix and is the shape of bug that reappears.
-   4. Open an associated image (label or macro). The Rectangle tool is disabled.
+   4. ~~Open an associated image (label or macro). The Rectangle tool is disabled.~~
+      **Verified by the project owner, 2026-10-13 — passed.** Written when
+      Rectangle was the only tool; Polygon and Freehand ride the same
+      `annotationsAvailableChanged` gate and were confirmed disabled together
+      with it by check P12. This was the fourth and last trigger into that gate.
    5. ~~On a read-only slide (resolve a mismatch as "Open Read-Only"), try to drag
       an annotation and to press Delete.~~ Neither must change anything, and the
       status bar should say why. **Fully covered:** the tool-gating half by
