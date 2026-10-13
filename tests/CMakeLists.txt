@@ -29,6 +29,7 @@ add_test(NAME core-tests COMMAND slideio-viewer-core-tests)
 add_executable(slideio-viewer-app-tests
     app/AnnotationModelTest.cpp
     app/AnnotationPersistenceServiceTest.cpp
+    app/UndoRedoStackTest.cpp
 )
 
 target_link_libraries(slideio-viewer-app-tests
