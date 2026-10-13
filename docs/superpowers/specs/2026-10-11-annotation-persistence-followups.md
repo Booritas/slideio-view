@@ -7,7 +7,8 @@ fixed in both halves (status-bar indicator, and dimmed disabled menu text app-wi
 Item 18 is fixed, 2026-10-13, widened to cover save failures and the mismatch
 resolution; item 0's older check 3 is covered as a side effect. P11 and older
 checks 1, 2, 4, 5 and 6 were verified by the project owner on 2026-10-13.
-**Item 0 is closed: every check in it has now been covered.** It also carries a
+**Item 0 was closed on 2026-10-12/13; group U (undo/redo) reopens it as the only
+unrun checks.** It also carries a
 correction — earlier drafts said the subsystem had not been run and called
 several checks first-ever observations, which was wrong and was never checked
 with the project owner, who tests this application regularly.
@@ -80,10 +81,13 @@ not cover.
    autosave or `closeSlide()`; the drag-and-Delete half of check 5; and
    check 4.
 
-   **Nothing in this item is outstanding.** All six numbered checks and all
-   seventeen P-checks have been observed in the running application. This item
-   opened with "most of this sub-project has still not been run against a real
-   slide"; that is no longer true of any part of it.
+   **The six numbered checks and all seventeen P-checks are covered** and have
+   been observed in the running application. This item opened with "most of this
+   sub-project has still not been run against a real slide"; that is no longer
+   true of any part of it.
+
+   **Outstanding: group U**, added 2026-10-13 with the undo/redo work and not
+   yet run.
 
    Still unverified, in the order they matter:
 
@@ -316,6 +320,36 @@ not cover.
    | P17 | pass | Below-minimum double-click **and** below-minimum Enter both leave the trace alive. |
    | multi-scene extra | pass | Separate `.s0`/`.s1` files, correct `sceneIndex`, per-scene dimensions. **The most clinically serious failure on this list does not occur.** |
    | backward-compat (unplanned) | pass | The CZI's `.s0` file held two rectangles written 2026-10-11 by a pre-branch build; the new build read and appended to it without damage. |
+
+   **Group U — undo/redo, added 2026-10-13 with sub-project D. Not yet run.**
+   Spec: `2026-10-13-annotation-undo-redo-design.md`. Run on one slide with
+   annotations already present. The command and stack logic is unit-tested in
+   `app-tests`; everything below is the wiring, which no suite can reach
+   because none creates a `QApplication`.
+
+   U1. **Draw a polygon, Ctrl+Z.** It disappears. Ctrl+Y: it returns with the
+       same vertices over the same tissue.
+       *Break:* it stays painted until an unrelated pan or zoom — the viewport
+       is not repainting from the model's signals.
+   U2. **Delete an annotation, Ctrl+Z.** It returns, and returns **selected**.
+   U3. **Move an annotation, Ctrl+Z.** It returns to its exact original
+       position, not approximately. Compare against the saved JSON, not by eye.
+   U4. **One move drag is one undo step.** After a single drag, press Ctrl+Z
+       once: the annotation is fully back where it started.
+       *Break:* it creeps back a few pixels per press — a command is being
+       pushed per mouse-move frame, and the user's real history has been pushed
+       off the end of the stack.
+   U5. **Ctrl+Z mid-trace removes the last vertex** and the trace stays live.
+       *Break:* a previously committed annotation disappears instead.
+   U6. **Ctrl+Z with the mouse button held** during a drag does nothing.
+   U7. **Escape-cancel a move, then Ctrl+Z.** The *previous* operation is
+       undone, not a no-op step.
+   U8. **Switch slides and back.** Edit ▸ Undo is greyed out.
+   U9. **On a read-only slide** both Edit items are greyed out.
+   U10. **Undo, let autosave run, reopen the slide.** The undone state is what
+       loads from disk.
+   U11. **The Edit menu items name the operation** ("Undo Delete Polygon") and
+       the status bar shows the same text after the key.
 
    **P1 settles the §6.3 double-click question empirically** — the claim had been
    reasoned, not observed. Had the original `pop_back` survived, that triangle would
