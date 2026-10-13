@@ -1931,6 +1931,28 @@ ViewportWidget::ViewportWidget(QWidget* parent)
     setAutoFillBackground(false);
 
     m_impl->annotations = std::make_unique<app::AnnotationModel>();
+
+    // Until undo/redo, this widget was the only thing that mutated the model, so
+    // repainting from its own mutation sites was sufficient. It no longer is: an
+    // undone create must vanish from the screen without this widget having done
+    // anything. The existing direct update() calls stay -- Qt coalesces repaints
+    // within an event-loop turn, so the duplicate costs nothing, and auditing
+    // each one to prove it was only ever about the model is not worth the risk.
+    //
+    // Closes item 7 of the annotation persistence follow-ups.
+    const auto repaintOnModelChange = [this]() { update(); };
+    connect(m_impl->annotations.get(), &app::AnnotationModel::annotationAdded, this,
+            repaintOnModelChange);
+    connect(m_impl->annotations.get(), &app::AnnotationModel::annotationRemoved, this,
+            repaintOnModelChange);
+    connect(m_impl->annotations.get(), &app::AnnotationModel::annotationChanged, this,
+            repaintOnModelChange);
+    connect(m_impl->annotations.get(), &app::AnnotationModel::selectionChanged, this,
+            repaintOnModelChange);
+    connect(m_impl->annotations.get(), &app::AnnotationModel::cleared, this,
+            repaintOnModelChange);
+    connect(m_impl->annotations.get(), &app::AnnotationModel::modelReset, this,
+            repaintOnModelChange);
 }
 
 ViewportWidget::~ViewportWidget()
