@@ -2805,6 +2805,38 @@ void ViewportWidget::pushDeleteCommand(const std::string& id)
         *m_impl->annotations, id, std::move(before), std::nullopt, what.toStdString()));
 }
 
+void ViewportWidget::removeLastPendingVertex()
+{
+    if (!m_impl->pending.vertices.empty()) {
+        m_impl->pending.vertices.pop_back();
+    }
+    if (m_impl->pending.vertices.empty()) {
+        // Pair discard with endToolDrag the way Escape does: a drag still
+        // owned by the tool with nothing pending would let its release fall
+        // into the selection-click path below.
+        discardPendingShape();
+        endToolDrag();
+        updateCursor();
+    }
+    update();
+}
+
+bool ViewportWidget::undoLastPendingVertex()
+{
+    if (!m_impl->pending.active || m_impl->pending.vertices.empty()) {
+        return false;
+    }
+    // Deliberately the same effect as Backspace, which this shares an
+    // implementation with: two keys with different names must not drift apart.
+    removeLastPendingVertex();
+    return true;
+}
+
+bool ViewportWidget::isDragInFlight() const
+{
+    return m_impl->dragOwner != DragOwner::None;
+}
+
 void ViewportWidget::pushMoveCommand(const std::string& id,
                                      const core::AnnotationGeometry& originalGeometry)
 {
@@ -4110,19 +4142,8 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
     }
 
     if (m_impl->pending.active && event->key() == Qt::Key_Backspace) {
-        if (!m_impl->pending.vertices.empty()) {
-            m_impl->pending.vertices.pop_back();
-        }
-        if (m_impl->pending.vertices.empty()) {
-            // Pair discard with endToolDrag the way Escape does: a drag still
-            // owned by the tool with nothing pending would let its release fall
-            // into the selection-click path below.
-            discardPendingShape();
-            endToolDrag();
-            updateCursor();
-        }
+        removeLastPendingVertex();
         event->accept();
-        update();
         return;
     }
 

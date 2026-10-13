@@ -124,6 +124,20 @@ public:
     /// Null until set, and the push sites check for that.
     void setUndoStack(app::UndoRedoStack* stack);
 
+    /// Removes the last placed vertex of a live trace and returns true. Returns
+    /// false when no trace is in progress, so the caller can fall through to the
+    /// undo stack. Ctrl+Z during path drawing steps back one point in every
+    /// vector editor, which is the instinct users arrive with; a pending shape is
+    /// not an annotation and never reaches the model, so the stack is not
+    /// involved.
+    bool undoLastPendingVertex();
+
+    /// True while a tool drag, a move drag or a pending trace with the button
+    /// held is in progress. Undo and redo are refused during one: the widget
+    /// caches movingId and pending-shape state, and an undo that removed the
+    /// annotation being dragged would leave those pointing at nothing.
+    [[nodiscard]] bool isDragInFlight() const;
+
     // The colour profile of the scene currently being read. Default-constructed
     // when no slide is open.
     core::ColorProfileInfo activeColorProfileInfo() const;
@@ -170,6 +184,8 @@ private:
     void commitPendingShape();
     void discardPendingShape();
     void endToolDrag();
+    /// Shared by Backspace and by Ctrl+Z during a live trace.
+    void removeLastPendingVertex();
 
     /// Record a completed operation on the undo stack. No-ops when no stack is
     /// set or the annotation is not in the model. Called after the mutation has

@@ -1115,6 +1115,14 @@ void MainWindow::Impl::buildAnnotationPersistence()
                      [this]() { undoStack->clear(); });
 
     QObject::connect(undoAction, &QAction::triggered, owner, [this]() {
+        // One entry point for the key, with the context test in one place rather
+        // than split between a shortcut and a key handler.
+        if (viewportWidget->isDragInFlight()) {
+            return;
+        }
+        if (viewportWidget->undoLastPendingVertex()) {
+            return;
+        }
         // The description has to be read before the undo: afterwards the top of
         // the stack is a different command.
         const QString what = QString::fromStdString(undoStack->undoDescription());
@@ -1122,6 +1130,9 @@ void MainWindow::Impl::buildAnnotationPersistence()
         statusBarManager->showTransientMessage(tr("Undo: %1").arg(what));
     });
     QObject::connect(redoAction, &QAction::triggered, owner, [this]() {
+        if (viewportWidget->isDragInFlight()) {
+            return;
+        }
         const QString what = QString::fromStdString(undoStack->redoDescription());
         undoStack->redo();
         statusBarManager->showTransientMessage(tr("Redo: %1").arg(what));
