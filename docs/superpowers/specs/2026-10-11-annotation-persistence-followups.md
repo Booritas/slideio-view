@@ -4,6 +4,7 @@
 **Updated:** 2026-10-12 — item 0 carries the results of the P1-P17 verification run
 against `main` @ `bc3aeb6`; items 18 and 19 are new, found during it. Item 19 is
 fixed in both halves (status-bar indicator, and dimmed disabled menu text app-wide).
+Item 18 is fixed, 2026-10-13, and widened to cover save failures.
 **Status:** Open
 **Covers:** `main` @ `ca38c5d` (merge of `annotation-persistence`) and `c819a54`
 **Spec:** `2026-10-10-annotation-persistence-design.md`
@@ -457,6 +458,47 @@ in the code it covers.
     the-log refusal to load clinical data is a traceability gap, not a cosmetic
     one. One `spdlog` warn line naming the path and the parser's `problem`
     string would close it, and both values are already in hand at the emit site.
+
+    **Closed, 2026-10-13 — and wider than written.** Four sites in `MainWindow`,
+    beside the dialogs they accompany:
+
+    | signal | level | records |
+    |--------|-------|---------|
+    | `loadFailed` | `warn` | file refused, left unchanged |
+    | `saveFailed` | `warn` | attempt failed, retrying |
+    | `saved` | `info` | saving recovered (only after a reported failure) |
+    | `saveAbandoned` | **`error`** | annotations discarded |
+
+    This item named only the refusal. `saveAbandoned` is `endSlide()` exhausting
+    its retries and **dropping the annotations** — work destroyed, where a
+    refusal is explicitly non-destructive — so closing the refusal alone would
+    have fixed the lesser half.
+
+    **In the ui layer, not the service.** `slideio-viewer-app` links only core
+    and `Qt6::Core`, so logging where the facts originate would mean adding
+    spdlog to the app layer and amending the layering table in `CLAUDE.md` — a
+    structural change to add a log line. Logging beside the dialog also records
+    what the user was actually told, which is the more faithful entry.
+
+    **`saveFailed` logs inside the existing dialog latch.** Autosave retries
+    every couple of seconds, so a line per attempt would bury the log on a dead
+    share. One line opens the run of failures and the `saved` line closes it;
+    without the latter the log ends on "save failed" and never says the writes
+    came back, which reads as unsaved work long after it reached disk.
+
+    Verified by driving the viewer (no suite can construct a widget). A
+    truncated file produced `Annotations refused … (the file is not valid JSON);
+    file left unchanged` and was byte-identical afterwards — which also settles
+    the file-unchanged half of check 2 in item 0's older list. Against an
+    unwritable workspace in a scratch directory: failed, recovered once the
+    block was removed (the file was confirmed on disk), failed again — logged
+    again, so the latch resets — then discarded at `error`.
+
+    **Not logged, and deliberately:** the mismatch resolution
+    (`Open Read-Only` / `Use for This Slide` / `Ignore Them`). "Use for This
+    Slide" re-points a stored file at a different slide and is arguably the most
+    audit-worthy event in the subsystem, but it is a *decision* rather than a
+    failure. Worth its own item if anyone wants the audit trail to cover it.
 
 19. **A disabled menu item looks exactly like an enabled one, so the whole
     annotation gate is invisible.** Observed while running P12, 2026-10-12, and
