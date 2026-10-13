@@ -92,20 +92,34 @@ struct SceneOpenResult
 namespace
 {
 
-/// The shape's name for an undo description. Derived from the geometry through
-/// core::typeOf(), so it cannot disagree with what was actually drawn.
+/// The shape's name for an undo description.
+///
+/// Dispatched by std::visit over the geometry variant rather than by switching
+/// on AnnotationType, so that adding a geometry alternative is a **compile
+/// error naming this site**. A switch with a trailing fallback would instead
+/// label the new shape "Draw Annotation" at runtime -- this project builds
+/// without -Werror or /WX, so a -Wswitch warning is not a backstop, and
+/// CLAUDE.md promises that every exhaustive-dispatch site except readGeometry
+/// fails loudly.
+struct ShapeNameVisitor
+{
+    QString operator()(const slideio::viewer::core::RectangleGeometry&) const
+    {
+        return slideio::viewer::ui::ViewportWidget::tr("Rectangle");
+    }
+
+    QString operator()(const slideio::viewer::core::PolygonGeometry& polygon) const
+    {
+        // One geometry, two shapes: the flag is the only difference, and the
+        // user's word for them is not the same.
+        return polygon.closed ? slideio::viewer::ui::ViewportWidget::tr("Polygon")
+                              : slideio::viewer::ui::ViewportWidget::tr("Freehand Line");
+    }
+};
+
 QString shapeName(const slideio::viewer::core::Annotation& annotation)
 {
-    using slideio::viewer::core::AnnotationType;
-    switch (slideio::viewer::core::typeOf(annotation.geometry())) {
-    case AnnotationType::Rectangle:
-        return QObject::tr("Rectangle");
-    case AnnotationType::Polygon:
-        return QObject::tr("Polygon");
-    case AnnotationType::Polyline:
-        return QObject::tr("Freehand Line");
-    }
-    return QObject::tr("Annotation");
+    return std::visit(ShapeNameVisitor{}, annotation.geometry());
 }
 
 const char* kTileVertexShaderSource = R"glsl(
