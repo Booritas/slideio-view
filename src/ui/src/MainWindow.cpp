@@ -1078,14 +1078,28 @@ void MainWindow::Impl::updateUndoActions()
         return;
     }
 
+    // A disabled QAction is removed from Qt's shortcut map, so its Ctrl+Z never
+    // fires. The mid-trace vertex removal lives in this action's handler, so
+    // gating enablement on the stack alone would make Ctrl+Z inert during a
+    // trace whenever the stack is empty -- which is the common case, since
+    // annotations loaded from disk push nothing.
+    const bool traceLive = viewportWidget != nullptr && viewportWidget->hasLiveTrace();
     const bool canUndo = undoStack->canUndo();
-    undoAction->setEnabled(canUndo);
+    undoAction->setEnabled(canUndo || traceLive);
+
     // Naming the operation is most of the value: "Undo" alone does not tell the
     // user whether Ctrl+Z is about to remove the shape they just drew or undo a
-    // move they have forgotten about.
-    undoAction->setText(canUndo
-                            ? tr("&Undo %1").arg(QString::fromStdString(undoStack->undoDescription()))
-                            : tr("&Undo"));
+    // move they have forgotten about. While a trace is live the key removes a
+    // vertex, so the label has to say that rather than name a stack entry it
+    // will not touch.
+    if (traceLive) {
+        undoAction->setText(tr("&Undo Vertex"));
+    } else if (canUndo) {
+        undoAction->setText(
+            tr("&Undo %1").arg(QString::fromStdString(undoStack->undoDescription())));
+    } else {
+        undoAction->setText(tr("&Undo"));
+    }
 
     const bool canRedo = undoStack->canRedo();
     redoAction->setEnabled(canRedo);
@@ -1113,6 +1127,11 @@ void MainWindow::Impl::buildAnnotationPersistence()
                      [this]() { undoStack->clear(); });
     QObject::connect(viewportWidget->annotationModel(), &app::AnnotationModel::modelReset, owner,
                      [this]() { undoStack->clear(); });
+
+    // Starting or ending a trace changes what Ctrl+Z means, and therefore
+    // whether the Undo action may be disabled at all.
+    QObject::connect(viewportWidget, &ViewportWidget::liveTraceChanged, owner,
+                     [this](bool) { updateUndoActions(); });
 
     QObject::connect(undoAction, &QAction::triggered, owner, [this]() {
         // One entry point for the key, with the context test in one place rather

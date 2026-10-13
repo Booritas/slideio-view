@@ -340,7 +340,16 @@ not cover.
        pushed per mouse-move frame, and the user's real history has been pushed
        off the end of the stack.
    U5. **Ctrl+Z mid-trace removes the last vertex** and the trace stays live.
-       *Break:* a previously committed annotation disappears instead.
+       **Do this first, on a slide where nothing has been drawn yet this
+       session, so the undo stack is empty** — annotations loaded from disk push
+       nothing, so an empty stack is the normal state on opening a slide, and it
+       is the case that breaks. With the Polygon tool place 3 vertices, press
+       Ctrl+Z, then Enter: **nothing may be committed**, because 2 vertices is
+       below `kMinPolygonVertices`. A triangle in the file means Ctrl+Z did
+       nothing.
+       *Break:* a previously committed annotation disappears instead; or the key
+       is inert because the Undo action was disabled (a disabled QAction is
+       removed from Qt's shortcut map, so its shortcut never fires).
    U6. **Ctrl+Z with the mouse button held** during a drag does nothing.
    U7. **Escape-cancel a move, then Ctrl+Z.** The *previous* operation is
        undone, not a no-op step.

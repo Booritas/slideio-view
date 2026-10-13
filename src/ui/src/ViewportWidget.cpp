@@ -2837,6 +2837,11 @@ bool ViewportWidget::isDragInFlight() const
     return m_impl->dragOwner != DragOwner::None;
 }
 
+bool ViewportWidget::hasLiveTrace() const
+{
+    return m_impl->pending.active;
+}
+
 void ViewportWidget::pushMoveCommand(const std::string& id,
                                      const core::AnnotationGeometry& originalGeometry)
 {
@@ -3152,8 +3157,14 @@ void ViewportWidget::commitPendingShape()
 
 void ViewportWidget::discardPendingShape()
 {
+    const bool wasActive = m_impl->pending.active;
     m_impl->pending.vertices.clear();
     m_impl->pending.active = false;
+    if (wasActive) {
+        // Ctrl+Z reaches the trace only while the Undo action is enabled, and
+        // that depends on this state -- see hasLiveTrace().
+        emit liveTraceChanged(false);
+    }
 }
 
 void ViewportWidget::updateCursor()
@@ -3881,6 +3892,7 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
                 m_impl->pending.active = true;
                 m_impl->pending.closed = (m_impl->activeTool == AnnotationTool::Polygon);
                 m_impl->pending.vertices.clear();
+                emit liveTraceChanged(true);
             }
             m_impl->pending.vertices.push_back(cursor);
             m_impl->pending.cursorSlide = cursor;

@@ -138,6 +138,13 @@ public:
     /// annotation being dragged would leave those pointing at nothing.
     [[nodiscard]] bool isDragInFlight() const;
 
+    /// True while a multi-click shape is being traced. The Undo action must be
+    /// *enabled* for its Ctrl+Z shortcut to fire at all -- a disabled QAction is
+    /// removed from Qt's shortcut map -- so enabling it cannot depend on the
+    /// undo stack alone, or Ctrl+Z would do nothing mid-trace whenever the stack
+    /// happens to be empty.
+    [[nodiscard]] bool hasLiveTrace() const;
+
     // The colour profile of the scene currently being read. Default-constructed
     // when no slide is open.
     core::ColorProfileInfo activeColorProfileInfo() const;
@@ -154,6 +161,9 @@ signals:
     void loadingStatusChanged(const QString& text);
     void loadingFinished();
     void activeToolChanged(AnnotationTool tool);
+    /// A multi-click trace started or ended. Drives the Undo action's enabled
+    /// state, which is what makes Ctrl+Z reach the trace at all.
+    void liveTraceChanged(bool active);
 
     /// Whether annotations can be created on what is currently displayed.
     /// `reason` is empty when they can, and names the obstacle when they cannot.
