@@ -2834,7 +2834,11 @@ bool ViewportWidget::undoLastPendingVertex()
 
 bool ViewportWidget::isDragInFlight() const
 {
-    return m_impl->dragOwner != DragOwner::None;
+    // Pan is deliberately not included. Spec section 5.1 scopes the refusal to
+    // drags that cache state an undo could invalidate -- movingId and the
+    // pending shape. A pan caches neither, so swallowing Ctrl+Z during one
+    // would be a silent no-op for no benefit.
+    return m_impl->dragOwner == DragOwner::Tool || m_impl->dragOwner == DragOwner::MoveAnnotation;
 }
 
 bool ViewportWidget::hasLiveTrace() const
@@ -4271,6 +4275,16 @@ void ViewportWidget::focusOutEvent(QFocusEvent* event)
     // would leave the widget believing Space is held forever -- left-drag would
     // keep panning even under a drawing tool.
     m_impl->spaceHeld = false;
+    // A move drag abandoned by focus loss has already written its moved
+    // geometry into the model through the per-frame preview, and the eventual
+    // release takes mouseReleaseEvent's dragOwner == None early return -- so
+    // this is the last chance to record it. Without this the annotation stays
+    // where the drag left it with no undo step, and Ctrl+Z silently undoes an
+    // unrelated earlier operation instead. Alt-tabbing mid-drag is enough to
+    // reach it, as is the autosave's own save-failure dialog stealing focus.
+    if (m_impl->dragOwner == DragOwner::MoveAnnotation) {
+        pushMoveCommand(m_impl->movingId, m_impl->moveOriginalGeometry);
+    }
     // Likewise the release of an in-flight drag: left set, dragOwner makes
     // mousePressEvent's early return swallow every later press.
     m_impl->dragOwner = DragOwner::None;

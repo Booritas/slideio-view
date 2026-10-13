@@ -4,6 +4,7 @@
 
 #include <QObject>
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,22 @@ public:
     /// stored, nothing emitted), so the model never holds a state the
     /// serializer would write and the parser would refuse.
     void insert(core::Annotation annotation);
+
+    /// Returned by indexOf() when the id is not in the model.
+    static constexpr std::size_t kNotFound = static_cast<std::size_t>(-1);
+
+    /// Position of `id` in creation order, or kNotFound. Both paint order and
+    /// hit-test order follow this vector -- painting walks it forward, hitTest
+    /// walks it in reverse -- so the position is user-visible, not an
+    /// implementation detail.
+    [[nodiscard]] std::size_t indexOf(const std::string& id) const;
+
+    /// Stores `annotation` at `index`, clamped to size(). Same preconditions as
+    /// insert(): an empty or already-present id is dropped silently. Undo needs
+    /// this because re-appending a restored annotation would silently promote it
+    /// over everything drawn after it, changing which shape paints on top and
+    /// which one a click finds.
+    void insertAt(std::size_t index, core::Annotation annotation);
 
     /// Replaces every annotation and clears the selection, emitting one
     /// modelReset() rather than one annotationAdded() per entry.

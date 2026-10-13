@@ -13,10 +13,15 @@ AnnotationEditCommand::AnnotationEditCommand(AnnotationModel& model, std::string
                                              std::string description)
     : m_model(model)
     , m_id(std::move(id))
+    // Captured at construction, while the annotation is still in the model: the
+    // push sites record an operation after it has already been applied, and for
+    // a delete they record it before the removal.
+    , m_index(0)
     , m_before(std::move(before))
     , m_after(std::move(after))
     , m_description(std::move(description))
 {
+    m_index = m_model.indexOf(m_id);
 }
 
 void AnnotationEditCommand::execute()
@@ -53,7 +58,11 @@ void AnnotationEditCommand::apply(const std::optional<core::Annotation>& state)
     m_model.remove(m_id);
 
     if (state.has_value()) {
-        m_model.insert(*state);
+        // insertAt, not insert: re-appending would promote the annotation over
+        // everything drawn after it, so an undone move would make a background
+        // region paint over a focus inside it and steal clicks in the overlap.
+        // kNotFound clamps to the end, which is where insert() would have put it.
+        m_model.insertAt(m_index, *state);
         // Selection follows the operation, so the user can see what changed even
         // when the annotation is outside the current view.
         m_model.setSelected(m_id);

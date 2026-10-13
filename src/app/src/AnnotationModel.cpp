@@ -43,6 +43,21 @@ std::string AnnotationModel::add(core::AnnotationGeometry geometry)
 
 void AnnotationModel::insert(core::Annotation annotation)
 {
+    insertAt(m_annotations.size(), std::move(annotation));
+}
+
+std::size_t AnnotationModel::indexOf(const std::string& id) const
+{
+    for (std::size_t i = 0; i < m_annotations.size(); ++i) {
+        if (m_annotations[i].id() == id) {
+            return i;
+        }
+    }
+    return kNotFound;
+}
+
+void AnnotationModel::insertAt(std::size_t index, core::Annotation annotation)
+{
     // An empty id cannot be found, removed or moved, and a duplicate makes
     // hitTest (which scans in reverse) and find (which takes the first match)
     // disagree about which shape the user is pointing at. Both are states this
@@ -51,7 +66,9 @@ void AnnotationModel::insert(core::Annotation annotation)
         return;
     }
     const std::string id = annotation.id();
-    m_annotations.push_back(std::move(annotation));
+    const std::size_t at = index > m_annotations.size() ? m_annotations.size() : index;
+    m_annotations.insert(m_annotations.begin() + static_cast<std::ptrdiff_t>(at),
+                         std::move(annotation));
     emit annotationAdded(id);
 }
 

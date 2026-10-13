@@ -127,6 +127,49 @@ TEST_CASE("undoing a move returns the geometry vertex for vertex",
     }
 }
 
+TEST_CASE("undoing a move keeps the annotation's place in paint order",
+          "[app][AnnotationEditCommand]")
+{
+    // Paint order and hit-test order both follow this vector: painting walks it
+    // forward, hitTest walks it in reverse. A large region drawn first sits
+    // under a small focus drawn second. Undoing a move of the region must not
+    // promote it over the focus.
+    app::AnnotationModel model;
+    const std::string region = model.add(rect(0.0, 0.0, 100.0, 100.0));
+    const std::string focus = model.add(rect(10.0, 10.0, 20.0, 20.0));
+
+    const core::Annotation before = *model.find(region);
+    core::Annotation after = before;
+    after.setGeometry(core::translated(before.geometry(), 5.0, 5.0));
+    model.setGeometry(region, after.geometry());
+
+    app::AnnotationEditCommand command(model, region, before, after, "Move Rectangle");
+    command.undo();
+
+    REQUIRE(model.annotations().size() == 2);
+    REQUIRE(model.annotations()[0].id() == region);
+    REQUIRE(model.annotations()[1].id() == focus);
+    // The focus is still the one a click in the overlap finds.
+    REQUIRE(model.hitTest(core::PointF{15.0, 15.0}, 0.0) == focus);
+}
+
+TEST_CASE("undoing a delete restores the annotation to its original place",
+          "[app][AnnotationEditCommand]")
+{
+    app::AnnotationModel model;
+    const std::string first = model.add(rect(0.0, 0.0, 10.0, 10.0));
+    const std::string second = model.add(rect(20.0, 20.0, 30.0, 30.0));
+    const core::Annotation before = *model.find(first);
+
+    app::AnnotationEditCommand command(model, first, before, std::nullopt, "Delete Rectangle");
+    command.execute();
+    command.undo();
+
+    REQUIRE(model.annotations().size() == 2);
+    REQUIRE(model.annotations()[0].id() == first);
+    REQUIRE(model.annotations()[1].id() == second);
+}
+
 TEST_CASE("undo selects the annotation it restored", "[app][AnnotationEditCommand]")
 {
     app::AnnotationModel model;

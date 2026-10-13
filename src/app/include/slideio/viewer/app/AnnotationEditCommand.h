@@ -3,6 +3,7 @@
 #include "slideio/viewer/app/UndoRedoStack.h"
 #include "slideio/viewer/core/Annotation.h"
 
+#include <cstddef>
 #include <optional>
 #include <string>
 
@@ -47,6 +48,10 @@ private:
 
     AnnotationModel& m_model;
     std::string m_id;
+    /// Where the annotation sat in the model when the operation was recorded.
+    /// Restoring it anywhere else changes which shape paints on top and which
+    /// one a click finds.
+    std::size_t m_index;
     std::optional<core::Annotation> m_before;
     std::optional<core::Annotation> m_after;
     std::string m_description;

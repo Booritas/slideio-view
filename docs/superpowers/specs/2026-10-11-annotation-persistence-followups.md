@@ -358,7 +358,20 @@ not cover.
    U10. **Undo, let autosave run, reopen the slide.** The undone state is what
        loads from disk.
    U11. **The Edit menu items name the operation** ("Undo Delete Polygon") and
-       the status bar shows the same text after the key.
+       the status bar shows the same text after the key. While a trace is live
+       Undo reads **"Undo Vertex"**, because that is what the key will do.
+   U12. **Alt-tab away mid-move, come back, Ctrl+Z.** Start dragging an
+       annotation, switch to another window with the button still down, return,
+       then press Ctrl+Z. The annotation returns to where it was picked up.
+       *Break:* some *other* annotation jumps instead — focus loss abandoned the
+       drag after the preview had already written the moved geometry into the
+       model, so the move was never recorded and Ctrl+Z reached an unrelated
+       earlier operation. The same path is reached without alt-tabbing if a
+       dialog steals focus during the drag.
+   U13. **Ctrl+Z while panning.** Hold space or the middle button, pan, and
+       press Ctrl+Z without releasing. The last operation is undone.
+       *Break:* nothing happens — a pan caches no annotation state, so refusing
+       undo during one is a silent no-op.
 
    **P1 settles the §6.3 double-click question empirically** — the claim had been
    reasoned, not observed. Had the original `pop_back` survived, that triangle would
