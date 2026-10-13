@@ -1084,12 +1084,34 @@ void MainWindow::Impl::buildAnnotationPersistence()
             box.exec();
 
             using Choice = app::AnnotationPersistenceService::MismatchChoice;
+            // A decision rather than a failure, but the only one here that can
+            // re-point stored annotations at a different slide, so it belongs in
+            // the log with the pair of names the user judged by and the number of
+            // annotations that pair decided the fate of.
             if (box.clickedButton() == reassociate) {
+                // warn, not info: the stored file adopts this slide's id on the
+                // next save, and its original association is then gone.
+                spdlog::warn("Slide-id mismatch resolved as Use-for-This-Slide: "
+                             "{} annotation(s) saved for '{}' (id {}) re-associated to '{}'",
+                             stored.annotations.size(), stored.slide.fileName, stored.slideId,
+                             current.fileName);
                 return Choice::Reassociate;
             }
             if (box.clickedButton() == readOnly) {
+                // Also the Esc and title-bar-X route, so this is the line that
+                // appears when the dialog was dismissed rather than answered.
+                spdlog::info("Slide-id mismatch resolved as Open-Read-Only: "
+                             "{} annotation(s) saved for '{}' (id {}) shown over '{}', "
+                             "not writable",
+                             stored.annotations.size(), stored.slide.fileName, stored.slideId,
+                             current.fileName);
                 return Choice::ReadOnly;
             }
+            spdlog::info("Slide-id mismatch resolved as Ignore: "
+                         "{} annotation(s) saved for '{}' (id {}) not shown over '{}'; "
+                         "file left unchanged",
+                         stored.annotations.size(), stored.slide.fileName, stored.slideId,
+                         current.fileName);
             return Choice::Ignore;
         });
 
