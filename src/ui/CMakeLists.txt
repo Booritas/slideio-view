@@ -16,6 +16,7 @@ add_library(slideio-viewer-ui STATIC
     src/ColorProfilePolicy.cpp
     src/DriverFilters.cpp
     src/PathDisplay.cpp
+    src/ShortcutPolicy.cpp
     src/PreferencesDialog.cpp
     src/ViewportController.cpp
     src/ViewportWidget.cpp

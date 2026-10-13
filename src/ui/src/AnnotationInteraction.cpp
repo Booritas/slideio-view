@@ -92,4 +92,31 @@ bool pendingShapeCommits(std::size_t vertexCount, bool closed)
     return vertexCount >= (closed ? core::kMinPolygonVertices : core::kMinPolylineVertices);
 }
 
+bool moveExceedsDragThreshold(core::PointF pressSlide, core::PointF cursorSlide,
+                              double viewportScale)
+{
+    if (viewportScale <= 0.0) {
+        return false;
+    }
+    const double dxScreen = (cursorSlide.x - pressSlide.x) * viewportScale;
+    const double dyScreen = (cursorSlide.y - pressSlide.y) * viewportScale;
+    return std::hypot(dxScreen, dyScreen) >= kHitToleranceScreenPixels;
+}
+
+std::optional<MoveEdit> moveEdit(const core::Annotation& original,
+                                 const core::Annotation& moved)
+{
+    const core::RectF boxBefore = core::boundingBox(original.geometry());
+    const core::RectF boxAfter = core::boundingBox(moved.geometry());
+
+    // core::Rect is an aggregate of x/y/width/height with no operator==, so the
+    // four fields are compared directly.
+    if (boxBefore.x == boxAfter.x && boxBefore.y == boxAfter.y
+        && boxBefore.width == boxAfter.width && boxBefore.height == boxAfter.height) {
+        return std::nullopt;
+    }
+
+    return MoveEdit{original, moved};
+}
+
 } // namespace slideio::viewer::ui

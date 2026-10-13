@@ -62,6 +62,7 @@ add_executable(slideio-viewer-ui-tests
     ui/ColorProfilePolicyTest.cpp
     ui/DriverFiltersTest.cpp
     ui/PathDisplayTest.cpp
+    ui/ShortcutPolicyTest.cpp
     ui/SlideDropTest.cpp
     ui/SlidePropertiesPanelTest.cpp
     ui/SlideProfilesDialogTest.cpp

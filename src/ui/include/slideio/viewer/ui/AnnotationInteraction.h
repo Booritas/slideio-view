@@ -1,11 +1,13 @@
 #pragma once
 
+#include "slideio/viewer/core/Annotation.h"
 #include "slideio/viewer/core/AnnotationGeometry.h"
 #include "slideio/viewer/core/Types.h"
 
 #include <Qt>
 
 #include <cstddef>
+#include <optional>
 
 namespace slideio::viewer::ui
 {
@@ -103,5 +105,50 @@ constexpr double kTrailMinScreenPixels = 2.0;
 /// degenerate axis is widened instead, so the gesture still produces a real
 /// annotation rather than a zero-area one.
 [[nodiscard]] core::RectF withMinimumExtent(const core::RectF& box, double minExtentSlideUnits);
+
+
+/// True when the cursor has travelled far enough from the press for a move
+/// drag to be a deliberate one.
+///
+/// Below the threshold the annotation does not move at all. Mouse deltas are
+/// integers and a hand resting on a button is not still, so a click meant only
+/// to select a shape routinely carries a pixel or two of travel; without this
+/// the shape creeps and a "Move" step lands on the undo stack for a move the
+/// user never made -- and Ctrl+Z then appears to do nothing, because it undoes
+/// a displacement too small to see.
+///
+/// The threshold is the click-target radius rather than a fourth tolerance of
+/// its own: both answer the same question about whether the pointer stayed
+/// where it was put. Being screen-space, it costs no precision -- it spans
+/// fewer slide units the further in the user has zoomed, so a fine adjustment
+/// is always available one zoom step closer.
+///
+/// False for a non-positive scale, where no screen distance can be computed.
+[[nodiscard]] bool moveExceedsDragThreshold(core::PointF pressSlide, core::PointF cursorSlide,
+                                            double viewportScale);
+
+/// The annotation as it was picked up and as it was put down.
+struct MoveEdit
+{
+    core::Annotation before;
+    core::Annotation after;
+};
+
+/// The pair a completed move should record on the undo stack, or nothing when
+/// the shape ended where it started.
+///
+/// `original` must be the annotation captured at the press, not the moved one
+/// with its geometry put back: core::Annotation::setGeometry restamps
+/// modifiedAt, so a before-state rebuilt that way carries the moment of the
+/// drag's release as the annotation's last modification. Undoing the move
+/// would then write that wrong timestamp to the slide's file -- the one record
+/// of when the mark was actually last touched.
+///
+/// A shape put back where it was is not an edit, and must not occupy a step
+/// the user has to press Ctrl+Z through to reach a real one. That comparison
+/// is made on the bounding box, which is exact for the translation a move
+/// performs.
+[[nodiscard]] std::optional<MoveEdit> moveEdit(const core::Annotation& original,
+                                               const core::Annotation& moved);
 
 } // namespace slideio::viewer::ui

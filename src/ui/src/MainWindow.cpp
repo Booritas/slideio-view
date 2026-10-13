@@ -16,6 +16,7 @@
 #include "slideio/viewer/ui/DriverFilters.h"
 #include "slideio/viewer/ui/LoadingOverlay.h"
 #include "slideio/viewer/ui/SceneThumbnailPanel.h"
+#include "slideio/viewer/ui/ShortcutPolicy.h"
 #include "slideio/viewer/ui/SlidePropertiesPanel.h"
 #include "slideio/viewer/ui/SlideProfilesDialog.h"
 #include "slideio/viewer/ui/MetadataPanel.h"
@@ -42,15 +43,19 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QKeySequence>
+#include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRegion>
 #include <QScreen>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QStatusBar>
+#include <QTextEdit>
 #include <QUrl>
 
 #include <algorithm>
@@ -73,6 +78,42 @@ const std::string kColorManagementDescription =
     "Convert slide colours to sRGB via its ICC profile";
 const std::string kSetSlideProfileDescription =
     "Choose an RGB ICC profile for the slide on screen";
+
+/// Gives Undo/Redo to the focused text field, if the focus is in one.
+///
+/// The Edit menu's actions carry Qt::WindowShortcut, and Qt matches a shortcut
+/// before the key event reaches the focus widget. Without this, Ctrl+Z typed in
+/// the metadata filter or a channel's min/max box would undo the last
+/// annotation edit instead of the typing -- an invisible change to the slide's
+/// saved marks, made by a keystroke aimed at a text box, which autosave then
+/// writes to disk.
+///
+/// True whenever the focus was in an editor, including when that editor had
+/// nothing left to undo: the point is that the keystroke belongs to the text
+/// field, not that it accomplished something there.
+bool routeEditShortcutToFocusWidget(const QWidget* window, bool redo)
+{
+    QWidget* focus = window == nullptr ? nullptr : window->focusWidget();
+    if (focus == nullptr) {
+        return false;
+    }
+
+    // A spin box's editable area is a QLineEdit child, and focusWidget() names
+    // that child, so spin boxes are covered by the first case.
+    if (auto* lineEdit = qobject_cast<QLineEdit*>(focus)) {
+        redo ? lineEdit->redo() : lineEdit->undo();
+        return true;
+    }
+    if (auto* plainEdit = qobject_cast<QPlainTextEdit*>(focus)) {
+        redo ? plainEdit->redo() : plainEdit->undo();
+        return true;
+    }
+    if (auto* textEdit = qobject_cast<QTextEdit*>(focus)) {
+        redo ? textEdit->redo() : textEdit->undo();
+        return true;
+    }
+    return false;
+}
 } // anonymous namespace
 
 namespace slideio::viewer::ui
@@ -351,7 +392,10 @@ struct MainWindow::Impl
 
         redoAction = new QAction("&Redo", owner);
         // Ctrl+Shift+Z alongside the platform standard: users arrive with both.
-        redoAction->setShortcuts({QKeySequence(QKeySequence::Redo), QKeySequence("Ctrl+Shift+Z")});
+        // Built rather than listed, because on macOS and X11 Ctrl+Shift+Z *is*
+        // the platform standard, and registering one sequence twice makes Qt
+        // call the match ambiguous and refuse to trigger it at all.
+        redoAction->setShortcuts(redoShortcuts(QKeySequence::keyBindings(QKeySequence::Redo)));
         redoAction->setEnabled(false);
         editMenu->addAction(redoAction);
 
@@ -1121,12 +1165,22 @@ void MainWindow::Impl::buildAnnotationPersistence()
     undoStack->onStackChanged = [this]() { updateUndoActions(); };
 
     // Hung off the model rather than called at each slide-switch site: a future
-    // way to change slides cannot forget it. Both signals fire only on the
-    // slide-change and load paths, never on an edit.
+    // way to change slides cannot forget it. Neither signal fires on an edit.
+    //
+    // They do fire on a reopen of the same scene, which is what a colour-profile
+    // change is: the model empties and refills with the same annotations under
+    // the same ids, leaving every step on the stack still valid. The viewport
+    // flags that window so the history is not thrown away for nothing.
+    const auto clearUndoUnlessReopening = [this]() {
+        if (viewportWidget->isPreservingUndoContext()) {
+            return;
+        }
+        undoStack->clear();
+    };
     QObject::connect(viewportWidget->annotationModel(), &app::AnnotationModel::cleared, owner,
-                     [this]() { undoStack->clear(); });
+                     clearUndoUnlessReopening);
     QObject::connect(viewportWidget->annotationModel(), &app::AnnotationModel::modelReset, owner,
-                     [this]() { undoStack->clear(); });
+                     clearUndoUnlessReopening);
 
     // Starting or ending a trace changes what Ctrl+Z means, and therefore
     // whether the Undo action may be disabled at all.
@@ -1134,6 +1188,11 @@ void MainWindow::Impl::buildAnnotationPersistence()
                      [this](bool) { updateUndoActions(); });
 
     QObject::connect(undoAction, &QAction::triggered, owner, [this]() {
+        // Before every other test: the keystroke may not be for us at all.
+        // Ctrl+Z in a dock's text field belongs to that field.
+        if (routeEditShortcutToFocusWidget(owner, /*redo=*/false)) {
+            return;
+        }
         // One entry point for the key, with the context test in one place rather
         // than split between a shortcut and a key handler.
         if (viewportWidget->isDragInFlight()) {
@@ -1149,6 +1208,9 @@ void MainWindow::Impl::buildAnnotationPersistence()
         statusBarManager->showTransientMessage(tr("Undo: %1").arg(what));
     });
     QObject::connect(redoAction, &QAction::triggered, owner, [this]() {
+        if (routeEditShortcutToFocusWidget(owner, /*redo=*/true)) {
+            return;
+        }
         if (viewportWidget->isDragInFlight()) {
             return;
         }

@@ -14,7 +14,7 @@ Annotation persistence is **in regular use and its documented checks are covered
 
 `documents/` holds the original design, much of which is still ahead of the code. Treat it as the plan, not a description of what is there; `documents/implementation-stages.md` tracks which stages have landed. Where a design document and the code disagree, the code is the truth — several design details turned out to be unimplementable as written.
 
-**Not built yet:** vertex editing and the ellipse, circle, point, arrow and text shapes, annotation panels (list, properties, layers), import/export, advisory file locking, undo/redo, cases, bookmarks, split view, remote slides, the plugin system, and Python scripting.
+**Not built yet:** vertex editing and the ellipse, circle, point, arrow and text shapes, annotation panels (list, properties, layers), import/export, advisory file locking, cases, bookmarks, split view, remote slides, the plugin system, and Python scripting.
 
 ## Design Documents
 
@@ -34,9 +34,10 @@ Supporting discovery documents (`phase1-requirements-discovery.md`, `phase2-ux-c
 
 ```
 Presentation (Qt UI)   →  MainWindow, ViewportWidget, PreferencesDialog,
-                          AnnotationSettings, Panels, dialogs                  (25 .cpp)
+                          AnnotationSettings, Panels, dialogs                  (26 .cpp)
 Application (Services) →  AnnotationModel, AnnotationPersistenceService,
-                          SlideViewerService, _CaseService_                     (3 .cpp)
+                          UndoRedoStack, AnnotationEditCommand,
+                          SlideViewerService, _CaseService_                     (5 .cpp)
 Domain (Core Logic)    →  Annotation, AnnotationSerialization, AutosavePolicy,
                           Iso8601, Viewport, TilePyramid, CoordinateSystem     (16 .cpp)
 Infrastructure         →  SlideIOAdapter, LruTileCache, TileLoadScheduler,
@@ -129,10 +130,24 @@ Shipped:
 
 - **Annotation persistence** in JSON with schema versioning (`schemaVersion` 1; a higher version is refused outright rather than partially loaded).
 - **Auto-save** debounced at 2s with a 30s backstop. The decision is the pure `core::shouldAutosave`, because no test suite creates a `QCoreApplication` and a `QTimer` never fires in a test — the timer is a dumb clock that asks it.
+- **Undo/redo** per slide via the command pattern, 50 steps
+  (`app::UndoRedoStack`, `app::AnnotationEditCommand`). One command type covers
+  create, delete and move, because the inverse is the same shape in all three:
+  the state before and the state after. Commands are recorded *after* the model
+  has already been changed through its own API, so `execute()` runs only on
+  redo. The stack is cleared when the model is emptied for a different slide or
+  scene — but not when the same scene is reopened for a colour-profile change,
+  where the annotations come back under the same ids. Ctrl+Z during a live
+  multi-click trace removes the last vertex instead, which is why the Undo
+  action must stay enabled while tracing: a disabled `QAction` is removed from
+  Qt's shortcut map and its key never fires. A menu action's shortcut is
+  window-scoped and Qt matches it *before* the focus widget sees the key, so
+  the Edit actions hand Ctrl+Z and Ctrl+Y to a focused text editor first —
+  without that, typing in a dock's filter box and pressing Ctrl+Z would undo an
+  annotation edit and autosave would write it.
 
 Planned, not built:
 
-- **Undo/redo** via command pattern (50–200 levels per slide)
 - **Advisory file locking** on annotation files (FR-ANN-32); today two instances editing one slide are last-writer-wins
 - **Write-ahead log** and crash recovery (NFR-REL-04); today up to one autosave interval is lost on a hard kill
 - **Plugin system** via shared libraries with versioned API, timeout monitoring, safe mode

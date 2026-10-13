@@ -373,6 +373,54 @@ not cover.
        *Break:* nothing happens — a pan caches no annotation state, so refusing
        undo during one is a silent no-op.
 
+   **U14–U19 were added 2026-10-13 from the post-implementation code review.
+   Each one pins a defect that review found in shipped code; none is covered by
+   any suite, because all five live in widget code.**
+
+   U14. **Ctrl+Z inside a dock's text field.** Open the Metadata panel, type
+       into its Filter box, then press Ctrl+Z. The *typing* is undone and the
+       annotations are untouched. Repeat in a channel's min or max box on a
+       fluorescence slide.
+       *Break:* the typing stands and an annotation edit is silently undone
+       instead — Qt matches a window-scoped shortcut before the focus widget
+       sees the key, and autosave then writes that undone edit to disk. This is
+       the worst of the five: a keystroke aimed at a text box changes the
+       slide's saved marks with no visible sign.
+   U15. **Undo across a colour-management toggle.** Draw three annotations,
+       then View ▸ Color Management to toggle it. The annotations come back and
+       Edit ▸ Undo is still enabled; Ctrl+Z removes the third.
+       *Break:* Undo is greyed out and the history is gone. The reopen empties
+       and refills the model, which is what the undo stack's clear listens to.
+   U16. **Undo across a slide profile change.** Same, but change or clear the
+       slide's ICC profile instead. Same expectation — it is the second path
+       through `reopenCurrentScene`.
+   U17. **A selection click does not nudge.** Click once on an annotation to
+       select it, without meaning to drag. It does not move, and Edit ▸ Undo
+       still names whatever it named before the click.
+       *Break:* the menu now offers "Undo Move Rectangle" for a move of one or
+       two pixels, and pressing Ctrl+Z appears to do nothing because the
+       displacement it reverts is too small to see.
+   U18. **A deliberate small move still works.** Zoom in, then drag an
+       annotation a short distance. It follows the cursor and the move is
+       recorded. Then drag one back to where it started and release: nothing is
+       recorded.
+       *Break:* the drag threshold is blocking real work rather than jitter.
+       The threshold is screen-space, so zooming in is what buys precision.
+   U19. **An undone move does not restamp the file.** Note a saved
+       annotation's `modifiedAt` in its JSON file, move it, let the autosave
+       run, press Ctrl+Z, let the autosave run again, and read `modifiedAt`.
+       It is back to the original value.
+       *Break:* it holds the moment of the drag's release — the before-state
+       was rebuilt by putting the old geometry back on a copy of the moved
+       annotation, and `setGeometry` restamps.
+
+   **Not checkable on this platform:** the Redo shortcut fix (duplicate
+   registration of Ctrl+Shift+Z) only misbehaves where `QKeySequence::Redo` is
+   itself Ctrl+Shift+Z, which is macOS and X11. On Windows the platform key is
+   Ctrl+Y and both keys work either way. The dedupe is covered by
+   `ShortcutPolicyTest` against synthetic platform bindings; the platform
+   behaviour it protects has not been observed here.
+
    **P1 settles the §6.3 double-click question empirically** — the claim had been
    reasoned, not observed. Had the original `pop_back` survived, that triangle would
    have fallen to two vertices and vanished silently at commit.

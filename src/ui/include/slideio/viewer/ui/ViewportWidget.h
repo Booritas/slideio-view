@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,20 @@ namespace slideio::viewer::ui
 class ViewportController;
 struct SceneOpenResult;
 
+/// Whether an open discards the undo history or keeps it.
+///
+/// Opening a slide empties the annotation model, and the undo stack refers to
+/// annotations in it, so the default is to discard. Reopening the same scene --
+/// which is what a colour-profile change does -- empties and refills it with
+/// the same annotations under the same ids, and a stack thrown away there is
+/// thrown away for nothing: the user toggles colour management and silently
+/// loses every step they could have undone.
+enum class UndoContext
+{
+    Reset,
+    Preserve,
+};
+
 class ViewportWidget : public QOpenGLWidget
 {
     Q_OBJECT
@@ -44,7 +59,8 @@ public:
     // to let SlideIO auto-detect from file content.
     void openSlide(const std::string& filePath, const std::string& driverId = "");
     void openScene(const std::string& filePath, int sceneIndex,
-                   const std::string& driverId = "");
+                   const std::string& driverId = "",
+                   UndoContext undoContext = UndoContext::Reset);
     void openAuxImage(const std::string& filePath, const std::string& auxImageName,
                       const std::string& driverId = "");
     void generateSceneThumbnails();
@@ -145,6 +161,13 @@ public:
     /// happens to be empty.
     [[nodiscard]] bool hasLiveTrace() const;
 
+    /// True while an open that keeps the undo history is in flight -- from the
+    /// start of the reopen until its annotations are back in the model. The
+    /// model empties and refills during that window, and the listener that
+    /// clears the undo stack on those signals has to tell this apart from a
+    /// genuine slide change.
+    [[nodiscard]] bool isPreservingUndoContext() const;
+
     // The colour profile of the scene currently being read. Default-constructed
     // when no slide is open.
     core::ColorProfileInfo activeColorProfileInfo() const;
@@ -204,7 +227,7 @@ private:
     void pushDeleteCommand(const std::string& id);
     /// Records one completed move drag as a single step. Called on release, not
     /// from the per-frame setGeometry that drives the live preview.
-    void pushMoveCommand(const std::string& id, const core::AnnotationGeometry& originalGeometry);
+    void pushMoveCommand(const std::string& id, const std::optional<core::Annotation>& original);
     void installSceneOpenResult(uint64_t opId, SceneOpenResult result);
 
     // Drops the GPU textures of every tile not in `keep`'s colour mode so the

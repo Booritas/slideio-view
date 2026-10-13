@@ -2,6 +2,8 @@
 
 #include "slideio/viewer/ui/AnnotationInteraction.h"
 
+#include <chrono>
+
 using namespace slideio::viewer::ui;
 namespace core = slideio::viewer::core;
 
@@ -240,4 +242,102 @@ TEST_CASE("pendingShapeCommits enforces the geometry minimums",
     REQUIRE(pendingShapeCommits(3, true));
     REQUIRE_FALSE(pendingShapeCommits(1, false));
     REQUIRE(pendingShapeCommits(2, false));
+}
+
+namespace
+{
+
+core::Annotation annotationAt(double x, double y, std::chrono::system_clock::time_point modified)
+{
+    core::AnnotationMetadata metadata;
+    metadata.author = "tester";
+    metadata.createdAt = std::chrono::system_clock::time_point{} + std::chrono::seconds(100);
+    metadata.modifiedAt = modified;
+    return core::Annotation("abc", core::RectangleGeometry{{x, y}, {x + 10.0, y + 10.0}},
+                            core::AnnotationProperties{}, metadata);
+}
+
+} // namespace
+
+TEST_CASE("a one-pixel twitch does not begin a move", "[ui][AnnotationInteraction]")
+{
+    // A click meant only to select the shape. Allowing this through moves the
+    // annotation by a distance the user cannot see and records an undo step
+    // for it, so their next Ctrl+Z appears to do nothing.
+    REQUIRE_FALSE(moveExceedsDragThreshold({100.0, 100.0}, {101.0, 100.0}, 1.0));
+}
+
+TEST_CASE("a drag past the click-target radius begins a move",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE(moveExceedsDragThreshold({100.0, 100.0}, {110.0, 100.0}, 1.0));
+    // Exactly at the radius counts, matching closesOnFirstVertex's boundary.
+    REQUIRE(moveExceedsDragThreshold({100.0, 100.0}, {100.0 + kHitToleranceScreenPixels, 100.0},
+                                     1.0));
+}
+
+TEST_CASE("the move threshold is screen-space, not slide-space",
+          "[ui][AnnotationInteraction]")
+{
+    // Zoomed far out, a large slide-space distance is a small screen one and
+    // must not count; zoomed in, a small slide-space distance does.
+    REQUIRE_FALSE(moveExceedsDragThreshold({0.0, 0.0}, {50.0, 0.0}, 0.1));
+    REQUIRE(moveExceedsDragThreshold({0.0, 0.0}, {1.0, 0.0}, 10.0));
+}
+
+TEST_CASE("no move is begun without a usable scale", "[ui][AnnotationInteraction]")
+{
+    REQUIRE_FALSE(moveExceedsDragThreshold({0.0, 0.0}, {1000.0, 1000.0}, 0.0));
+    REQUIRE_FALSE(moveExceedsDragThreshold({0.0, 0.0}, {1000.0, 1000.0}, -1.0));
+}
+
+TEST_CASE("a recorded move keeps the timestamp the annotation was picked up with",
+          "[ui][AnnotationInteraction]")
+{
+    // The before-state must be the annotation as it was, timestamp included.
+    // Rebuilding it by putting the geometry back on a copy of the moved one
+    // restamps modifiedAt, and undoing the move would then save the moment of
+    // the drag's release as when the mark was last touched.
+    const auto pickedUpAt = std::chrono::system_clock::time_point{} + std::chrono::seconds(500);
+    const auto droppedAt = std::chrono::system_clock::time_point{} + std::chrono::seconds(900);
+
+    const core::Annotation original = annotationAt(0.0, 0.0, pickedUpAt);
+    const core::Annotation moved = annotationAt(40.0, 0.0, droppedAt);
+
+    const std::optional<MoveEdit> edit = moveEdit(original, moved);
+
+    REQUIRE(edit.has_value());
+    REQUIRE(edit->before.metadata().modifiedAt == pickedUpAt);
+    REQUIRE(edit->before.metadata().createdAt == original.metadata().createdAt);
+    REQUIRE(core::boundingBox(edit->before.geometry()).x == 0.0);
+}
+
+TEST_CASE("a recorded move carries the annotation as it was put down",
+          "[ui][AnnotationInteraction]")
+{
+    const auto droppedAt = std::chrono::system_clock::time_point{} + std::chrono::seconds(900);
+    const core::Annotation original = annotationAt(0.0, 0.0,
+        std::chrono::system_clock::time_point{} + std::chrono::seconds(500));
+    const core::Annotation moved = annotationAt(40.0, 0.0, droppedAt);
+
+    const std::optional<MoveEdit> edit = moveEdit(original, moved);
+
+    REQUIRE(edit.has_value());
+    REQUIRE(edit->after.metadata().modifiedAt == droppedAt);
+    REQUIRE(core::boundingBox(edit->after.geometry()).x == 40.0);
+    REQUIRE(edit->after.id() == original.id());
+}
+
+TEST_CASE("a shape put back where it was is not a recorded move",
+          "[ui][AnnotationInteraction]")
+{
+    // Escape-cancelling restores the original itself, and a drag that ends at
+    // its start is no edit. Either way the stack must not gain a step that
+    // does nothing when the user presses Ctrl+Z.
+    const core::Annotation original = annotationAt(0.0, 0.0,
+        std::chrono::system_clock::time_point{} + std::chrono::seconds(500));
+    const core::Annotation unmoved = annotationAt(0.0, 0.0,
+        std::chrono::system_clock::time_point{} + std::chrono::seconds(900));
+
+    REQUIRE_FALSE(moveEdit(original, unmoved).has_value());
 }

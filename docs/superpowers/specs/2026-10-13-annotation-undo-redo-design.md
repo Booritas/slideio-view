@@ -442,3 +442,48 @@ Worth knowing before the depth preference raises it to 200.
   until paste or multi-select exists, §3.2.
 - **Vertex editing**, resize handles, property editing and layers. When they
   arrive they need no new command type, only new push sites.
+
+---
+
+## 10. Corrections after the post-implementation review (2026-10-13)
+
+Five findings from the review of the shipped branch contradicted claims made
+above. The design text is left as written — it is the record of what was
+decided and why — and the corrections are recorded here.
+
+- **§6.1, shortcut scope.** The section weighed window scope against the
+  viewport only, and concluded window scope was right. It did not consider the
+  dock panels' text fields. A window-scoped `QAction` takes Ctrl+Z before the
+  focus widget sees it, so typing in the Metadata filter or a channel's
+  min/max box and pressing Ctrl+Z undid an annotation edit — which autosave
+  then wrote to disk. The handler now gives the keystroke to the focused text
+  editor first. Window scope stands; the omission was the dock fields.
+
+- **§6.1, Redo's keys.** `{QKeySequence::Redo, "Ctrl+Shift+Z"}` assumed the
+  platform binding is never Ctrl+Shift+Z. On macOS and X11 it is, so the same
+  sequence was registered twice on one action; Qt reports an ambiguous match
+  and `QAction::event` warns instead of triggering, leaving keyboard Redo dead
+  there. `ui::redoShortcuts` now builds the list and collapses duplicates.
+  Unobservable on Windows, where the platform key is Ctrl+Y.
+
+- **§6.4, Clearing.** "Both signals fire only on the slide-change and load
+  paths" is false. `onToggleColorManagement` and `onClearSlideColorProfile`
+  reach `AnnotationModel::clear()` through `reopenCurrentScene` →
+  `openScene` → `closeSlide` → `resetAnnotationState`, so a colour-profile
+  change silently discarded the undo history. The annotations return from disk
+  under the same ids in the same order, so the stack was still valid when it
+  was thrown away. `openScene` now takes a `UndoContext`, and only
+  `reopenCurrentScene` passes `Preserve`.
+
+- **§7.1, move metadata.** The move test asserted vertices only. The
+  before-state was built by putting the original geometry back onto a copy of
+  the moved annotation, and `core::Annotation::setGeometry` restamps
+  `modifiedAt` — so undoing a move saved the moment of the drag's release as
+  when the mark was last touched. The whole annotation is now captured at the
+  press, and `ui::moveEdit` pins the behaviour in a test.
+
+- **§7.1, the no-op guard.** Comparing bounding boxes for exact equality only
+  caught a drag ending at precisely its start. A selection click that twitched
+  one pixel both nudged the shape and recorded a "Move" step, so the user's
+  next Ctrl+Z reverted something invisible. A move now begins only once the
+  pointer passes the click-target radius, latched for the rest of the drag.

@@ -1404,6 +1404,11 @@ struct ViewportWidget::Impl
     app::AnnotationPersistenceService* persistence = nullptr;
     /// Non-owning: MainWindow owns the stack. Null until setUndoStack().
     app::UndoRedoStack* undoStack = nullptr;
+    /// True from the start of an open that keeps the undo history until that
+    /// open has put the annotations back. Only reopenCurrentScene sets it, and
+    /// every other open clears it on the way in, so a path added later cannot
+    /// inherit it by accident.
+    bool preserveUndoContext = false;
 
     /// False only when a persistence service is attached and has gone inactive
     /// -- a load failure, or a mismatch the user resolved as read-only. With no
@@ -1467,14 +1472,20 @@ struct ViewportWidget::Impl
     // Moving a selected annotation.
     /// Cursor position in slide space at the moment the move drag began.
     /// Written once, at press: the drag applies a total delta to
-    /// moveOriginalGeometry rather than accumulating per-event increments, so
+    /// moveOriginal rather than accumulating per-event increments, so
     /// every frame translates a pristine shape instead of the previous frame's
     /// output. It is also the state an undo stack will want.
     core::PointF movePressSlide;
     std::string movingId;
-    // The geometry the annotation had when it was picked up, so Escape can put
-    // it back. There is no undo stack in this slice, so nothing else could.
-    core::AnnotationGeometry moveOriginalGeometry;
+    // The annotation exactly as it was picked up, so Escape can put it back and
+    // the undo step can record what it replaced -- timestamps included. Absent
+    // when the press found nothing to move, which keeps a previous drag's
+    // capture from being restored onto this annotation.
+    std::optional<core::Annotation> moveOriginal;
+    // Whether this drag has yet travelled far enough to count as a move. Once
+    // true it stays true for the drag, so the shape follows the cursor back to
+    // the press point as well as away from it.
+    bool moveThresholdCrossed = false;
 
     // GL state
     bool glInitialized = false;
@@ -2009,6 +2020,8 @@ ViewportWidget::~ViewportWidget()
 
 void ViewportWidget::openSlide(const std::string& filePath, const std::string& driverId)
 {
+    // A different slide: its annotations are not the ones the stack refers to.
+    m_impl->preserveUndoContext = false;
     closeSlide();
     m_impl->currentFilePath = filePath;
     m_impl->currentDriverId = driverId;
@@ -2275,7 +2288,7 @@ QImage ViewportWidget::loadAuxImage(const std::string& auxImageName)
 }
 
 void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
-                               const std::string& driverId)
+                               const std::string& driverId, UndoContext undoContext)
 {
     // The scene list on slideInfo describes whichever file was open last. If
     // this open targets a different one, that list is not this slide's and must
@@ -2297,6 +2310,9 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
         (filePath == m_impl->slideInfo.filePath) ? m_impl->slideInfo.scenes
                                                  : std::vector<core::SceneInfo>{};
 
+    // Set before closeSlide(), which is what empties the model and so what the
+    // undo stack's listener reacts to.
+    m_impl->preserveUndoContext = (undoContext == UndoContext::Preserve);
     closeSlide();
     m_impl->currentFilePath = filePath;
     m_impl->currentDriverId = driverId;
@@ -2415,6 +2431,10 @@ void ViewportWidget::openAuxImage(const std::string& filePath, const std::string
         (filePath == m_impl->slideInfo.filePath) ? m_impl->slideInfo.scenes
                                                  : std::vector<core::SceneInfo>{};
 
+    // An associated image has no annotations of its own, so a stack kept across
+    // this open would restore scene annotations into a model that is not
+    // showing them.
+    m_impl->preserveUndoContext = false;
     closeSlide();
     m_impl->currentFilePath = filePath;
     m_impl->currentDriverId = driverId;
@@ -2487,6 +2507,8 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
         spdlog::error("ViewportWidget::installSceneOpenResult: open failed: {}", result.errorMsg);
         emit errorOccurred(std::string("Failed to open slide: ") + result.errorMsg);
         emit loadingFinished();
+        // Nothing was reloaded, so there is no context left to preserve.
+        m_impl->preserveUndoContext = false;
         return;
     }
 
@@ -2623,6 +2645,10 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
     emit loadingFinished();
     emit viewportChanged();
     update();
+
+    // The open is over and the annotations are back in the model, so the next
+    // thing to empty it is a real change of slide or scene.
+    m_impl->preserveUndoContext = false;
 }
 
 const std::string& ViewportWidget::currentFilePath() const
@@ -2765,7 +2791,11 @@ void ViewportWidget::reopenCurrentScene()
     if (!auxName.empty()) {
         openAuxImage(filePath, auxName, driverId);
     } else {
-        openScene(filePath, sceneIndex, driverId);
+        // The same scene, reloaded: the annotations come back under the same
+        // ids in the same order, so every step on the undo stack still refers
+        // to something real. Throwing that away would mean a colour-profile
+        // change silently costs the user their history.
+        openScene(filePath, sceneIndex, driverId, UndoContext::Preserve);
     }
 }
 
@@ -2860,10 +2890,15 @@ bool ViewportWidget::hasLiveTrace() const
     return m_impl->pending.active;
 }
 
-void ViewportWidget::pushMoveCommand(const std::string& id,
-                                     const core::AnnotationGeometry& originalGeometry)
+bool ViewportWidget::isPreservingUndoContext() const
 {
-    if (m_impl->undoStack == nullptr || id.empty()) {
+    return m_impl->preserveUndoContext;
+}
+
+void ViewportWidget::pushMoveCommand(const std::string& id,
+                                     const std::optional<core::Annotation>& original)
+{
+    if (m_impl->undoStack == nullptr || id.empty() || !original.has_value()) {
         return;
     }
     const core::Annotation* stored = m_impl->annotations->find(id);
@@ -2871,29 +2906,21 @@ void ViewportWidget::pushMoveCommand(const std::string& id,
         return;
     }
 
-    core::Annotation after = *stored;
-    core::Annotation before = after;
-    before.setGeometry(originalGeometry);
-
-    // A drag that ended where it started is not an edit. Without this, a stray
-    // click on an annotation would put a no-op on the stack that the user has to
-    // press Ctrl+Z through before reaching a real one.
-    //
-    // core::Rect is an aggregate of x/y/width/height with no operator==, so the
-    // four fields are compared directly.
-    const core::RectF boxBefore = core::boundingBox(before.geometry());
-    const core::RectF boxAfter = core::boundingBox(after.geometry());
-    if (boxBefore.x == boxAfter.x && boxBefore.y == boxAfter.y
-        && boxBefore.width == boxAfter.width && boxBefore.height == boxAfter.height) {
+    // `original` is the annotation as it was picked up, carried here from the
+    // press rather than reconstructed: putting the old geometry back onto a
+    // copy of the moved one would restamp modifiedAt, and undoing the move
+    // would write the moment of the drag's release into the slide's file.
+    const std::optional<MoveEdit> edit = moveEdit(*original, *stored);
+    if (!edit.has_value()) {
         return;
     }
 
-    const QString what = tr("Move %1").arg(shapeName(after));
-    if (!app::AnnotationEditCommand::isValid(before, after)) {
+    const QString what = tr("Move %1").arg(shapeName(edit->after));
+    if (!app::AnnotationEditCommand::isValid(edit->before, edit->after)) {
         return;
     }
     m_impl->undoStack->push(std::make_unique<app::AnnotationEditCommand>(
-        *m_impl->annotations, id, std::move(before), std::move(after), what.toStdString()));
+        *m_impl->annotations, id, edit->before, edit->after, what.toStdString()));
 }
 
 app::AnnotationModel* ViewportWidget::annotationModel() const
@@ -3107,6 +3134,10 @@ void ViewportWidget::resetAnnotationState()
     m_impl->dragOwner = DragOwner::None;
     m_impl->dragButton = Qt::NoButton;
     m_impl->movingId.clear();
+    // The annotation this held belongs to the slide being left. Kept, it would
+    // be restored onto a different slide by an Escape or an undo step.
+    m_impl->moveOriginal.reset();
+    m_impl->moveThresholdCrossed = false;
 
     // The drag that was in flight no longer owns the cursor. Without this, a
     // slide opened mid-drag leaves the closed hand (or the move cursor) on
@@ -3873,8 +3904,17 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
         m_impl->dragButton = event->button();
         m_impl->pressPos = event->pos();
         m_impl->movingId = pressHitId;
+        m_impl->moveThresholdCrossed = false;
         if (const core::Annotation* picked = m_impl->annotations->find(pressHitId)) {
-            m_impl->moveOriginalGeometry = picked->geometry();
+            // The whole annotation, not only its geometry: the undo step has to
+            // restore the timestamps it was picked up with, and the per-frame
+            // preview below restamps modifiedAt the moment it first moves it.
+            m_impl->moveOriginal = *picked;
+        } else {
+            // Cleared rather than left standing. A capture from an earlier drag
+            // belongs to a different annotation: Escape would put that one's
+            // geometry onto this one, and an undo step would record it.
+            m_impl->moveOriginal.reset();
         }
         m_impl->annotations->setSelected(pressHitId);
         updateCursor();
@@ -4021,7 +4061,7 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
     // cancelling a move pushes nothing either: it restores the original itself,
     // so there is no net change to record.
     if (m_impl->dragOwner == DragOwner::MoveAnnotation) {
-        pushMoveCommand(m_impl->movingId, m_impl->moveOriginalGeometry);
+        pushMoveCommand(m_impl->movingId, m_impl->moveOriginal);
     }
     m_impl->movingId.clear();
 
@@ -4044,21 +4084,34 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event)
     }
 
     if (m_impl->dragOwner == DragOwner::MoveAnnotation && m_impl->controller
-        && !m_impl->movingId.empty()) {
+        && !m_impl->movingId.empty() && m_impl->moveOriginal.has_value()) {
         double slideX = 0.0;
         double slideY = 0.0;
         m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
 
         // Total delta from the press, applied to the geometry captured at the
         // press -- not an increment applied to the previous frame's result.
-        // Escape restores moveOriginalGeometry, so the drag and the cancel now
-        // read the same single source of truth.
+        // Escape restores that same captured geometry, so the drag and the
+        // cancel read one source of truth.
         const double dx = slideX - m_impl->movePressSlide.x;
         const double dy = slideY - m_impl->movePressSlide.y;
 
-        if (m_impl->annotations->find(m_impl->movingId) != nullptr) {
+        // Nothing moves until the pointer has travelled far enough to mean it:
+        // a click meant only to select carries a pixel or two of travel, and
+        // acting on that nudges the shape and records a move the user never
+        // made. Latched, because once the drag is under way it must track the
+        // cursor everywhere -- including back to the press point, which is how
+        // a move is abandoned without reaching for Escape.
+        if (!m_impl->moveThresholdCrossed) {
+            m_impl->moveThresholdCrossed =
+                moveExceedsDragThreshold(m_impl->movePressSlide, core::PointF{slideX, slideY},
+                                         m_impl->controller->viewport().scale());
+        }
+
+        if (m_impl->moveThresholdCrossed
+            && m_impl->annotations->find(m_impl->movingId) != nullptr) {
             m_impl->annotations->setGeometry(
-                m_impl->movingId, core::translated(m_impl->moveOriginalGeometry, dx, dy));
+                m_impl->movingId, core::translated(m_impl->moveOriginal->geometry(), dx, dy));
         }
         event->accept();
         update();
@@ -4207,8 +4260,12 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
         } else if (m_impl->dragOwner == DragOwner::MoveAnnotation && !m_impl->movingId.empty()) {
             // Put the annotation back where it was picked up. Without this the
             // shape keeps following the cursor with no way to recover its
-            // original position -- there is no undo stack in this slice.
-            m_impl->annotations->setGeometry(m_impl->movingId, m_impl->moveOriginalGeometry);
+            // original position; Ctrl+Z cannot serve instead, because a
+            // cancelled move is never recorded as a step.
+            if (m_impl->moveOriginal.has_value()) {
+                m_impl->annotations->setGeometry(m_impl->movingId,
+                                                 m_impl->moveOriginal->geometry());
+            }
             m_impl->movingId.clear();
             m_impl->dragOwner = DragOwner::None;
             m_impl->dragButton = Qt::NoButton;
@@ -4297,7 +4354,7 @@ void ViewportWidget::focusOutEvent(QFocusEvent* event)
     // unrelated earlier operation instead. Alt-tabbing mid-drag is enough to
     // reach it, as is the autosave's own save-failure dialog stealing focus.
     if (m_impl->dragOwner == DragOwner::MoveAnnotation) {
-        pushMoveCommand(m_impl->movingId, m_impl->moveOriginalGeometry);
+        pushMoveCommand(m_impl->movingId, m_impl->moveOriginal);
     }
     // Likewise the release of an in-flight drag: left set, dragOwner makes
     // mousePressEvent's early return swallow every later press.
