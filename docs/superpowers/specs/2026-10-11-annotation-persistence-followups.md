@@ -4,7 +4,8 @@
 **Updated:** 2026-10-12 — item 0 carries the results of the P1-P17 verification run
 against `main` @ `bc3aeb6`; items 18 and 19 are new, found during it. Item 19 is
 fixed in both halves (status-bar indicator, and dimmed disabled menu text app-wide).
-Item 18 is fixed, 2026-10-13, and widened to cover save failures.
+Item 18 is fixed, 2026-10-13, widened to cover save failures and the mismatch
+resolution; item 0's older check 3 is covered as a side effect.
 **Status:** Open
 **Covers:** `main` @ `ca38c5d` (merge of `annotation-persistence`) and `c819a54`
 **Spec:** `2026-10-10-annotation-persistence-design.md`
@@ -306,10 +307,13 @@ not cover.
    separate, older list and were *not* covered, except in part:
 
    - Checks 1, 2, 4 and 6: untouched.
-   - Check 3: the mismatch dialog appears and **"Open Read-Only" behaves as §7
-     describes**. "Use for This Slide" and "Ignore Them" remain unexercised — and the
-     note that "Use for This Slide" must survive a close *without drawing* is exactly
-     the shape of bug that reappears.
+   - Check 3: **now covered** (2026-10-13, while verifying the mismatch logging in
+     item 18). The dialog appears and all three outcomes were driven against a
+     crafted mismatch: "Open Read-Only" loads the annotations unwritable, "Ignore
+     Them" leaves the file untouched, and "Use for This Slide" re-associates —
+     **and survived a close with no drawing**, which is the late fix this check
+     calls the shape of bug that reappears. Exercised in a scratch workspace
+     rather than against a real stored file.
    - Check 5: only the tool-gating half. **Dragging an annotation and pressing Delete
      on a read-only slide were not tried**, and those are what check 5 is actually for.
 
@@ -494,11 +498,29 @@ in the code it covers.
     block was removed (the file was confirmed on disk), failed again — logged
     again, so the latch resets — then discarded at `error`.
 
-    **Not logged, and deliberately:** the mismatch resolution
-    (`Open Read-Only` / `Use for This Slide` / `Ignore Them`). "Use for This
-    Slide" re-points a stored file at a different slide and is arguably the most
-    audit-worthy event in the subsystem, but it is a *decision* rather than a
-    failure. Worth its own item if anyone wants the audit trail to cover it.
+    **The mismatch resolution was left out of that change as a decision rather
+    than a failure, and added straight after, 2026-10-13.** Three sites in the
+    resolver, each naming both slides the user judged by, the stored id, and how
+    many annotations the choice decided the fate of:
+
+    | choice | level | records |
+    |--------|-------|---------|
+    | `Use for This Slide` | `warn` | re-associated to this slide |
+    | `Open Read-Only` | `info` | shown, not writable |
+    | `Ignore Them` | `info` | not shown; file left unchanged |
+
+    `warn` for re-association because the stored file adopts this slide's id on
+    the next save and its original association is then gone — the one action in
+    this subsystem that rewrites an existing file's provenance. The
+    Open-Read-Only line also covers Esc and the title-bar X, which the dialog
+    deliberately routes to the safe option, so a dialog that was dismissed
+    rather than answered is still recorded.
+
+    All three verified by driving the buttons against a crafted mismatch in a
+    scratch workspace. **Re-association additionally survived a close with no
+    drawing** — the stored id became the open slide's, the filename updated, and
+    all 9 annotations were kept. That is the late fix check 3 in item 0's older
+    list calls "the shape of bug that reappears", and it is now observed.
 
 19. **A disabled menu item looks exactly like an enabled one, so the whole
     annotation gate is invisible.** Observed while running P12, 2026-10-12, and
