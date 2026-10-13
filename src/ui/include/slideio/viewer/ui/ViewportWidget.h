@@ -20,6 +20,7 @@ namespace slideio::viewer::app
 {
 class AnnotationModel;
 class AnnotationPersistenceService;
+class UndoRedoStack;
 }
 
 namespace slideio::viewer::ui
@@ -118,6 +119,10 @@ public:
     /// Non-owning. MainWindow owns the service; the widget only calls it at the
     /// two points in the slide lifecycle where the ordering matters.
     void setPersistenceService(app::AnnotationPersistenceService* service);
+
+    /// Non-owning. MainWindow owns the stack and clears it on slide change.
+    /// Null until set, and the push sites check for that.
+    void setUndoStack(app::UndoRedoStack* stack);
 
     // The colour profile of the scene currently being read. Default-constructed
     // when no slide is open.

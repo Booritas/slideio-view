@@ -1,6 +1,7 @@
 #include "slideio/viewer/ui/MainWindow.h"
 #include "slideio/viewer/app/AnnotationModel.h"
 #include "slideio/viewer/app/AnnotationPersistenceService.h"
+#include "slideio/viewer/app/UndoRedoStack.h"
 #include "slideio/viewer/core/ColorManagement.h"
 #include "slideio/viewer/core/SlideId.h"
 #include "slideio/viewer/infra/JsonAnnotationRepository.h"
@@ -164,6 +165,9 @@ struct MainWindow::Impl
     std::unique_ptr<AnnotationSettings> annotationSettings;
     std::unique_ptr<infra::JsonAnnotationRepository> annotationRepository;
     std::unique_ptr<app::AnnotationPersistenceService> annotationPersistence;
+    std::unique_ptr<app::UndoRedoStack> undoStack;
+    QAction* undoAction = nullptr;
+    QAction* redoAction = nullptr;
 
     // At most one save-failure dialog per run of bad luck. A failed save stays
     // dirty and is retried on the autosave debounce, so without this latch an
@@ -171,6 +175,7 @@ struct MainWindow::Impl
     bool saveFailureReported = false;
 
     void buildAnnotationPersistence();
+    void updateUndoActions();
     bool openPreferences();
 
     void createActions()
@@ -335,6 +340,20 @@ struct MainWindow::Impl
         fileMenu->addAction(openLogAction);
         fileMenu->addSeparator();
         fileMenu->addAction(exitAction);
+
+        // Between File and View, where every application that has one puts it.
+        QMenu* editMenu = owner->menuBar()->addMenu("&Edit");
+        undoAction = new QAction("&Undo", owner);
+        // The standard key for the platform rather than a hard-coded Ctrl+Z.
+        undoAction->setShortcut(QKeySequence::Undo);
+        undoAction->setEnabled(false);
+        editMenu->addAction(undoAction);
+
+        redoAction = new QAction("&Redo", owner);
+        // Ctrl+Shift+Z alongside the platform standard: users arrive with both.
+        redoAction->setShortcuts({QKeySequence(QKeySequence::Redo), QKeySequence("Ctrl+Shift+Z")});
+        redoAction->setEnabled(false);
+        editMenu->addAction(redoAction);
 
         QMenu* viewMenu = owner->menuBar()->addMenu("&View");
         // Qt does not render QAction tooltips inside a menu unless asked. The
@@ -1053,6 +1072,28 @@ struct MainWindow::Impl
     }
 };
 
+void MainWindow::Impl::updateUndoActions()
+{
+    if (undoAction == nullptr || redoAction == nullptr || undoStack == nullptr) {
+        return;
+    }
+
+    const bool canUndo = undoStack->canUndo();
+    undoAction->setEnabled(canUndo);
+    // Naming the operation is most of the value: "Undo" alone does not tell the
+    // user whether Ctrl+Z is about to remove the shape they just drew or undo a
+    // move they have forgotten about.
+    undoAction->setText(canUndo
+                            ? tr("&Undo %1").arg(QString::fromStdString(undoStack->undoDescription()))
+                            : tr("&Undo"));
+
+    const bool canRedo = undoStack->canRedo();
+    redoAction->setEnabled(canRedo);
+    redoAction->setText(canRedo
+                            ? tr("&Redo %1").arg(QString::fromStdString(undoStack->redoDescription()))
+                            : tr("&Redo"));
+}
+
 void MainWindow::Impl::buildAnnotationPersistence()
 {
     annotationRepository = std::make_unique<infra::JsonAnnotationRepository>(
@@ -1060,6 +1101,33 @@ void MainWindow::Impl::buildAnnotationPersistence()
     annotationPersistence = std::make_unique<app::AnnotationPersistenceService>(
         *annotationRepository, *viewportWidget->annotationModel());
     viewportWidget->setPersistenceService(annotationPersistence.get());
+
+    undoStack = std::make_unique<app::UndoRedoStack>();
+    viewportWidget->setUndoStack(undoStack.get());
+    undoStack->onStackChanged = [this]() { updateUndoActions(); };
+
+    // Hung off the model rather than called at each slide-switch site: a future
+    // way to change slides cannot forget it. Both signals fire only on the
+    // slide-change and load paths, never on an edit.
+    QObject::connect(viewportWidget->annotationModel(), &app::AnnotationModel::cleared, owner,
+                     [this]() { undoStack->clear(); });
+    QObject::connect(viewportWidget->annotationModel(), &app::AnnotationModel::modelReset, owner,
+                     [this]() { undoStack->clear(); });
+
+    QObject::connect(undoAction, &QAction::triggered, owner, [this]() {
+        // The description has to be read before the undo: afterwards the top of
+        // the stack is a different command.
+        const QString what = QString::fromStdString(undoStack->undoDescription());
+        undoStack->undo();
+        statusBarManager->showTransientMessage(tr("Undo: %1").arg(what));
+    });
+    QObject::connect(redoAction, &QAction::triggered, owner, [this]() {
+        const QString what = QString::fromStdString(undoStack->redoDescription());
+        undoStack->redo();
+        statusBarManager->showTransientMessage(tr("Redo: %1").arg(what));
+    });
+
+    updateUndoActions();
 
     annotationPersistence->setMismatchResolver(
         [this](const core::AnnotationDocument& stored, const core::SlideProvenance& current) {

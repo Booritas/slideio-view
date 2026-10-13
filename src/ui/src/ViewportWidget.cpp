@@ -3,7 +3,9 @@
 #include "slideio/viewer/ui/ViewportController.h"
 
 #include "slideio/viewer/app/AnnotationModel.h"
+#include "slideio/viewer/app/AnnotationEditCommand.h"
 #include "slideio/viewer/app/AnnotationPersistenceService.h"
+#include "slideio/viewer/app/UndoRedoStack.h"
 #include "slideio/viewer/core/Annotation.h"
 #include "slideio/viewer/core/AnnotationGeometry.h"
 #include "slideio/viewer/core/CoordinateSystem.h"
@@ -1370,6 +1372,8 @@ struct ViewportWidget::Impl
 
     // Non-owning; null until MainWindow injects it.
     app::AnnotationPersistenceService* persistence = nullptr;
+    /// Non-owning: MainWindow owns the stack. Null until setUndoStack().
+    app::UndoRedoStack* undoStack = nullptr;
 
     /// False only when a persistence service is attached and has gone inactive
     /// -- a load failure, or a mismatch the user resolved as read-only. With no
@@ -2738,6 +2742,11 @@ void ViewportWidget::reopenCurrentScene()
 void ViewportWidget::setPersistenceService(app::AnnotationPersistenceService* service)
 {
     m_impl->persistence = service;
+}
+
+void ViewportWidget::setUndoStack(app::UndoRedoStack* stack)
+{
+    m_impl->undoStack = stack;
 }
 
 app::AnnotationModel* ViewportWidget::annotationModel() const
