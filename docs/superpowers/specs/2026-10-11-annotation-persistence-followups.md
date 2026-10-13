@@ -6,8 +6,8 @@ against `main` @ `bc3aeb6`; items 18 and 19 are new, found during it. Item 19 is
 fixed in both halves (status-bar indicator, and dimmed disabled menu text app-wide).
 Item 18 is fixed, 2026-10-13, widened to cover save failures and the mismatch
 resolution; item 0's older check 3 is covered as a side effect. P11 and older
-checks 1 and 6 were verified by the project owner on 2026-10-13, leaving
-checks 2, 4 and 5 as the only unverified behaviour in item 0.
+checks 1, 5 and 6 were verified by the project owner on 2026-10-13, leaving
+only check 4 and the dialog half of check 2 unverified in item 0.
 **Status:** Open
 **Covers:** `main` @ `ca38c5d` (merge of `annotation-persistence`) and `c819a54`
 **Spec:** `2026-10-10-annotation-persistence-design.md`
@@ -50,11 +50,11 @@ not cover.
    design exists to prevent, and it had been the single most important
    outstanding check since this document was written. Also check 6, quitting
    without closing the slide, which exercises `closeEvent` rather than autosave
-   or `closeSlide()`.
+   or `closeSlide()`, and the drag-and-Delete half of check 5.
 
-   **Still open from the six:** checks 2 (its file-unchanged half is verified),
-   4, and 5 (only its tool-gating half). Check 3 was covered on 2026-10-13; see
-   its entry.
+   **Still open from the six:** check 4, and the dialog half of check 2 — its
+   file-unchanged half, which is the one that governs data safety, is verified.
+   Checks 1, 3, 5 and 6 are now covered in full.
 
    Still unverified, in the order they matter:
 
@@ -74,9 +74,13 @@ not cover.
       that "Use for This Slide" must survive a close *without drawing* — that
       was a late fix and is the shape of bug that reappears.
    4. Open an associated image (label or macro). The Rectangle tool is disabled.
-   5. On a read-only slide (resolve a mismatch as "Open Read-Only"), try to drag
-      an annotation and to press Delete. Neither must change anything, and the
-      status bar should say why.
+   5. ~~On a read-only slide (resolve a mismatch as "Open Read-Only"), try to drag
+      an annotation and to press Delete.~~ Neither must change anything, and the
+      status bar should say why. **Fully covered:** the tool-gating half by
+      check P12 on 2026-10-12, and the drag-and-Delete half by the project
+      owner on 2026-10-13 — **passed.** This was the last path by which a user
+      could still have altered a document the application had declared
+      unwritable.
    6. ~~Draw, then quit the application **without closing the slide**.~~ The work
       must be on disk — that path is `closeEvent`, not autosave. **Verified by
       the project owner, 2026-10-13 — passed.** The exit path writes, and it is
