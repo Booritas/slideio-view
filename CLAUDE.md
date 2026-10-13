@@ -103,6 +103,8 @@ cmake --install build/build --config Release
 
 The build-tree executable will not start either — install first and run `build/install/release/bin/slideio-viewer.exe`.
 
+**A running viewer silently turns `cmake --install` into a no-op.** Windows locks the running `.exe`, so the copy is skipped, the command still exits 0, and the installed binary stays at the previous build. Everything measured afterwards is the old code. Kill the viewer before installing. When a change has to be in the binary you are about to drive, confirm it is rather than assuming: compare the timestamps of `build/install/release/bin/slideio-viewer.exe` and `build/build/Release/slideio-viewer.exe`, or grep the installed binary for a string the change introduces. `ctest` after a failed build has the same shape — the suites run whatever binaries are already there and report green. **Both failures look exactly like success, so the exit code is not the thing to check; the artifact is.**
+
 No test binary creates a `QApplication`, so **no test may construct a widget**. Logic that needs testing is extracted into pure functions over plain data; see `ColorProfilePolicy`, `AnnotationInteraction`, `DriverFilters`.
 
 ## Key Design Decisions
