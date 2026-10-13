@@ -4262,7 +4262,12 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
             // shape keeps following the cursor with no way to recover its
             // original position; Ctrl+Z cannot serve instead, because a
             // cancelled move is never recorded as a step.
-            if (m_impl->moveOriginal.has_value()) {
+            //
+            // Only if it actually moved: setGeometry restamps modifiedAt and
+            // marks the slide dirty, so restoring a shape that never left its
+            // place would rewrite the file and backdate nothing but the truth
+            // about when the mark was last touched.
+            if (m_impl->moveThresholdCrossed && m_impl->moveOriginal.has_value()) {
                 m_impl->annotations->setGeometry(m_impl->movingId,
                                                  m_impl->moveOriginal->geometry());
             }
