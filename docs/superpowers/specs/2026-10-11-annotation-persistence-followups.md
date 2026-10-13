@@ -7,7 +7,10 @@ fixed in both halves (status-bar indicator, and dimmed disabled menu text app-wi
 Item 18 is fixed, 2026-10-13, widened to cover save failures and the mismatch
 resolution; item 0's older check 3 is covered as a side effect. P11 and older
 checks 1, 2, 4, 5 and 6 were verified by the project owner on 2026-10-13.
-**Item 0 is closed: every check in it has now been run against a real slide.**
+**Item 0 is closed: every check in it has now been covered.** It also carries a
+correction — earlier drafts said the subsystem had not been run and called
+several checks first-ever observations, which was wrong and was never checked
+with the project owner, who tests this application regularly.
 **Status:** Open
 **Covers:** `main` @ `ca38c5d` (merge of `annotation-persistence`) and `c819a54`
 **Spec:** `2026-10-10-annotation-persistence-design.md`
@@ -31,16 +34,36 @@ not cover.
 
 ## Runtime verification — complete
 
-0. **This sub-project has now been run against real slides — closed 2026-10-13.**
+0. **Every check in this item has now been covered — closed 2026-10-13.**
    No test suite creates a `QApplication`, so no widget can be constructed in a
    test, and every implementer was barred from launching the viewer. The
    subsystem's value rests on behaviours only the running application
-   exercises, and for two days after it was written none of them had been
-   observed. All of them now have. The checks are kept below, struck through
-   as they were closed, because they are the record of what was verified and
-   how — and because they are the list to re-run when this area next changes.
+   exercises, so they are listed here to be covered deliberately rather than
+   assumed. The checks are kept below, struck through as they were closed,
+   because they are the record of what was verified and how — and because they
+   are the list to re-run when this area next changes.
 
-   **Verified by the user, 2026-10-11:** annotation creation and saving work.
+   **Correction, 2026-10-13.** As first written this item said "most of this
+   sub-project has still not been run against a real slide", and later drafts
+   of the entries below leaned harder still, calling things first-ever
+   observations. **That was wrong, and it was never checked with the project
+   owner before being written down.** The project owner tests this application
+   regularly — annotations and their persistence, and ICC profiles including
+   the reopen. The ordinary paths through this subsystem were in routine use
+   the whole time. What this list actually did was cover the documented
+   behaviours *systematically*, including the failure and edge paths, and
+   record the result; it was not first contact. The scoped claim that does
+   hold is the one about geometry: polygon and freehand line merged on
+   2026-10-12, so their first execution really was the run below — the stored
+   rectangles predating that branch are rectangle-only, which is consistent.
+
+   The lesson for anyone adding to this document: **do not infer from a
+   document's silence that a behaviour has never been exercised.** Ask the
+   person who runs the application.
+
+   **Verified by the user, 2026-10-11:** annotation creation and saving work —
+   and, per the correction above, this understates long-standing routine use
+   rather than marking a first.
 
    **Verified 2026-10-12:** the whole geometry-widening list, P1-P17 —
    **17 pass, 0 fail** once the project owner completed P11 by hand on
@@ -50,10 +73,12 @@ not cover.
 
    **Verified by the project owner, 2026-10-13:** check 1 below — the ICC
    profile change — on an Olympus VSI slide. That is the defect the whole
-   design exists to prevent, and it had been the single most important
-   outstanding check since this document was written. Also check 6, quitting
-   without closing the slide, which exercises `closeEvent` rather than autosave
-   or `closeSlide()`; the drag-and-Delete half of check 5; and check 4.
+   design exists to prevent. This entry records it against the check; it is
+   not the first time that path has been exercised, since ICC profiles and
+   their reopen are part of the project owner's regular testing. Also check 6,
+   quitting without closing the slide, which exercises `closeEvent` rather than
+   autosave or `closeSlide()`; the drag-and-Delete half of check 5; and
+   check 4.
 
    **Nothing in this item is outstanding.** All six numbered checks and all
    seventeen P-checks have been observed in the running application. This item
@@ -67,8 +92,9 @@ not cover.
       the slide reopens through `closeSlide()`, and the annotations must still
       be there. **Verified by the project owner on an Olympus VSI slide,
       2026-10-13 — passed.** The flush-before-reset ordering in `closeSlide()`
-      holds in the running application, which until now had only ever been
-      argued. No longer outstanding.
+      holds in the running application. Recorded against the check here for the
+      first time, but not exercised for the first time: ICC profiles and their
+      reopen are part of the project owner's regular testing.
    2. ~~Hand-break a saved file's JSON, reopen:~~ a dialog names the file and the
       problem, the tool is disabled, and **the broken file is unchanged on disk
       afterwards**. This is the governing rule of the whole design, and the one
@@ -106,8 +132,10 @@ not cover.
    the geometry-widening work
    (`2026-10-12-annotation-geometry-widening-design.md`); every implementer was
    barred from it, and the integration lives inside a widget no suite can
-   construct. The run below was therefore the first execution of any of this code,
-   and the list is
+   construct. The run below was therefore the first execution of **the polygon and
+   freehand-line code specifically** — not of the annotation subsystem as a whole,
+   which was already in routine use; see the correction at the top of this item.
+   The list is
    for the project owner. It comes from the final whole-branch review of
    `annotation-geometry` (038c016..c41b003), whose findings then produced two
    fix commits, `1bae489` and `8d2039b`; the review predates both fixes, so a
@@ -257,8 +285,9 @@ not cover.
      that pen was written for.
 
    **Results — P1-P17 run in full, 2026-10-12.** 17 pass, 0 fail (P11 completed by hand
-   on 2026-10-13; see its row). This was
-   the first execution of any of this code. Driven through the GUI with Win32
+   on 2026-10-13; see its row). This was the first execution of the polygon and
+   freehand-line code, which had merged that day; the annotation subsystem it
+   sits on was already in regular use. Driven through the GUI with Win32
    automation against the installed build of `main` @ `bc3aeb6`, on
    `S1303802-11-HE-DX1.svs` (brightfield H&E, as the note above requires), with a
    Zeiss CZI for the multi-scene pass and a worktree build at `e86150c` for P14. The
