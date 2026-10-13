@@ -176,6 +176,9 @@ private:
     /// already gone through AnnotationModel's own API.
     void pushCreateCommand(const std::string& id);
     void pushDeleteCommand(const std::string& id);
+    /// Records one completed move drag as a single step. Called on release, not
+    /// from the per-frame setGeometry that drives the live preview.
+    void pushMoveCommand(const std::string& id, const core::AnnotationGeometry& originalGeometry);
     void installSceneOpenResult(uint64_t opId, SceneOpenResult result);
 
     // Drops the GPU textures of every tile not in `keep`'s colour mode so the

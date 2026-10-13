@@ -2805,6 +2805,42 @@ void ViewportWidget::pushDeleteCommand(const std::string& id)
         *m_impl->annotations, id, std::move(before), std::nullopt, what.toStdString()));
 }
 
+void ViewportWidget::pushMoveCommand(const std::string& id,
+                                     const core::AnnotationGeometry& originalGeometry)
+{
+    if (m_impl->undoStack == nullptr || id.empty()) {
+        return;
+    }
+    const core::Annotation* stored = m_impl->annotations->find(id);
+    if (stored == nullptr) {
+        return;
+    }
+
+    core::Annotation after = *stored;
+    core::Annotation before = after;
+    before.setGeometry(originalGeometry);
+
+    // A drag that ended where it started is not an edit. Without this, a stray
+    // click on an annotation would put a no-op on the stack that the user has to
+    // press Ctrl+Z through before reaching a real one.
+    //
+    // core::Rect is an aggregate of x/y/width/height with no operator==, so the
+    // four fields are compared directly.
+    const core::RectF boxBefore = core::boundingBox(before.geometry());
+    const core::RectF boxAfter = core::boundingBox(after.geometry());
+    if (boxBefore.x == boxAfter.x && boxBefore.y == boxAfter.y
+        && boxBefore.width == boxAfter.width && boxBefore.height == boxAfter.height) {
+        return;
+    }
+
+    const QString what = tr("Move %1").arg(shapeName(after));
+    if (!app::AnnotationEditCommand::isValid(before, after)) {
+        return;
+    }
+    m_impl->undoStack->push(std::make_unique<app::AnnotationEditCommand>(
+        *m_impl->annotations, id, std::move(before), std::move(after), what.toStdString()));
+}
+
 app::AnnotationModel* ViewportWidget::annotationModel() const
 {
     return m_impl->annotations.get();
@@ -3915,6 +3951,15 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
             m_impl->annotations->setSelected(hit);
         }
         update();
+    }
+
+    // One completed drag, one undo step. The per-frame setGeometry in
+    // mouseMoveEvent is live preview, not a sequence of edits -- pushing there
+    // would bury the user's real history under hundreds of micro-moves. Escape
+    // cancelling a move pushes nothing either: it restores the original itself,
+    // so there is no net change to record.
+    if (m_impl->dragOwner == DragOwner::MoveAnnotation) {
+        pushMoveCommand(m_impl->movingId, m_impl->moveOriginalGeometry);
     }
     m_impl->movingId.clear();
 
