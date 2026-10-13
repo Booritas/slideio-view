@@ -5,7 +5,8 @@
 against `main` @ `bc3aeb6`; items 18 and 19 are new, found during it. Item 19 is
 fixed in both halves (status-bar indicator, and dimmed disabled menu text app-wide).
 Item 18 is fixed, 2026-10-13, widened to cover save failures and the mismatch
-resolution; item 0's older check 3 is covered as a side effect.
+resolution; item 0's older check 3 is covered as a side effect. P11 and the
+ICC-profile check (check 1) were verified by the project owner on 2026-10-13.
 **Status:** Open
 **Covers:** `main` @ `ca38c5d` (merge of `annotation-persistence`) and `c819a54`
 **Spec:** `2026-10-10-annotation-persistence-design.md`
@@ -37,17 +38,26 @@ not cover.
 
    **Verified by the user, 2026-10-11:** annotation creation and saving work.
 
-   **Verified 2026-10-12:** the whole geometry-widening list, P1-P17 — 16 pass,
-   1 partial (P11), 0 fail. See "Results" at the end of this item. The six
-   numbered checks immediately below are an older, separate list and are
-   **not** covered by that run, except for the parts noted there.
+   **Verified 2026-10-12:** the whole geometry-widening list, P1-P17 —
+   **17 pass, 0 fail** once the project owner completed P11 by hand on
+   2026-10-13. See "Results" at the end of this item. The six numbered checks
+   immediately below are an older, separate list and are **not** covered by
+   that run, except for the parts noted there.
+
+   **Verified by the project owner, 2026-10-13:** check 1 below — the ICC
+   profile change — on an Olympus VSI slide. That is the defect the whole
+   design exists to prevent, and it had been the single most important
+   outstanding check since this document was written.
 
    Still unverified, in the order they matter:
 
-   1. **With rectangles on screen, change the slide's ICC profile.** This is
+   1. ~~**With rectangles on screen, change the slide's ICC profile.**~~ This was
       the defect that justified the whole design (foundation follow-up item 4):
       the slide reopens through `closeSlide()`, and the annotations must still
-      be there. **The single most important outstanding check.**
+      be there. **Verified by the project owner on an Olympus VSI slide,
+      2026-10-13 — passed.** The flush-before-reset ordering in `closeSlide()`
+      holds in the running application, which until now had only ever been
+      argued. No longer outstanding.
    2. Hand-break a saved file's JSON, reopen: a dialog names the file and the
       problem, the tool is disabled, and **the broken file is unchanged on disk
       afterwards**. This is the governing rule of the whole design, and the one
@@ -219,7 +229,8 @@ not cover.
      fluorescence slide shows the outline clearly and tells you nothing about the case
      that pen was written for.
 
-   **Results — P1-P17 run in full, 2026-10-12.** 16 pass, 1 partial, 0 fail. This was
+   **Results — P1-P17 run in full, 2026-10-12.** 17 pass, 0 fail (P11 completed by hand
+   on 2026-10-13; see its row). This was
    the first execution of any of this code. Driven through the GUI with Win32
    automation against the installed build of `main` @ `bc3aeb6`, on
    `S1303802-11-HE-DX1.svs` (brightfield H&E, as the note above requires), with a
@@ -240,7 +251,7 @@ not cover.
    | P8 | pass | Pressing `R` mid-drag then releasing selected and deselected nothing, as §6.6 requires. |
    | P9 | pass | Both halves: Escape and Backspace. |
    | P10 | pass | All three close gestures: click vertex 1, double-click, Enter. |
-   | P11 | **partial** | 40 drag steps produced 32 vertices, proportional and smooth — but a synthetic drag has none of a real hand's jitter. **Still wants a human hand.** |
+   | P11 | pass | 40 drag steps produced 32 vertices, proportional and smooth, but a synthetic drag has none of a real hand's jitter — so this stood at partial until **the project owner traced it by hand, 2026-10-13, and it passed.** That hand trace is the only real evidence for this check; the automated half could not settle it. |
    | P12 | pass | See below. |
    | P13 | pass | Hint observed for both tools, and its transience observed. |
    | P14 | pass | See below. |
