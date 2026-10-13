@@ -92,6 +92,22 @@ struct SceneOpenResult
 namespace
 {
 
+/// The shape's name for an undo description. Derived from the geometry through
+/// core::typeOf(), so it cannot disagree with what was actually drawn.
+QString shapeName(const slideio::viewer::core::Annotation& annotation)
+{
+    using slideio::viewer::core::AnnotationType;
+    switch (slideio::viewer::core::typeOf(annotation.geometry())) {
+    case AnnotationType::Rectangle:
+        return QObject::tr("Rectangle");
+    case AnnotationType::Polygon:
+        return QObject::tr("Polygon");
+    case AnnotationType::Polyline:
+        return QObject::tr("Freehand Line");
+    }
+    return QObject::tr("Annotation");
+}
+
 const char* kTileVertexShaderSource = R"glsl(
 #version 330 core
 
@@ -2749,6 +2765,46 @@ void ViewportWidget::setUndoStack(app::UndoRedoStack* stack)
     m_impl->undoStack = stack;
 }
 
+void ViewportWidget::pushCreateCommand(const std::string& id)
+{
+    if (m_impl->undoStack == nullptr || id.empty()) {
+        return;
+    }
+    const core::Annotation* stored = m_impl->annotations->find(id);
+    if (stored == nullptr) {
+        return;
+    }
+    // Copied immediately: find() returns a pointer invalidated by any mutation.
+    // The copy is also what redo re-inserts, which is why it must be taken after
+    // the add -- add() mints the id, and redoing through add() again would mint a
+    // different one and dangle every other command referring to this annotation.
+    core::Annotation after = *stored;
+    const QString what = tr("Draw %1").arg(shapeName(after));
+    if (!app::AnnotationEditCommand::isValid(std::nullopt, after)) {
+        return;
+    }
+    m_impl->undoStack->push(std::make_unique<app::AnnotationEditCommand>(
+        *m_impl->annotations, id, std::nullopt, std::move(after), what.toStdString()));
+}
+
+void ViewportWidget::pushDeleteCommand(const std::string& id)
+{
+    if (m_impl->undoStack == nullptr || id.empty()) {
+        return;
+    }
+    const core::Annotation* stored = m_impl->annotations->find(id);
+    if (stored == nullptr) {
+        return;
+    }
+    core::Annotation before = *stored;
+    const QString what = tr("Delete %1").arg(shapeName(before));
+    if (!app::AnnotationEditCommand::isValid(before, std::nullopt)) {
+        return;
+    }
+    m_impl->undoStack->push(std::make_unique<app::AnnotationEditCommand>(
+        *m_impl->annotations, id, std::move(before), std::nullopt, what.toStdString()));
+}
+
 app::AnnotationModel* ViewportWidget::annotationModel() const
 {
     return m_impl->annotations.get();
@@ -3021,6 +3077,7 @@ void ViewportWidget::commitPendingShape()
         return;
     }
     const std::string id = m_impl->annotations->add(core::PolygonGeometry{std::move(vertices), closed});
+    pushCreateCommand(id);
     m_impl->annotations->setSelected(id);
     update();
 }
@@ -3833,6 +3890,7 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
                 core::RectangleGeometry{core::PointF{box.x, box.y},
                                         core::PointF{box.x + box.width, box.y + box.height}};
             const std::string id = m_impl->annotations->add(geometry);
+            pushCreateCommand(id);
             m_impl->annotations->setSelected(id);
         }
         update();
@@ -4029,7 +4087,10 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
             event->accept();
             return;
         }
-        m_impl->annotations->remove(m_impl->annotations->selectedId());
+        // Captured before the remove: afterwards there is nothing left to copy.
+        const std::string doomedId = m_impl->annotations->selectedId();
+        pushDeleteCommand(doomedId);
+        m_impl->annotations->remove(doomedId);
         event->accept();
         update();
         return;

@@ -170,6 +170,12 @@ private:
     void commitPendingShape();
     void discardPendingShape();
     void endToolDrag();
+
+    /// Record a completed operation on the undo stack. No-ops when no stack is
+    /// set or the annotation is not in the model. Called after the mutation has
+    /// already gone through AnnotationModel's own API.
+    void pushCreateCommand(const std::string& id);
+    void pushDeleteCommand(const std::string& id);
     void installSceneOpenResult(uint64_t opId, SceneOpenResult result);
 
     // Drops the GPU textures of every tile not in `keep`'s colour mode so the
