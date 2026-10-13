@@ -1147,6 +1147,12 @@ void MainWindow::Impl::buildAnnotationPersistence()
 
     QObject::connect(annotationPersistence.get(), &app::AnnotationPersistenceService::loadFailed,
                      owner, [this](const QString& path, const QString& message) {
+                         // The dialog is dismissed and then the refusal is gone.
+                         // Logged here rather than in the service because the app
+                         // layer does not link spdlog, and because what the user
+                         // was actually told is the entry worth keeping.
+                         spdlog::warn("Annotations refused: {} ({}); file left unchanged",
+                                      path.toStdString(), message.toStdString());
                          QMessageBox::warning(
                              owner, tr("Annotations could not be opened"),
                              tr("%1\n\n%2\n\nThe file has not been changed. Annotations are "
@@ -1164,6 +1170,12 @@ void MainWindow::Impl::buildAnnotationPersistence()
                              return;
                          }
                          saveFailureReported = true;
+                         // Inside the latch deliberately: the autosave retries
+                         // every couple of seconds, so logging each attempt would
+                         // bury the log on a dead share. One line opens the run of
+                         // failures; the `saved` handler below closes it.
+                         spdlog::warn("Annotation save failed: {} ({}); retrying",
+                                      path.toStdString(), message.toStdString());
                          QMessageBox::warning(
                              owner, tr("Annotations could not be saved"),
                              tr("%1\n\n%2\n\nYour annotations are still open and will be "
@@ -1175,10 +1187,25 @@ void MainWindow::Impl::buildAnnotationPersistence()
     // A write that reached disk ends the run of bad luck, so the next distinct
     // failure is reported again even if the slide was never reopened.
     QObject::connect(annotationPersistence.get(), &app::AnnotationPersistenceService::saved,
-                     owner, [this](const QString&) { saveFailureReported = false; });
+                     owner, [this](const QString& path) {
+                         // Closes the run opened above. Without it the log ends on
+                         // "save failed" and never says the writes came back, which
+                         // reads as unsaved work long after it reached disk.
+                         if (saveFailureReported) {
+                             spdlog::info("Annotation save recovered: {}", path.toStdString());
+                         }
+                         saveFailureReported = false;
+                     });
 
     QObject::connect(annotationPersistence.get(), &app::AnnotationPersistenceService::saveAbandoned,
                      owner, [this](const QString& path, const QString& message) {
+                         // The one event here that destroys work: retries are spent
+                         // and the annotations are dropped. error, not warn -- if
+                         // anything in this subsystem is worth finding in a log
+                         // afterwards, it is this.
+                         spdlog::error("Annotations discarded after repeated save failures: "
+                                       "{} ({})",
+                                       path.toStdString(), message.toStdString());
                          QMessageBox::critical(
                              owner, tr("Annotations were discarded"),
                              tr("Saving failed repeatedly, so the annotations for this slide "
