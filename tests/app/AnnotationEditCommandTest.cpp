@@ -1,0 +1,187 @@
+#include <catch2/catch_test_macros.hpp>
+
+#include "slideio/viewer/app/AnnotationEditCommand.h"
+#include "slideio/viewer/app/AnnotationModel.h"
+
+#include <cstddef>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
+
+using namespace slideio::viewer;
+
+namespace
+{
+
+core::AnnotationGeometry rect(double x0, double y0, double x1, double y1)
+{
+    return core::RectangleGeometry{core::PointF{x0, y0}, core::PointF{x1, y1}};
+}
+
+core::AnnotationGeometry polyline(int vertexCount)
+{
+    std::vector<core::PointF> vertices;
+    vertices.reserve(static_cast<std::size_t>(vertexCount));
+    for (int i = 0; i < vertexCount; ++i) {
+        vertices.push_back(core::PointF{static_cast<double>(i), static_cast<double>(i) * 2.0});
+    }
+    return core::PolygonGeometry{std::move(vertices), false};
+}
+
+/// The command a create push site builds: no before, the stored annotation after.
+std::unique_ptr<app::AnnotationEditCommand> createCommand(app::AnnotationModel& model,
+                                                          const std::string& id)
+{
+    const core::Annotation* stored = model.find(id);
+    REQUIRE(stored != nullptr);
+    return std::make_unique<app::AnnotationEditCommand>(model, id, std::nullopt, *stored,
+                                                        "Draw Rectangle");
+}
+
+} // namespace
+
+TEST_CASE("undoing a create removes the annotation", "[app][AnnotationEditCommand]")
+{
+    app::AnnotationModel model;
+    const std::string id = model.add(rect(0.0, 0.0, 10.0, 10.0));
+    auto command = createCommand(model, id);
+
+    command->undo();
+
+    REQUIRE(model.annotations().empty());
+    REQUIRE(model.find(id) == nullptr);
+}
+
+TEST_CASE("redoing a create restores it under the same id", "[app][AnnotationEditCommand]")
+{
+    app::AnnotationModel model;
+    const std::string id = model.add(rect(0.0, 0.0, 10.0, 10.0));
+    auto command = createCommand(model, id);
+
+    command->undo();
+    command->execute();
+
+    REQUIRE(model.annotations().size() == 1);
+    REQUIRE(model.annotations().front().id() == id);
+}
+
+TEST_CASE("a create survives several undo/redo cycles without drifting",
+          "[app][AnnotationEditCommand]")
+{
+    app::AnnotationModel model;
+    const std::string id = model.add(rect(1.0, 2.0, 3.0, 4.0));
+    auto command = createCommand(model, id);
+
+    for (int i = 0; i < 5; ++i) {
+        command->undo();
+        command->execute();
+    }
+
+    REQUIRE(model.annotations().size() == 1);
+    REQUIRE(model.annotations().front().id() == id);
+}
+
+TEST_CASE("undoing a delete restores geometry and metadata exactly",
+          "[app][AnnotationEditCommand]")
+{
+    app::AnnotationModel model;
+    model.setDefaultAuthor("booritas");
+    const std::string id = model.add(rect(5.0, 6.0, 7.0, 8.0));
+    const core::Annotation before = *model.find(id);
+
+    app::AnnotationEditCommand command(model, id, before, std::nullopt, "Delete Rectangle");
+    command.execute(); // the delete itself
+    REQUIRE(model.find(id) == nullptr);
+
+    command.undo();
+
+    const core::Annotation* restored = model.find(id);
+    REQUIRE(restored != nullptr);
+    REQUIRE(restored->metadata().author == "booritas");
+    REQUIRE(restored->metadata().createdAt == before.metadata().createdAt);
+    REQUIRE(restored->metadata().modifiedAt == before.metadata().modifiedAt);
+    REQUIRE(std::get<core::RectangleGeometry>(restored->geometry()).topLeft.x == 5.0);
+}
+
+TEST_CASE("undoing a move returns the geometry vertex for vertex",
+          "[app][AnnotationEditCommand]")
+{
+    app::AnnotationModel model;
+    const std::string id = model.add(polyline(32));
+    const core::Annotation before = *model.find(id);
+
+    core::Annotation after = before;
+    after.setGeometry(core::translated(before.geometry(), 100.0, -50.0));
+    model.setGeometry(id, after.geometry());
+
+    app::AnnotationEditCommand command(model, id, before, after, "Move Freehand Line");
+    command.undo();
+
+    const auto& restored = std::get<core::PolygonGeometry>(model.find(id)->geometry());
+    const auto& original = std::get<core::PolygonGeometry>(before.geometry());
+    REQUIRE(restored.vertices.size() == original.vertices.size());
+    for (std::size_t i = 0; i < original.vertices.size(); ++i) {
+        REQUIRE(restored.vertices[i].x == original.vertices[i].x);
+        REQUIRE(restored.vertices[i].y == original.vertices[i].y);
+    }
+}
+
+TEST_CASE("undo selects the annotation it restored", "[app][AnnotationEditCommand]")
+{
+    app::AnnotationModel model;
+    const std::string id = model.add(rect(0.0, 0.0, 1.0, 1.0));
+    const core::Annotation before = *model.find(id);
+
+    app::AnnotationEditCommand command(model, id, before, std::nullopt, "Delete Rectangle");
+    command.execute();
+    command.undo();
+
+    REQUIRE(model.selectedId() == id);
+}
+
+TEST_CASE("undoing a create clears the selection", "[app][AnnotationEditCommand]")
+{
+    app::AnnotationModel model;
+    const std::string id = model.add(rect(0.0, 0.0, 1.0, 1.0));
+    model.setSelected(id);
+    auto command = createCommand(model, id);
+
+    command->undo();
+
+    REQUIRE(model.selectedId().empty());
+}
+
+TEST_CASE("undoing an edit whose annotation is already gone is harmless",
+          "[app][AnnotationEditCommand]")
+{
+    app::AnnotationModel model;
+    const std::string id = model.add(rect(0.0, 0.0, 1.0, 1.0));
+    const core::Annotation before = *model.find(id);
+    core::Annotation after = before;
+    after.setGeometry(rect(5.0, 5.0, 6.0, 6.0));
+
+    app::AnnotationEditCommand command(model, id, before, after, "Move Rectangle");
+    model.remove(id); // some other path removed it
+
+    command.undo(); // must not crash, must not double-insert
+
+    REQUIRE(model.annotations().size() == 1);
+    REQUIRE(model.annotations().front().id() == id);
+}
+
+TEST_CASE("a command with neither state is rejected", "[app][AnnotationEditCommand]")
+{
+    REQUIRE_FALSE(app::AnnotationEditCommand::isValid(std::nullopt, std::nullopt));
+}
+
+TEST_CASE("commands with either state are accepted", "[app][AnnotationEditCommand]")
+{
+    app::AnnotationModel model;
+    const std::string id = model.add(rect(0.0, 0.0, 1.0, 1.0));
+    const core::Annotation stored = *model.find(id);
+
+    REQUIRE(app::AnnotationEditCommand::isValid(std::nullopt, stored));
+    REQUIRE(app::AnnotationEditCommand::isValid(stored, std::nullopt));
+    REQUIRE(app::AnnotationEditCommand::isValid(stored, stored));
+}
