@@ -25,8 +25,14 @@ void UndoRedoStack::push(std::unique_ptr<ICommand> command)
     m_commands.push_back(std::move(command));
 
     // Cap at the oldest end: recent history is the part the user will reach for.
-    while (static_cast<int>(m_commands.size()) > m_maxDepth) {
-        m_commands.erase(m_commands.begin());
+    // One erase rather than a loop of them -- push adds one command, so the
+    // overshoot is at most one, and the shift it costs is over 50 pointers.
+    // A deque would avoid the shift and pay for it in locality on every walk
+    // of the stack; at this depth neither is measurable.
+    const int overshoot = static_cast<int>(m_commands.size()) - m_maxDepth;
+    if (overshoot > 0) {
+        m_commands.erase(m_commands.begin(),
+                         m_commands.begin() + static_cast<std::ptrdiff_t>(overshoot));
     }
 
     m_currentIndex = static_cast<int>(m_commands.size()) - 1;

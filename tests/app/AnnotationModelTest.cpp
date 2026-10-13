@@ -485,3 +485,37 @@ TEST_CASE("replaceAll drops duplicate ids", "[app][AnnotationModel]")
     REQUIRE(model.annotations()[0].id() == "one");
     REQUIRE(model.annotations()[1].id() == "two");
 }
+
+TEST_CASE("selecting an annotation the model does not hold is refused",
+          "[app][AnnotationModel]")
+{
+    // A selection naming nothing is a state the rest of the application cannot
+    // render or act on: the viewport would paint no handles, a delete would
+    // find nothing, and the id would survive until something else replaced it.
+    // The model is the only place that knows whether an id is real.
+    app::AnnotationModel model;
+    const std::string id = addRect(model, 0.0, 0.0, 10.0, 10.0);
+    model.setSelected(id);
+
+    int emissions = 0;
+    QObject::connect(&model, &app::AnnotationModel::selectionChanged,
+                     [&emissions](const std::string&) { ++emissions; });
+
+    model.setSelected("no-such-annotation");
+
+    REQUIRE(model.selectedId() == id);
+    REQUIRE(emissions == 0);
+}
+
+TEST_CASE("the empty id still clears the selection", "[app][AnnotationModel]")
+{
+    // The guard above must not shut out the one id that is deliberately not an
+    // annotation: clearSelection() goes through setSelected("").
+    app::AnnotationModel model;
+    const std::string id = addRect(model, 0.0, 0.0, 10.0, 10.0);
+    model.setSelected(id);
+
+    model.setSelected(std::string{});
+
+    REQUIRE(model.selectedId().empty());
+}

@@ -1631,12 +1631,14 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow()
 {
-    // The persistence service dies with m_impl, before ~QMainWindow deletes the
-    // viewport that holds a raw pointer to it. Cut the link here rather than
-    // rely on ~ViewportWidget never touching it -- that is a fact about another
-    // file, and nobody changing it will think to come back and check this one.
+    // The persistence service and the undo stack both die with m_impl, before
+    // ~QMainWindow deletes the viewport that holds raw pointers to them. Cut
+    // both links here rather than rely on ~ViewportWidget never touching them
+    // -- that is a fact about another file, and nobody changing it will think
+    // to come back and check this one.
     if (m_impl && m_impl->viewportWidget) {
         m_impl->viewportWidget->setPersistenceService(nullptr);
+        m_impl->viewportWidget->setUndoStack(nullptr);
     }
 
     // Save window geometry and dock layout

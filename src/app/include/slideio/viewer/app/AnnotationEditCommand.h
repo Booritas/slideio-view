@@ -4,6 +4,7 @@
 #include "slideio/viewer/core/Annotation.h"
 
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -22,26 +23,30 @@ class AnnotationModel;
 class AnnotationEditCommand : public ICommand
 {
 public:
-    /// `before` absent means the operation created the annotation; `after`
-    /// absent means it deleted it; both present means it modified it in place.
-    /// Callers check isValid() first -- see the note there.
-    AnnotationEditCommand(AnnotationModel& model, std::string id,
-                          std::optional<core::Annotation> before,
-                          std::optional<core::Annotation> after,
-                          std::string description);
+    /// The only way to build one. `before` absent means the operation created
+    /// the annotation; `after` absent means it deleted it; both present means
+    /// it modified it in place.
+    ///
+    /// Returns null when neither state was supplied, because such a command
+    /// records nothing: it would sit on the stack as a step that does nothing
+    /// when the user presses Ctrl+Z -- worse than no undo, because they will
+    /// assume it worked. Null is what UndoRedoStack::push already ignores, so
+    /// the rejection happens here rather than being remembered at each of the
+    /// push sites.
+    [[nodiscard]] static std::unique_ptr<AnnotationEditCommand> create(
+        AnnotationModel& model, std::string id, std::optional<core::Annotation> before,
+        std::optional<core::Annotation> after, std::string description);
 
     void execute() override;
     void undo() override;
     [[nodiscard]] std::string description() const override;
 
-    /// False when neither state was supplied. Such a command records nothing,
-    /// so it would sit on the stack as an undo step that does nothing when the
-    /// user presses Ctrl+Z -- worse than no undo, because they will assume it
-    /// worked. Push sites check this before constructing.
-    [[nodiscard]] static bool isValid(const std::optional<core::Annotation>& before,
-                                      const std::optional<core::Annotation>& after);
-
 private:
+    AnnotationEditCommand(AnnotationModel& model, std::string id,
+                          std::optional<core::Annotation> before,
+                          std::optional<core::Annotation> after,
+                          std::string description);
+
     /// One rule for all three operations: drop whatever is stored under this id,
     /// then put `state` back if there is one.
     void apply(const std::optional<core::Annotation>& state);

@@ -7,6 +7,21 @@
 namespace slideio::viewer::app
 {
 
+std::unique_ptr<AnnotationEditCommand> AnnotationEditCommand::create(
+    AnnotationModel& model, std::string id, std::optional<core::Annotation> before,
+    std::optional<core::Annotation> after, std::string description)
+{
+    // A command that records neither state would undo to nothing and redo to
+    // nothing. Rejected here rather than at each push site, so a site added
+    // later cannot forget the check: push() already ignores a null command.
+    if (!before.has_value() && !after.has_value()) {
+        return nullptr;
+    }
+
+    return std::unique_ptr<AnnotationEditCommand>(new AnnotationEditCommand(
+        model, std::move(id), std::move(before), std::move(after), std::move(description)));
+}
+
 AnnotationEditCommand::AnnotationEditCommand(AnnotationModel& model, std::string id,
                                              std::optional<core::Annotation> before,
                                              std::optional<core::Annotation> after,
@@ -39,22 +54,15 @@ std::string AnnotationEditCommand::description() const
     return m_description;
 }
 
-bool AnnotationEditCommand::isValid(const std::optional<core::Annotation>& before,
-                                    const std::optional<core::Annotation>& after)
-{
-    return before.has_value() || after.has_value();
-}
-
 void AnnotationEditCommand::apply(const std::optional<core::Annotation>& state)
 {
-    if (!isValid(m_before, m_after)) {
-        return;
-    }
-
     // insert() drops silently when the id is already present, so the remove is
     // not optional -- without it, undoing a move would leave the annotation at
     // its moved position. remove() on an absent id is a no-op returning false,
     // which is what makes this safe when some other path already deleted it.
+    //
+    // remove() also clears the selection when it was this annotation that was
+    // selected, which is the whole of what an undone create has to do about it.
     m_model.remove(m_id);
 
     if (state.has_value()) {
@@ -64,10 +72,10 @@ void AnnotationEditCommand::apply(const std::optional<core::Annotation>& state)
         // kNotFound clamps to the end, which is where insert() would have put it.
         m_model.insertAt(m_index, *state);
         // Selection follows the operation, so the user can see what changed even
-        // when the annotation is outside the current view.
+        // when the annotation is outside the current view. Refused by the model
+        // if the insert above was dropped, which leaves the previous selection
+        // standing rather than pointing at nothing.
         m_model.setSelected(m_id);
-    } else {
-        m_model.clearSelection();
     }
 }
 

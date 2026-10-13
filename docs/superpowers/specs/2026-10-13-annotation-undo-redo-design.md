@@ -487,3 +487,50 @@ decided and why — and the corrections are recorded here.
   one pixel both nudged the shape and recorded a "Move" step, so the user's
   next Ctrl+Z reverted something invisible. A move now begins only once the
   pointer passes the click-target radius, latched for the rest of the drag.
+
+## 11. The deferred minors, closed (2026-10-13)
+
+Six findings were graded Minor and deferred when the branch landed. One was
+closed as a side effect of the §10 work; the other five were taken next.
+
+- **The selection could name nothing.** `apply()` set the selection after an
+  `insertAt` that drops silently, so a command whose stored state carried an id
+  other than its own could leave `selectedId()` pointing at an annotation the
+  model does not hold — no handles painted, no delete matching it, and the id
+  surviving until something else replaced it. `AnnotationModel::setSelected`
+  now refuses an id it cannot find. The empty id stays the exception: it is how
+  a selection is cleared. The guard is in the model because the model is the
+  only thing that knows, and it protects every caller rather than this one.
+
+- **Invalid commands were rejected at the call sites.** Each of the three push
+  sites called `isValid` before constructing, so a fourth would have had to
+  remember. The constructor is now private and `AnnotationEditCommand::create`
+  returns null for a command recording neither state, which `UndoRedoStack::push`
+  already ignores. A push site that forgets nothing is a push site that cannot
+  forget.
+
+- **`~MainWindow` left the viewport pointing at a dead stack.** The destructor
+  already cut the persistence-service link for exactly this reason and did not
+  cut this one. Both are cut now, together, under one comment.
+
+- **Undoing a create cleared an unrelated selection.** `apply()` called
+  `clearSelection()` whenever it restored nothing, so undoing a create dropped
+  the selection even when the selected annotation was a different one.
+  `AnnotationModel::remove` already clears the selection when it is the removed
+  annotation's, which is the whole of what this path owes the user; the
+  unconditional clear is gone.
+
+- **The depth cap looped.** Kept as a vector, with the loop replaced by one
+  ranged erase. `push` adds a single command, so the overshoot is at most one
+  and the shift is over 50 pointers. A deque would trade that shift for worse
+  locality on every walk of the stack; neither is measurable at this depth, so
+  the simpler container stands. **This one is a ruling, not a fix** — the
+  finding describes real O(n) behaviour and the decision is to keep it.
+
+- **The unguarded capture at the move press** was closed by §10's timestamp
+  work: `moveOriginal` is a `std::optional<core::Annotation>`, so a press that
+  finds nothing leaves nothing behind to be restored onto another annotation.
+
+Four of the six are pinned by new tests in `app-tests` (300 assertions, up from
+288). `~MainWindow` is widget code and has none; the depth-cap ruling is covered
+by the existing cap test, whose behaviour is unchanged.

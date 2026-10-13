@@ -2824,10 +2824,7 @@ void ViewportWidget::pushCreateCommand(const std::string& id)
     // different one and dangle every other command referring to this annotation.
     core::Annotation after = *stored;
     const QString what = tr("Draw %1").arg(shapeName(after));
-    if (!app::AnnotationEditCommand::isValid(std::nullopt, after)) {
-        return;
-    }
-    m_impl->undoStack->push(std::make_unique<app::AnnotationEditCommand>(
+    m_impl->undoStack->push(app::AnnotationEditCommand::create(
         *m_impl->annotations, id, std::nullopt, std::move(after), what.toStdString()));
 }
 
@@ -2842,10 +2839,7 @@ void ViewportWidget::pushDeleteCommand(const std::string& id)
     }
     core::Annotation before = *stored;
     const QString what = tr("Delete %1").arg(shapeName(before));
-    if (!app::AnnotationEditCommand::isValid(before, std::nullopt)) {
-        return;
-    }
-    m_impl->undoStack->push(std::make_unique<app::AnnotationEditCommand>(
+    m_impl->undoStack->push(app::AnnotationEditCommand::create(
         *m_impl->annotations, id, std::move(before), std::nullopt, what.toStdString()));
 }
 
@@ -2916,10 +2910,7 @@ void ViewportWidget::pushMoveCommand(const std::string& id,
     }
 
     const QString what = tr("Move %1").arg(shapeName(edit->after));
-    if (!app::AnnotationEditCommand::isValid(edit->before, edit->after)) {
-        return;
-    }
-    m_impl->undoStack->push(std::make_unique<app::AnnotationEditCommand>(
+    m_impl->undoStack->push(app::AnnotationEditCommand::create(
         *m_impl->annotations, id, edit->before, edit->after, what.toStdString()));
 }
 

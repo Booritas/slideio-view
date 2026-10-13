@@ -81,8 +81,9 @@ public:
     /// order so the most recently drawn wins. Empty when none is hit.
     [[nodiscard]] std::string hitTest(core::PointF point, double toleranceSlideUnits) const;
 
-    /// Pass an empty id to clear. Emits only on an actual change. An id not in the
-    /// model is accepted as-is (not validated), so that clearSelection() keeps working.
+    /// Pass an empty id to clear. Emits only on an actual change. An id the
+    /// model does not hold is refused: a selection naming nothing renders no
+    /// handles and matches no delete, and this is the only place that can tell.
     void setSelected(const std::string& id);
     void clearSelection();
     [[nodiscard]] const std::string& selectedId() const;

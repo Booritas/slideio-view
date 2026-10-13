@@ -169,6 +169,14 @@ void AnnotationModel::setSelected(const std::string& id)
     if (m_selectedId == id) {
         return;
     }
+    // An id this model does not hold cannot be selected. A selection naming
+    // nothing renders no handles, matches no delete and survives until
+    // something else replaces it, and only the model knows whether an id is
+    // real -- so the check belongs here rather than at each caller. The empty
+    // id is the deliberate exception: it is how a selection is cleared.
+    if (!id.empty() && find(id) == nullptr) {
+        return;
+    }
     m_selectedId = id;
     emit selectionChanged(m_selectedId);
 }
