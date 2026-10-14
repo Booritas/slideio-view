@@ -35,20 +35,32 @@ std::string threeSignificantFigures(double value)
     // Zero has no significant figures. Give it the shape a single-digit value
     // gets, so a column of measurements lines up: "0.00" beside "1.00".
     int decimals = 2;
+    double shown = value;
     if (magnitude > 0.0) {
         // The decimal count must come from the magnitude AFTER rounding, not
         // before. 0.9996 rounds to 1.000, which is four significant figures;
         // choosing from the rounded value gives "1.00" instead. The same step
         // is what lets formatLength promote 999.6 um to "1.00 mm".
-        const int exponent = static_cast<int>(std::floor(std::log10(magnitude)));
+        int exponent = static_cast<int>(std::floor(std::log10(magnitude)));
         const double step = std::pow(10.0, exponent - 2);
         const double rounded = std::round(magnitude / step) * step;
-        const int roundedExponent = static_cast<int>(std::floor(std::log10(rounded)));
-        decimals = std::max(0, 2 - roundedExponent);
+        // Rounding can carry into the next decade. Compared rather than
+        // re-logged: std::log10 of a round/pow product can land a hair below
+        // the decade and silently add a fourth figure.
+        if (rounded >= std::pow(10.0, exponent + 1)) {
+            ++exponent;
+        }
+        decimals = std::max(0, 2 - exponent);
+
+        // The ROUNDED magnitude, not the raw value. Above 999 the format asks
+        // for no decimals, and printing the raw value then keeps every integer
+        // digit -- 234567 would print in full, six significant figures in a
+        // number the pixel grid cannot support and a report should not claim.
+        shown = std::copysign(rounded, value);
     }
 
     char buffer[64];
-    std::snprintf(buffer, sizeof(buffer), "%.*f", decimals, value);
+    std::snprintf(buffer, sizeof(buffer), "%.*f", decimals, shown);
     return std::string(buffer);
 }
 
@@ -119,7 +131,14 @@ ShapeMetrics measure(const AnnotationGeometry& geometry, PixelSize pixelSize)
     // needs it: its area is absent either way, and open freehand traces carry
     // the most vertices by far.
     const Outline shape = outline(geometry);
-    const bool crosses = shape.closed && isSelfIntersecting(scaledOutline(shape, pixelSize));
+    // Tested UNSCALED. Self-intersection is a property of the shape: positive
+    // scaling cannot create or remove a crossing, and degenerate scaling only
+    // destroys the information. A slide with one malformed resolution axis
+    // would otherwise collapse every annotation onto a line, trip the
+    // collinear-overlap rule, and report "self-intersecting" as the reason an
+    // area is missing -- a stated reason that is false, which is worse than
+    // stating none.
+    const bool crosses = shape.closed && isSelfIntersecting(shape);
     return measureKnown(geometry, pixelSize, crosses);
 }
 

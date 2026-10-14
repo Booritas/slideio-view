@@ -200,9 +200,12 @@ TEST_CASE("a degenerate shape measures zero, not NaN", "[core][AnnotationMeasure
         core::measure(polygon({{3.0, 3.0}, {3.0, 3.0}, {3.0, 3.0}}, true), core::PixelSize{});
     REQUIRE(coincident.outlineLength == 0.0);
     REQUIRE(std::isfinite(coincident.outlineLength));
-    if (coincident.area.has_value()) {
-        REQUIRE(*coincident.area == 0.0);
-    }
+    // Unconditional: the zero-extent override is the only thing stopping a
+    // coincident-vertex polygon from reading "self-intersecting", and a
+    // permissive check would pass either way.
+    REQUIRE(coincident.area.has_value());
+    REQUIRE(*coincident.area == 0.0);
+    REQUIRE_FALSE(coincident.selfIntersecting);
 }
 
 TEST_CASE("a non-positive pixel size yields zero, not NaN or infinity",
@@ -304,4 +307,37 @@ TEST_CASE("zero formats cleanly in both unit systems", "[core][AnnotationMeasure
 {
     REQUIRE(core::formatLength(0.0, core::MeasurementUnits::Physical) == "0.00 \xC2\xB5m");
     REQUIRE(core::formatArea(0.0, core::MeasurementUnits::Pixels) == "0 px\xC2\xB2");
+}
+
+TEST_CASE("three significant figures means three, not however many fit",
+          "[core][AnnotationMeasurement]")
+{
+    // With zero decimals, printing the RAW value keeps every integer digit.
+    // 234567 um^2 is 235000 at three figures; showing it in full asserts a
+    // precision the pixel grid cannot support, in a number meant for a report.
+    REQUIRE(core::formatArea(234567e-12, core::MeasurementUnits::Physical)
+            == "235000 \xC2\xB5m\xC2\xB2");
+
+    // And rounding across the threshold promotes, exactly as 999.6 um does.
+    REQUIRE(core::formatArea(999999e-12, core::MeasurementUnits::Physical) == "1.00 mm\xC2\xB2");
+}
+
+TEST_CASE("a half-calibrated slide does not invent a self-intersection",
+          "[core][AnnotationMeasurement]")
+{
+    // resolutionX malformed as 0 while resolutionY is valid: every vertex
+    // collapses onto a vertical line, where a collinear-overlap test would fire.
+    // The shape is simple, and "self-intersecting" is a stated REASON -- giving
+    // a false one is worse than giving none. Self-intersection is a property of
+    // the shape, and positive scaling cannot create or remove it.
+    // A square, not a triangle: a triangle's three edges are all mutually
+    // adjacent, so it can never report a crossing and would pass either way.
+    // Collapsed, the square's second and fourth edges lie exactly on top of
+    // each other, which is precisely what the collinear-overlap rule catches.
+    const core::ShapeMetrics m =
+        core::measure(polygon({{0.0, 0.0}, {10.0, 0.0}, {10.0, 10.0}, {0.0, 10.0}}, true),
+                      core::PixelSize{0.0, 5e-7});
+    REQUIRE_FALSE(m.selfIntersecting);
+    REQUIRE(m.area.has_value());
+    REQUIRE(*m.area == 0.0);
 }
