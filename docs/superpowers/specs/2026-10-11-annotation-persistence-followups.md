@@ -885,6 +885,13 @@ remain open.
   `AnnotationModel`'s signals — an undone create has to vanish from the screen
   without the widget having done anything, so undo/redo forced the connection
   ahead of the panels.
+  **Item 8 closed 2026-10-14** by sub-project F, commit `177f7f0`. `MainWindow`
+  owns the model and injects it into `ViewportWidget` by constructor reference;
+  `ViewportWidget::annotationModel()` is gone, so nothing can reach application
+  state through a presentation widget any more. The member is declared ahead of
+  the persistence service and the undo stack deliberately: reverse-declaration
+  destruction then kills everything holding an `AnnotationModel&` before the
+  model itself. See `docs/superpowers/specs/2026-10-14-annotation-panels-design.md`.
 - **Sub-project E2** — advisory file locking (FR-ANN-32). Two instances editing
   one slide's annotations currently have a last-writer-wins collision.
 - **Sub-project E3** — write-ahead log and incremental save, and with it

@@ -367,7 +367,7 @@ branch introduced found inside the installed `.exe` — because a running viewer
 turns `cmake --install` into a silent no-op that still exits 0.
 
 **Passed:** V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V14, V15, V16,
-V17, V18, V19 (two of its three call sites), V22.
+V17, V18, V19 (two of its three call sites), V22, V24.
 
 Three results are worth reading in full:
 
@@ -407,6 +407,7 @@ exists because a reviewer traced a path no test in this repo can reach.
 | V21 | Drag an annotation with both docks open on a slide carrying many annotations. The viewport updates the model per mouse-move, so the panels used to rebuild per frame; they now skip work while hidden, but a visible dock still rebuilds. Watch for lag |
 | V22 | On a slide whose annotation file fails to parse (the read-only state), confirm Delete **from the list panel** and a properties edit are both refused with the status-bar message, not applied silently. The viewport's own Delete already refused; the panels are new paths to the same operation |
 | V23 | Invoke Undo from the Edit **menu** (not Ctrl+Z) while a properties field holds an uncommitted edit. Whether the edit is saved or discarded depends on whether opening a menu sends focus-out; both outcomes are safe but they look different, so note which you see |
+| V24 | On a read-only slide, select an annotation and confirm the properties fields are **disabled** while something is selected — not merely blank. The empty state greys the same six fields, so a reading taken with nothing selected proves nothing |
 
 **Regression surface from section 1.** The ownership move rewrites the viewport
 constructor and `~MainWindow`'s teardown, so group V ends by re-running the

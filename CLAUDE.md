@@ -14,7 +14,9 @@ Annotation persistence is **in regular use and its documented checks are covered
 
 `documents/` holds the original design, much of which is still ahead of the code. Treat it as the plan, not a description of what is there; `documents/implementation-stages.md` tracks which stages have landed. Where a design document and the code disagree, the code is the truth — several design details turned out to be unimplementable as written.
 
-**Not built yet:** vertex editing and the ellipse, circle, point, arrow and text shapes, annotation panels (list, properties, layers), import/export, advisory file locking, cases, bookmarks, split view, remote slides, the plugin system, and Python scripting.
+**Not built yet:** vertex editing and the ellipse, circle, point, arrow and text shapes, the annotation layers panel, import/export, advisory file locking, cases, bookmarks, split view, remote slides, the plugin system, and Python scripting.
+
+The annotation **list** and **properties** panels landed 2026-10-14 (sub-project F), together with the move of `AnnotationModel` out of `ViewportWidget` into `MainWindow`. Nineteen manual checks were run against that build — see the group V results in `docs/superpowers/specs/2026-10-14-annotation-panels-design.md`, which records what was observed rather than what was intended.
 
 ## Design Documents
 
