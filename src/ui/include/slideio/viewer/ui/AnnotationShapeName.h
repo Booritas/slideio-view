@@ -18,4 +18,11 @@ namespace slideio::viewer::ui
 /// labelled as nothing at all.
 QString shapeName(const core::Annotation& annotation);
 
+/// The user's word for a geometry type, for callers that have an
+/// AnnotationType rather than a whole annotation. Shares its strings with
+/// shapeName() so the two cannot diverge, and returns an empty string for an
+/// unhandled type rather than a plausible-looking fallback -- a blank Type
+/// column is visibly wrong, where "Shape" reads as intentional.
+QString shapeTypeName(core::AnnotationType type);
+
 } // namespace slideio::viewer::ui

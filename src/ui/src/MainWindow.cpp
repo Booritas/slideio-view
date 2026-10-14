@@ -494,6 +494,11 @@ struct MainWindow::Impl
         }
 
         QObject::connect(closeAction, &QAction::triggered, owner, [this]() {
+            // Before closeSlide(): a field typed into but not yet committed
+            // would otherwise be wiped when the model empties.
+            if (annotationPropertiesPanel != nullptr) {
+                annotationPropertiesPanel->commitPendingEdit();
+            }
             viewportWidget->closeSlide();
             closeAction->setEnabled(false);
             // Reset the tool here rather than on the slideClosed signal, which
@@ -1613,6 +1618,14 @@ MainWindow::MainWindow(QWidget* parent)
 
     m_impl->annotationListToggleAction = m_impl->annotationListPanel->toggleViewAction();
     m_impl->annotationListToggleAction->setText("Annotation &List");
+    // QDockWidget::changeEvent copies every window-title change onto its
+    // toggleViewAction. The list panel retitles itself ("Annotations (N)") on
+    // each rebuild, which would replace this text and its Alt+L mnemonic, so
+    // it is put back. Not redundant -- do not remove.
+    connect(m_impl->annotationListPanel, &QDockWidget::windowTitleChanged, this,
+            [this](const QString&) {
+                m_impl->annotationListToggleAction->setText(tr("Annotation &List"));
+            });
     m_impl->annotationListToggleAction->setShortcut(QKeySequence("Ctrl+Shift+L"));
     m_impl->annotationListToggleAction->setStatusTip("Toggle the annotation list panel");
     m_impl->annotationPropertiesToggleAction = m_impl->annotationPropertiesPanel->toggleViewAction();
@@ -1640,6 +1653,8 @@ MainWindow::MainWindow(QWidget* parent)
                 if (m_impl->annotationPersistence != nullptr && !m_impl->annotationPersistence->isActive()) {
                     m_impl->statusBarManager->showTransientMessage(
                         tr("These annotations are open read-only and cannot be changed."));
+                    // The fields still show what was typed; snap them back to the stored values.
+                    m_impl->annotationPropertiesPanel->revertToModel();
                     return;
                 }
                 if (m_impl->undoStack == nullptr) {
@@ -1743,6 +1758,10 @@ MainWindow::~MainWindow()
 
 void MainWindow::openSlide(const std::string& path, const std::string& driverId)
 {
+    // First, ahead of the closeSlide() this leads to: see the Close action.
+    if (m_impl->annotationPropertiesPanel != nullptr) {
+        m_impl->annotationPropertiesPanel->commitPendingEdit();
+    }
     // Don't clear the scene/aux panels here — the slideOpened handler will
     // rebuild them when (and only when) the file actually changes. Clearing
     // eagerly would flash empty panels for the duration of the load.
@@ -2065,6 +2084,10 @@ void MainWindow::dropEvent(QDropEvent* event)
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
+    // First: the commit must reach the model before closeSlide() flushes it.
+    if (m_impl->annotationPropertiesPanel != nullptr) {
+        m_impl->annotationPropertiesPanel->commitPendingEdit();
+    }
     // Quitting with a slide open would otherwise lose up to a full autosave
     // debounce of work: ~ViewportWidget does not close the slide, so nothing
     // flushes. closeSlide() flushes before it empties the model, by design.

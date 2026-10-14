@@ -6,6 +6,7 @@
 #include <string>
 
 class QKeyEvent;
+class QShowEvent;
 
 namespace slideio::viewer::app
 {
@@ -52,10 +53,12 @@ signals:
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 
 private:
     /// Rebuilds every row from the model. Called on every model signal except
     /// selectionChanged.
+    /// A no-op while the dock is hidden; showEvent() catches up.
     void rebuild();
     /// Moves the highlight to `id` without emitting, so it is not mistaken for
     /// the user clicking a row.

@@ -7,6 +7,8 @@
 #include <memory>
 #include <string>
 
+class QShowEvent;
+
 namespace slideio::viewer::app
 {
 class AnnotationModel;
@@ -40,6 +42,16 @@ public:
     /// Non-owning; null is a legitimate state, as for the list panel.
     void setAnnotationModel(app::AnnotationModel* model);
 
+    /// Commits whatever is typed in a field but not yet committed. Call it
+    /// before anything that empties the model without moving the selection --
+    /// closing the slide, opening another, quitting -- because choosing a menu
+    /// item does not move focus, so no focus-out will have done it.
+    void commitPendingEdit();
+
+    /// Rewrites every field from the model. For a refused edit: the fields
+    /// still show what was typed, and this snaps them back to what is stored.
+    void revertToModel();
+
 signals:
     /// A field was committed and actually changed something. MainWindow applies
     /// it: it owns the undo stack and the read-only guard, and keeping both in
@@ -50,9 +62,11 @@ signals:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 
 private:
-    /// `force` writes into fields that have focus too; it is for a change of
+    /// A no-op while the dock is hidden, apart from forgetting shownId;
+    /// showEvent() catches up. `force` writes into fields that have focus too; it is for a change of
     /// annotation, where leaving the previous one's text in a focused field
     /// would let a later commit write it onto the new annotation.
     void repopulate(bool force = false);

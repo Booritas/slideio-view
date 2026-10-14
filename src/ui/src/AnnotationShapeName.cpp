@@ -10,20 +10,33 @@ namespace slideio::viewer::ui
 namespace
 {
 
+QString rectangleName()
+{
+    return QCoreApplication::translate("AnnotationShapeName", "Rectangle");
+}
+
+QString polygonName()
+{
+    return QCoreApplication::translate("AnnotationShapeName", "Polygon");
+}
+
+QString freehandLineName()
+{
+    return QCoreApplication::translate("AnnotationShapeName", "Freehand Line");
+}
+
 struct ShapeNameVisitor
 {
     QString operator()(const core::RectangleGeometry&) const
     {
-        return QCoreApplication::translate("AnnotationShapeName", "Rectangle");
+        return rectangleName();
     }
 
     QString operator()(const core::PolygonGeometry& polygon) const
     {
         // One geometry, two shapes: the flag is the only difference, and the
         // user's word for them is not the same.
-        return polygon.closed
-                   ? QCoreApplication::translate("AnnotationShapeName", "Polygon")
-                   : QCoreApplication::translate("AnnotationShapeName", "Freehand Line");
+        return polygon.closed ? polygonName() : freehandLineName();
     }
 };
 
@@ -32,6 +45,19 @@ struct ShapeNameVisitor
 QString shapeName(const core::Annotation& annotation)
 {
     return std::visit(ShapeNameVisitor{}, annotation.geometry());
+}
+
+QString shapeTypeName(core::AnnotationType type)
+{
+    switch (type) {
+    case core::AnnotationType::Rectangle:
+        return rectangleName();
+    case core::AnnotationType::Polygon:
+        return polygonName();
+    case core::AnnotationType::Polyline:
+        return freehandLineName();
+    }
+    return QString();
 }
 
 } // namespace slideio::viewer::ui

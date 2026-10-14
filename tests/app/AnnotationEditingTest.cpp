@@ -159,3 +159,49 @@ TEST_CASE("setPropertiesWithUndo refuses an id the model does not hold",
                                              core::AnnotationProperties{}, "Rename annotation"));
     REQUIRE_FALSE(stack.canUndo());
 }
+
+TEST_CASE("setPropertiesWithUndo detects a change to each field individually", "[app][AnnotationEditing]")
+{
+    // sameProperties compares six fields by hand, and AnnotationProperties has no
+    // operator== to keep it honest. Drop one comparison and every other test here
+    // stays green while an edit to that field is silently refused: the swatch
+    // updates, nothing repaints, nothing is written, and the edit is gone on
+    // reopen. So each field is walked on its own, from a non-default baseline.
+    app::AnnotationModel model;
+    app::UndoRedoStack stack;
+    const std::string id = addRect(model, 0.0);
+
+    core::AnnotationProperties baseline;
+    baseline.label = "Baseline label";
+    baseline.classification = "Baseline class";
+    baseline.notes = "Baseline notes";
+    baseline.color = core::Color{200, 150, 100, 200};
+    baseline.lineWidth = 3.0f;
+    baseline.fillOpacity = 0.6f;
+    REQUIRE(app::setPropertiesWithUndo(model, stack, id, baseline, "Set baseline"));
+
+    const auto changeOne = [&](const char* what, auto mutate, auto check) {
+        INFO(what);
+        core::AnnotationProperties changed = baseline;
+        mutate(changed);
+        REQUIRE(app::setPropertiesWithUndo(model, stack, id, changed, "Edit"));
+        check(model.find(id)->properties());
+        // Back to the baseline for the next field; this is itself a real edit.
+        REQUIRE(app::setPropertiesWithUndo(model, stack, id, baseline, "Restore"));
+    };
+
+    changeOne("label", [](auto& p) { p.label = "New label"; },
+              [](const auto& p) { REQUIRE(p.label == "New label"); });
+    changeOne("classification", [](auto& p) { p.classification = "New class"; },
+              [](const auto& p) { REQUIRE(p.classification == "New class"); });
+    changeOne("notes", [](auto& p) { p.notes = "New notes"; },
+              [](const auto& p) { REQUIRE(p.notes == "New notes"); });
+    changeOne("color.r", [](auto& p) { p.color.r = 10; }, [](const auto& p) { REQUIRE(p.color.r == 10); });
+    changeOne("color.g", [](auto& p) { p.color.g = 20; }, [](const auto& p) { REQUIRE(p.color.g == 20); });
+    changeOne("color.b", [](auto& p) { p.color.b = 30; }, [](const auto& p) { REQUIRE(p.color.b == 30); });
+    changeOne("color.a", [](auto& p) { p.color.a = 40; }, [](const auto& p) { REQUIRE(p.color.a == 40); });
+    changeOne("lineWidth", [](auto& p) { p.lineWidth = 4.0f; },
+              [](const auto& p) { REQUIRE(p.lineWidth == 4.0f); });
+    changeOne("fillOpacity", [](auto& p) { p.fillOpacity = 0.25f; },
+              [](const auto& p) { REQUIRE(p.fillOpacity == 0.25f); });
+}

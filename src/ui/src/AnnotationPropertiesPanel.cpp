@@ -13,6 +13,7 @@
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QShowEvent>
 #include <QSlider>
 #include <QSpinBox>
 #include <QWidget>
@@ -207,8 +208,39 @@ void AnnotationPropertiesPanel::updateColorSwatch()
     m_impl->colorButton->setText(shown.name().toUpper());
 }
 
+void AnnotationPropertiesPanel::showEvent(QShowEvent* event)
+{
+    QDockWidget::showEvent(event);
+    // repopulate() does nothing while hidden. Forced: nothing here is shown
+    // yet, so there is no caret to protect and no earlier annotation's text to
+    // keep out of a later commit.
+    repopulate(true);
+}
+
+void AnnotationPropertiesPanel::commitPendingEdit()
+{
+    commit();
+}
+
+void AnnotationPropertiesPanel::revertToModel()
+{
+    repopulate(true);
+}
+
 void AnnotationPropertiesPanel::repopulate(bool force)
 {
+    // Hidden docks skip the work: a move-drag emits annotationChanged per
+    // mouse-move, and this does a style-sheet parse and four setters each time.
+    // shownId is still cleared, though. The widgets are frozen while hidden, so
+    // a shownId left pointing at the last annotation would let a commit (the
+    // selectionChanged handler runs one first) write that annotation's stale
+    // fields back over whatever the model holds now. Empty makes commit() a
+    // no-op, and showEvent() sets it again from the model.
+    if (!isVisible()) {
+        m_impl->shownId.clear();
+        return;
+    }
+
     const core::Annotation* annotation =
         m_impl->model == nullptr ? nullptr : m_impl->model->find(m_impl->model->selectedId());
 

@@ -8,6 +8,8 @@
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QScrollBar>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -27,6 +29,11 @@ struct AnnotationListPanel::Impl
     QLineEdit* filter = nullptr;
     QComboBox* sort = nullptr;
     QTreeWidget* tree = nullptr;
+
+    /// The id applySelection last highlighted. The list scrolls to the selected
+    /// row only when this changes, so a model change that leaves the selection
+    /// alone does not yank the list back from wherever the user scrolled it.
+    std::string lastScrolledId;
 };
 
 AnnotationListPanel::AnnotationListPanel(QWidget* parent)
@@ -111,9 +118,29 @@ void AnnotationListPanel::setAnnotationModel(app::AnnotationModel* model)
     rebuild();
 }
 
+void AnnotationListPanel::showEvent(QShowEvent* event)
+{
+    QDockWidget::showEvent(event);
+    // rebuild() does nothing while hidden, so whatever changed in the model
+    // since the dock was last visible is applied now. The scroll memory is
+    // dropped so the selected row is brought into view on opening.
+    m_impl->lastScrolledId.clear();
+    rebuild();
+}
+
 void AnnotationListPanel::rebuild()
 {
+    // Hidden docks skip the work: a drag in the viewport emits annotationChanged
+    // per mouse-move, and rebuilding (clear, N items, a sort) for each would be
+    // paid by a panel nobody can see. showEvent() catches up. The title goes
+    // unrefreshed too, which costs nothing -- it is not visible either.
+    if (!isVisible()) {
+        return;
+    }
+
     const QSignalBlocker blocker(m_impl->tree);
+    // clear() resets the scroll position; kept so a rebuild does not move the list.
+    const int scrollValue = m_impl->tree->verticalScrollBar()->value();
     m_impl->tree->clear();
 
     if (m_impl->model == nullptr) {
@@ -122,20 +149,7 @@ void AnnotationListPanel::rebuild()
     }
 
     const auto sortKey = static_cast<AnnotationSortKey>(m_impl->sort->currentData().toInt());
-    const auto typeName = [this](core::AnnotationType type) {
-        // shapeName takes an annotation because the polygon/polyline split
-        // lives in the geometry; a bare type still maps one-to-one onto the
-        // three names, so a representative is enough here.
-        switch (type) {
-        case core::AnnotationType::Rectangle:
-            return tr("Rectangle").toStdString();
-        case core::AnnotationType::Polygon:
-            return tr("Polygon").toStdString();
-        case core::AnnotationType::Polyline:
-            return tr("Freehand Line").toStdString();
-        }
-        return tr("Shape").toStdString();
-    };
+    const auto typeName = [](core::AnnotationType type) { return shapeTypeName(type).toStdString(); };
 
     const std::vector<core::Annotation>& annotations = m_impl->model->annotations();
     const auto rows = annotationRows(annotations, m_impl->filter->text().toStdString(), sortKey,
@@ -149,8 +163,12 @@ void AnnotationListPanel::rebuild()
         item->setData(0, kIdRole, QString::fromStdString(row.id));
     }
 
+    // Deliberately untranslated: annotationDockTitle() must stay Qt-free so it
+    // can be tested, which leaves it no way to call tr(). Translating the title
+    // would mean moving the formatting into this panel.
     setWindowTitle(QString::fromStdString(annotationDockTitle(annotations.size(), rows.size())));
     applySelection(m_impl->model->selectedId());
+    m_impl->tree->verticalScrollBar()->setValue(scrollValue);
 }
 
 void AnnotationListPanel::applySelection(const std::string& id)
@@ -162,14 +180,19 @@ void AnnotationListPanel::applySelection(const std::string& id)
     const QSignalBlocker blocker(m_impl->tree);
     m_impl->tree->clearSelection();
     if (id.empty()) {
+        m_impl->lastScrolledId.clear();
         return;
     }
+    const bool selectionMoved = (id != m_impl->lastScrolledId);
+    m_impl->lastScrolledId = id;
     const QString target = QString::fromStdString(id);
     for (int i = 0; i < m_impl->tree->topLevelItemCount(); ++i) {
         QTreeWidgetItem* item = m_impl->tree->topLevelItem(i);
         if (item->data(0, kIdRole).toString() == target) {
             item->setSelected(true);
-            m_impl->tree->scrollToItem(item);
+            if (selectionMoved) {
+                m_impl->tree->scrollToItem(item);
+            }
             return;
         }
     }
