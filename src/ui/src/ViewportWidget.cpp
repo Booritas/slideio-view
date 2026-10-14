@@ -4254,13 +4254,18 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
             // original position; Ctrl+Z cannot serve instead, because a
             // cancelled move is never recorded as a step.
             //
-            // Only if it actually moved: setGeometry restamps modifiedAt and
-            // marks the slide dirty, so restoring a shape that never left its
-            // place would rewrite the file and backdate nothing but the truth
-            // about when the mark was last touched.
+            // Only if it actually moved: a shape that never left its place
+            // needs nothing put back, and touching the model would mark the
+            // slide dirty for an edit that did not happen.
+            //
+            // restore(), not setGeometry(): the whole annotation goes back,
+            // metadata included. setGeometry restamps modifiedAt, which would
+            // leave the slide's file saying the mark was last touched at the
+            // moment of a gesture whose entire purpose is to change nothing --
+            // and the autosave that follows would write exactly that. The undo
+            // path carries whole before/after states for the same reason.
             if (m_impl->moveThresholdCrossed && m_impl->moveOriginal.has_value()) {
-                m_impl->annotations->setGeometry(m_impl->movingId,
-                                                 m_impl->moveOriginal->geometry());
+                m_impl->annotations->restore(*m_impl->moveOriginal);
             }
             m_impl->movingId.clear();
             m_impl->dragOwner = DragOwner::None;

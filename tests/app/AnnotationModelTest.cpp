@@ -23,6 +23,19 @@ std::string addRect(app::AnnotationModel& model, double x0, double y0, double x1
     return model.add(rect(x0, y0, x1, y1));
 }
 
+/// A 10x10 annotation at `x0` carrying `stamp` as both of its timestamps, built
+/// through the restoring constructor so the metadata is exactly as given.
+core::Annotation annotationStamped(std::string id, double x0,
+                                   std::chrono::system_clock::time_point stamp)
+{
+    core::AnnotationMetadata metadata;
+    metadata.author = "tester";
+    metadata.createdAt = stamp;
+    metadata.modifiedAt = stamp;
+    return core::Annotation{std::move(id), rect(x0, 0.0, x0 + 10.0, 10.0),
+                            core::AnnotationProperties{}, metadata};
+}
+
 } // namespace
 
 TEST_CASE("add stores an annotation and returns a non-empty id", "[app][AnnotationModel]")
@@ -518,4 +531,77 @@ TEST_CASE("the empty id still clears the selection", "[app][AnnotationModel]")
     model.setSelected(std::string{});
 
     REQUIRE(model.selectedId().empty());
+}
+
+TEST_CASE("restore puts an annotation's metadata back, not only its geometry",
+          "[app][AnnotationModel]")
+{
+    // The defect this pins: a cancelled move used to be undone with
+    // setGeometry(), which restamps modifiedAt. The shape came back but the
+    // record then said the mark was last touched at the moment of a gesture
+    // that deliberately changed nothing, and autosave wrote that to disk.
+    const auto pickedUpAt = std::chrono::system_clock::time_point{} + std::chrono::seconds(500);
+    app::AnnotationModel model;
+    const core::Annotation original = annotationStamped("a", 0.0, pickedUpAt);
+    model.insert(original);
+
+    // The drag's live preview, which is what moves the timestamp.
+    REQUIRE(model.setGeometry("a", rect(40.0, 0.0, 50.0, 10.0)));
+    REQUIRE(model.find("a")->metadata().modifiedAt != pickedUpAt);
+
+    REQUIRE(model.restore(original));
+
+    const core::Annotation* restored = model.find("a");
+    REQUIRE(restored != nullptr);
+    REQUIRE(restored->metadata().modifiedAt == pickedUpAt);
+    REQUIRE(restored->metadata().createdAt == pickedUpAt);
+    REQUIRE(core::boundingBox(restored->geometry()).x == 0.0);
+}
+
+TEST_CASE("restore leaves the annotation's position in the model unchanged",
+          "[app][AnnotationModel]")
+{
+    // Paint order and hit-test order both follow this vector, so a restore that
+    // re-appended would put the shape on top of everything drawn after it.
+    const auto stamp = std::chrono::system_clock::time_point{} + std::chrono::seconds(500);
+    app::AnnotationModel model;
+    model.insert(annotationStamped("a", 0.0, stamp));
+    model.insert(annotationStamped("b", 20.0, stamp));
+    model.insert(annotationStamped("c", 40.0, stamp));
+
+    REQUIRE(model.restore(annotationStamped("a", 5.0, stamp)));
+
+    REQUIRE(model.indexOf("a") == 0);
+    REQUIRE(model.annotations().size() == 3);
+}
+
+TEST_CASE("restore refuses an id the model does not hold", "[app][AnnotationModel]")
+{
+    const auto stamp = std::chrono::system_clock::time_point{} + std::chrono::seconds(500);
+    app::AnnotationModel model;
+    model.insert(annotationStamped("a", 0.0, stamp));
+    std::vector<std::string> changed;
+    QObject::connect(&model, &app::AnnotationModel::annotationChanged,
+                     [&changed](const std::string& id) { changed.push_back(id); });
+
+    REQUIRE_FALSE(model.restore(annotationStamped("ghost", 0.0, stamp)));
+
+    REQUIRE(model.annotations().size() == 1);
+    REQUIRE(changed.empty());
+}
+
+TEST_CASE("restore emits annotationChanged so the viewport repaints",
+          "[app][AnnotationModel]")
+{
+    const auto stamp = std::chrono::system_clock::time_point{} + std::chrono::seconds(500);
+    app::AnnotationModel model;
+    model.insert(annotationStamped("a", 0.0, stamp));
+    std::vector<std::string> changed;
+    QObject::connect(&model, &app::AnnotationModel::annotationChanged,
+                     [&changed](const std::string& id) { changed.push_back(id); });
+
+    REQUIRE(model.restore(annotationStamped("a", 5.0, stamp)));
+
+    REQUIRE(changed.size() == 1);
+    REQUIRE(changed.front() == "a");
 }

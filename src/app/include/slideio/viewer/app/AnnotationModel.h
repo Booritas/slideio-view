@@ -72,6 +72,19 @@ public:
     /// False when `id` is unknown.
     bool setGeometry(const std::string& id, core::AnnotationGeometry geometry);
 
+    /// Puts `annotation` back under the id it already carries, metadata and
+    /// all, leaving its position in the vector unchanged. False when that id is
+    /// not in the model, in which case nothing is stored and nothing emitted.
+    ///
+    /// setGeometry() is the wrong tool for putting a previous state back: it
+    /// restamps modifiedAt, so reverting an edit would leave the record saying
+    /// the mark was last touched at the moment of the gesture that put it back
+    /// -- and autosave then writes that to the slide's file. Cancelling a move
+    /// with Escape is the case that needs this; the undo stack gets the same
+    /// effect from AnnotationEditCommand, which carries whole before/after
+    /// states for the same reason.
+    bool restore(core::Annotation annotation);
+
     [[nodiscard]] const std::vector<core::Annotation>& annotations() const;
 
     /// Null when `id` is unknown. The pointer is invalidated by any mutation.

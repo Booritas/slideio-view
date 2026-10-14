@@ -7,8 +7,10 @@ fixed in both halves (status-bar indicator, and dimmed disabled menu text app-wi
 Item 18 is fixed, 2026-10-13, widened to cover save failures and the mismatch
 resolution; item 0's older check 3 is covered as a side effect. P11 and older
 checks 1, 2, 4, 5 and 6 were verified by the project owner on 2026-10-13.
-**Item 0 was closed on 2026-10-12/13; group U (undo/redo) reopens it as the only
-unrun checks.** It also carries a
+**Item 0 was closed on 2026-10-12/13; group U (undo/redo) reopened it as the only
+unrun checks. Group U was run 2026-10-14 against `main` @ `9ca86f3`: 18 of 19
+pass, U9 alone not run, and the run turned up one new defect — Escape-cancelling
+a move restamps `modifiedAt`. Both sit in the group U results table in item 0.** It also carries a
 correction — earlier drafts said the subsystem had not been run and called
 several checks first-ever observations, which was wrong and was never checked
 with the project owner, who tests this application regularly.
@@ -321,7 +323,9 @@ not cover.
    | multi-scene extra | pass | Separate `.s0`/`.s1` files, correct `sceneIndex`, per-scene dimensions. **The most clinically serious failure on this list does not occur.** |
    | backward-compat (unplanned) | pass | The CZI's `.s0` file held two rectangles written 2026-10-11 by a pre-branch build; the new build read and appended to it without damage. |
 
-   **Group U — undo/redo, added 2026-10-13 with sub-project D. Not yet run.**
+   **Group U — undo/redo, added 2026-10-13 with sub-project D. Run 2026-10-14
+   against `main` @ `9ca86f3`; results in the table below the list. 18 of 19
+   pass, U9 not run.**
    Spec: `2026-10-13-annotation-undo-redo-design.md`. Run on one slide with
    annotations already present. The command and stack logic is unit-tested in
    `app-tests`; everything below is the wiring, which no suite can reach
@@ -413,6 +417,64 @@ not cover.
        *Break:* it holds the moment of the drag's release — the before-state
        was rebuilt by putting the old geometry back on a copy of the moved
        annotation, and `setGeometry` restamps.
+
+   **Group U results — run 2026-10-14**, build installed 08:51:54 from
+   `main` @ `9ca86f3`, binary timestamp verified against the build tree first.
+   Slide: `S1303802-11-HE-DX1.svs` (3 annotations already on disk), with
+   `pJP31mCherry.czi` for the fluorescence half of U14 and for U8's slide
+   switch. Driven from a session with PowerShell + Win32 for mouse and keys and
+   UI Automation for menu text and enabled state, so the menu readings below are
+   the action's actual state, not a reading of pixels. Geometry claims are from
+   the saved JSON, not from the screen.
+
+   | Check | Verdict | Observed |
+   |-------|---------|----------|
+   | U1 | pass | Ctrl+Z removed the polygon **without** an intervening pan or zoom — the documented break did not occur. Ctrl+Y restored it over the same tissue. |
+   | U2 | pass | Delete removed it; Ctrl+Z brought it back **with its selection border**. |
+   | U3 | pass | Every vertex returned bit-identical in the JSON (`3603.847908745247`, …), not approximately. |
+   | U4 | pass | One Ctrl+Z, fully back; the stack held exactly one Move for the drag, no per-frame commands. |
+   | U5 | pass | Run first, on an empty stack. Ctrl+Z removed exactly the last vertex of a 5-vertex trace (counted off a staircase shape) and the trace stayed live; at 2 vertices Enter committed **nothing** and left the trace alive; no committed annotation disappeared. The Undo action was enabled throughout despite the empty stack. |
+   | U6 | pass | Ctrl+Z with the button held did nothing; the polygon stayed at the dragged position and the drag completed into one Move. |
+   | U7 | pass | After an Escape-cancelled move the stack was unchanged (redo branch intact); Ctrl+Z then undid the **previous** operation, not a no-op step. |
+   | U8 | pass | Non-empty stack before the switch; Undo greyed on the other slide and greyed again on return. |
+   | U9 | **not run** | Needs an annotation file staged to mismatch the slide it is loaded against, which is the only route to the read-only state. Both the in-place edit and the additive copy were refused by this session's permission guard on the annotation store. Left for a human. |
+   | U10 | pass | Undone state autosaved, slide reopened from disk, and exactly the undone state loaded — the two undone annotations stayed gone. |
+   | U11 | pass | Menu named every operation (`Undo Draw Polygon`, `Undo Delete Polygon`, `Undo Move Polygon`); status bar showed `Undo: Draw Polygon` / `Redo: Draw Polygon`; mid-trace the item read **`Undo Vertex`**. |
+   | U12 | pass | Focus genuinely stolen mid-drag by another window (foreground handle changed). The move was **recorded**, and after Ctrl+Z the whole file was byte-identical to the pre-check snapshot apart from the document's own save time — no other annotation moved. |
+   | U13 | pass | Ctrl+Z during a held middle-button pan undid the last operation; not a silent no-op. |
+   | U14 | pass | **The worst of the five, and it holds.** Typing `compression` into the Metadata filter then Ctrl+Z undid the *typing* (tree unfiltered, box back to placeholder) and left the undo stack byte-identical. Repeated in a channel's Max box on the fluorescence CZI: `200` reverted to `61`, stack untouched. |
+   | U15 | pass | Three annotations drawn, Color Management toggled, annotations returned, Undo still enabled, Ctrl+Z removed the third. |
+   | U16 | pass | Slide ICC profile set (reopen confirmed in the log, not inferred), annotations returned, Undo still enabled, Ctrl+Z removed the next one. Same again on clearing the profile. |
+   | U17 | pass | A 3px wobble click recorded nothing and left the Undo label unchanged. A 5px wobble **does** record, correctly: its diagonal travel is 7.07px, past the 6px tolerance, so it is a drag by definition. |
+   | U18 | pass | A 12px drag was recorded and the shape followed. A drag that left and returned to its press point recorded **nothing** (one Ctrl+Z went straight past it to the previous step). The same 12px drag moved the shape 381 slide units at 1.3x against 595 at 0.8x — the screen-space threshold buys precision by zooming, as designed. |
+   | U19 | pass | `modifiedAt` noted, moved, autosaved, undone, autosaved: back to the original `2026-10-14T07:06:39Z`, not the drag's release time. |
+
+   **Found during this run — Escape-cancelling a move restamps `modifiedAt`.**
+   Not one of the nineteen; it is U19's defect on a path U19 does not cover.
+   `ViewportWidget.cpp:4261` restores the picked-up geometry with
+   `setGeometry()`, and `core::Annotation::setGeometry` restamps
+   `m_metadata.modifiedAt` — the same mechanism the `moveEdit()` header warns
+   about for the undo path. Observed: geometry returned exactly to
+   `3603.847908745247` while `modifiedAt` went from `07:06:39Z` to `07:15:41Z`
+   and autosave wrote it. So a gesture whose whole purpose is to change nothing
+   rewrites the clinical record's only statement of when the mark was last
+   touched. `moveOriginal` is already a full `core::Annotation`, so the before
+   state is in hand; the fix is to restore it whole, the way the undo path
+   does, rather than restoring geometry alone.
+
+   **Fixed 2026-10-14.** `AnnotationModel::restore()` puts an annotation back
+   under the id it carries, metadata and all, in place — the position in the
+   vector is paint order and hit-test order, so an erase-and-reinsert would
+   change which shape paints on top and which one a click finds. The Escape
+   handler calls it instead of `setGeometry()`. Covered by four tests in
+   `tests/app/AnnotationModelTest.cpp`, the first of which pins the defect by
+   asserting `modifiedAt` survives the round trip; it also asserts that
+   `setGeometry` does restamp, so the test would notice if the mechanism ever
+   changed underneath it. **The widget wiring itself is not covered** — no
+   suite creates a `QApplication` — so the Escape path needs one manual
+   re-check: note a saved annotation's `modifiedAt`, drag it past the
+   threshold, press Escape, let autosave run, and read `modifiedAt` again. It
+   must be unchanged. That re-check had not been run when this was written.
 
    **Not checkable on this platform:** the Redo shortcut fix (duplicate
    registration of Ctrl+Shift+Z) only misbehaves where `QKeySequence::Redo` is

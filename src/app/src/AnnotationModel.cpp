@@ -142,6 +142,26 @@ bool AnnotationModel::setGeometry(const std::string& id, core::AnnotationGeometr
     return true;
 }
 
+bool AnnotationModel::restore(core::Annotation annotation)
+{
+    // Copied before the search: `annotation` is about to be moved from, and the
+    // emit below needs the id afterwards.
+    const std::string targetId = annotation.id();
+
+    const auto it = std::find_if(m_annotations.begin(), m_annotations.end(),
+                                 [&targetId](const core::Annotation& a) { return a.id() == targetId; });
+    if (it == m_annotations.end()) {
+        return false;
+    }
+
+    // Assigned in place rather than erase-and-insert: the position in this
+    // vector is paint order and hit-test order, so moving it would change which
+    // shape paints on top and which one a click finds.
+    *it = std::move(annotation);
+    emit annotationChanged(targetId);
+    return true;
+}
+
 const std::vector<core::Annotation>& AnnotationModel::annotations() const
 {
     return m_annotations;
