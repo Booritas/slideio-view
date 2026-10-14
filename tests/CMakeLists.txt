@@ -31,6 +31,7 @@ add_executable(slideio-viewer-app-tests
     app/AnnotationPersistenceServiceTest.cpp
     app/UndoRedoStackTest.cpp
     app/AnnotationEditCommandTest.cpp
+    app/AnnotationEditingTest.cpp
 )
 
 target_link_libraries(slideio-viewer-app-tests
