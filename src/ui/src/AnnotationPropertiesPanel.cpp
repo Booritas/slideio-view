@@ -179,8 +179,11 @@ void AnnotationPropertiesPanel::setAnnotationModel(app::AnnotationModel* model)
             // before the new selection arrives, and a label typed and then
             // abandoned by clicking another row must not be lost. commit()
             // targets shownId, which is still the previous annotation here.
+            // Read before commit(): a commit that emits re-enters repopulate()
+            // through annotationChanged and moves shownId to the new id.
+            const bool changed = (id != m_impl->shownId);
             commit();
-            repopulate(id != m_impl->shownId);
+            repopulate(changed);
         });
     }
     repopulate(true);
@@ -249,9 +252,11 @@ void AnnotationPropertiesPanel::repopulate(bool force)
         m_impl->notes->setPlainText(QString::fromStdString(properties.notes));
     }
     if (force || !m_impl->lineWidth->hasFocus()) {
-        m_impl->lineWidth->setValue(static_cast<int>(properties.lineWidth));
+        m_impl->lineWidth->setValue(static_cast<int>(properties.lineWidth + 0.5f));
     }
     if (force || !m_impl->fillOpacity->hasFocus()) {
+        // Rounded, not truncated: a stored 0.29f times 100 is 28.999998f, which a cast would show as 28,
+        // and the next commit would then write 0.28 as a genuine edit on every selection.
         m_impl->fillOpacity->setValue(static_cast<int>(properties.fillOpacity * 100.0f + 0.5f));
     }
     m_impl->color = properties.color;

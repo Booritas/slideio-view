@@ -1616,7 +1616,7 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->annotationListToggleAction->setShortcut(QKeySequence("Ctrl+Shift+L"));
     m_impl->annotationListToggleAction->setStatusTip("Toggle the annotation list panel");
     m_impl->annotationPropertiesToggleAction = m_impl->annotationPropertiesPanel->toggleViewAction();
-    m_impl->annotationPropertiesToggleAction->setText("Annotation &Properties");
+    m_impl->annotationPropertiesToggleAction->setText("Annotation Prop&erties");
     m_impl->annotationPropertiesToggleAction->setShortcut(QKeySequence("Ctrl+Shift+E"));
     m_impl->annotationPropertiesToggleAction->setStatusTip("Toggle the annotation properties panel");
     m_impl->createMenus();
