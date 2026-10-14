@@ -44,6 +44,10 @@ struct AnnotationFieldValues
 /// What the Edit menu should call this change: "Rename annotation",
 /// "Reclassify annotation", "Recolour annotation", "Edit annotation notes",
 /// "Restyle annotation", or "Edit annotation" when more than one field moved.
+///
+/// Note: these strings are intentionally not wrapped in tr() because this file
+/// must remain Qt-free to be testable. If .ts files arrive, translating these
+/// strings belongs in the panel implementation, not here.
 [[nodiscard]] std::string propertiesEditDescription(const core::AnnotationProperties& before,
                                                     const core::AnnotationProperties& after);
 

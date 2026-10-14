@@ -23,6 +23,10 @@ std::optional<core::AnnotationProperties> propertiesEdit(
     edited.classification = fields.classification;
     edited.notes = fields.notes;
     edited.color = fields.color;
+    // Clamp lineWidth to 1-5 and fillOpacity to 0-1. NaN inputs are handled
+    // implicitly: std::min(NaN, 5.0f) returns NaN, then std::max(1.0f, NaN)
+    // returns 1.0f, clamping NaN safely to the minimum. This is benign and
+    // prevents the repeated-push problem a raw NaN comparison would cause.
     edited.lineWidth = std::max(1.0f, std::min(fields.lineWidth, 5.0f));
     edited.fillOpacity = std::max(0.0f, std::min(fields.fillOpacity, 1.0f));
 
