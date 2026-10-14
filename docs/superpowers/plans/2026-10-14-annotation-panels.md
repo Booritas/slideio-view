@@ -26,7 +26,7 @@
 Five conditions the spec implies but does not pin with a test. Each has a test added to the task that owns the code.
 
 1. **A degenerate annotation bounding box** — a perfectly horizontal freehand line has zero height, and `fitToRect` would divide by it. Expect: fit on the non-degenerate axis, no NaN, no infinite scale. *(Task 1)*
-2. **Deleting the currently-selected annotation** — `AnnotationModel::remove` clears the selection; undo must not restore the annotation while leaving a selection that names nothing, and redo must not re-select it. Expect: after undo, the annotation is back and the selection is empty. *(Task 2)*
+2. **Deleting the currently-selected annotation** — `AnnotationModel::remove` clears the selection, and `AnnotationEditCommand::apply` re-selects on restore (`AnnotationEditCommand.cpp:74-78`, deliberate: an annotation restored outside the current view has to be findable). Expect: after the delete the selection is empty; after undo the annotation is back *and selected*; after redo it is gone and the selection is empty again. The seam must not disturb that chain. *(Task 2)*
 3. **The `"<Type> N"` fallback while a filter is active** — N must count across all annotations in creation order, not across the filtered rows, or a shape is renumbered by typing in the search box. Expect: filtering to one row shows that shape's original number. *(Task 6)*
 4. **Properties arriving out of range from the model, not the widgets** — a hand-edited file can carry `lineWidth` 0 or a `fillOpacity` of 4.0, and the properties panel round-trips through `propertiesEdit`. Expect: clamped to 1-5 and 0-1, and the clamp itself counts as a change so it is persisted rather than silently re-clamped on every load. *(Task 8)*
 5. **An empty slide** — zero annotations must give an empty list and a title that reads as an empty slide rather than a failure. Expect: `annotationRows` returns empty, `annotationDockTitle(0, 0)` gives `"Annotations (0)"`. *(Task 6)*
@@ -311,11 +311,12 @@ TEST_CASE("undoing a delete puts the annotation back at its original index",
 TEST_CASE("undoing the delete of a selected annotation leaves no selection",
           "[app][AnnotationEditing]")
 {
-    // Review Focus 2. remove() clears the selection when it named the removed
-    // annotation. Undo puts the annotation back, and a selection restored with
-    // it would be a selection the user never made -- while leaving a selection
-    // naming a removed annotation would be a state setSelected refuses to
-    // produce. The annotation comes back; the selection does not.
+    // Review Focus 2. Three states, and the seam must not disturb any of them:
+    // remove() clears the selection when it named the removed annotation;
+    // AnnotationEditCommand::apply re-selects on restore, deliberately, so an
+    // annotation put back outside the current view can be found
+    // (AnnotationEditCommand.cpp:74-78); and redoing the delete clears it again
+    // through the same remove().
     app::AnnotationModel model;
     app::UndoRedoStack stack;
     const std::string id = addRect(model, 0.0);
@@ -327,7 +328,7 @@ TEST_CASE("undoing the delete of a selected annotation leaves no selection",
 
     stack.undo();
     REQUIRE(model.find(id) != nullptr);
-    REQUIRE(model.selectedId().empty());
+    REQUIRE(model.selectedId() == id);
 
     stack.redo();
     REQUIRE(model.find(id) == nullptr);
@@ -519,12 +520,21 @@ bool deleteWithUndo(AnnotationModel& model, UndoRedoStack& stack, const std::str
     // destroy what it names.
     const std::string targetId = id;
 
+    // Built BEFORE the removal, and pushed after. AnnotationEditCommand captures
+    // the annotation's index in its constructor (AnnotationEditCommand.cpp:40,
+    // whose comment says a delete is recorded before the removal), and undo puts
+    // the annotation back at that index. Built after the remove, indexOf would
+    // return kNotFound, insertAt would clamp it to the end, and an undone delete
+    // would silently promote the annotation over everything drawn after it --
+    // changing which shape paints on top and which one a click finds.
+    auto command = AnnotationEditCommand::create(model, targetId, std::move(before), std::nullopt,
+                                                 std::move(description));
+
     if (!model.remove(targetId)) {
         return false;
     }
 
-    stack.push(AnnotationEditCommand::create(model, targetId, std::move(before), std::nullopt,
-                                             std::move(description)));
+    stack.push(std::move(command));
     return true;
 }
 
