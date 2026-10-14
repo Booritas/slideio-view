@@ -1618,10 +1618,21 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->annotationListPanel->setAnnotationModel(m_impl->annotations.get());
 
     connect(m_impl->annotationListPanel, &AnnotationListPanel::annotationActivated, this,
-            [this](const std::string& id) { m_impl->viewportWidget->showAnnotation(id); });
+            [this](const std::string& id) {
+                if (m_impl->viewportWidget != nullptr) {
+                    m_impl->viewportWidget->showAnnotation(id);
+                }
+            });
 
     connect(m_impl->annotationListPanel, &AnnotationListPanel::deleteRequested, this,
             [this](const std::string& id) {
+                // Mirrors ViewportWidget's annotationsEditable(): a slide whose file could not be
+                // parsed is never written to, so a delete here would be silently lost.
+                if (m_impl->annotationPersistence != nullptr && !m_impl->annotationPersistence->isActive()) {
+                    m_impl->statusBarManager->showTransientMessage(
+                        tr("These annotations are open read-only and cannot be changed."));
+                    return;
+                }
                 const core::Annotation* annotation = m_impl->annotations->find(id);
                 if (annotation == nullptr || m_impl->undoStack == nullptr) {
                     return;
