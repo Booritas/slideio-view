@@ -310,9 +310,14 @@ filtering over label and classification but not notes; tie-break stability;
 classification outside the five offered; `propertiesEditDescription` naming
 each single-field case and falling back to the generic wording.
 
-**Build note:** `src/ui/CMakeLists.txt` globs, so the two ui files appear
-automatically. `src/app/CMakeLists.txt` lists sources explicitly — the new app
-`.cpp` must be added by hand or it silently will not build.
+**Build note:** every source and test file is listed explicitly —
+`src/app/CMakeLists.txt`, `src/ui/CMakeLists.txt` and `tests/CMakeLists.txt`
+all enumerate their `.cpp` files. The only glob is `file(GLOB_RECURSE
+_ui_headers ...)` in `src/ui/CMakeLists.txt`, which exists so AUTOMOC finds
+`Q_OBJECT` headers under `include/`; it does not pick up `.cpp` files. Every
+new source and every new test file must be added by hand, and one that is not
+simply does not build — the link error names the missing symbol, not the
+cause.
 
 ### Manual — group V
 
