@@ -1286,9 +1286,14 @@ using AnnotationTypeNames = std::function<std::string(core::AnnotationType)>;
 
 /// The rows to display, filtered and sorted.
 ///
-/// `filterText` is matched case-insensitively as a substring of the label and
-/// the classification, and of nothing else: a row matching on its notes would
-/// show nothing resembling the search text in any visible column.
+/// `filterText` is matched case-insensitively as a substring of the DISPLAYED
+/// label (the "<Type> N" fallback included) and the classification, and of
+/// nothing else. Not notes: a row matching on its notes would show nothing
+/// resembling the search text in any visible column. The displayed label
+/// rather than the stored one, because they differ for an unlabeled
+/// annotation, and matching the stored one would hide a row whose Label column
+/// reads exactly what was typed. Not the Type column either, so a labelled
+/// annotation is not dragged in by its shape's name.
 ///
 /// An annotation with no label displays as "<Type> N", where N is its 1-based
 /// position in `annotations` -- that is, in creation order, across every

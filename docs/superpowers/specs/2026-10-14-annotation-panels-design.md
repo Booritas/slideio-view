@@ -218,9 +218,13 @@ a `QApplication`, which is the whole reason the function exists.
   position in **creation order**, not row order. Forty untitled traces still
   have to be told apart, and the number must stay attached to the same shape
   when the sort changes.
-- Filtering is case-insensitive substring over label and classification
-  **only** — not notes. A notes match would show a row whose every visible
-  column contains nothing resembling the search text.
+- Filtering is case-insensitive substring over the **displayed** label and the
+  classification **only** — not notes. A notes match would show a row whose
+  every visible column contains nothing resembling the search text. The
+  displayed label rather than the stored one, because they differ for an
+  unlabeled annotation: matching `properties.label` would hide a row whose
+  Label column reads exactly what was typed. The Type column stays out of the
+  filter, so a labelled annotation is not found by its shape's name.
 - Every sort breaks ties by creation order, so identically-labeled rows never
   swap between rebuilds.
 - `annotationDockTitle` yields `"Annotations (12)"`, or `"Annotations (3 of
@@ -302,7 +306,8 @@ suite. `AnnotationModel` is a `QObject`, but a `QObject` needs no
 
 `tests/ui/AnnotationListPolicyTest.cpp` — the `"<Type> N"` fallback numbered in
 creation order and staying attached across a sort change; case-insensitive
-filtering over label and classification but not notes; tie-break stability;
+filtering over the displayed label and classification but not notes; tie-break
+stability across all four sort keys;
 `annotationDockTitle` in both forms.
 
 `tests/ui/AnnotationPropertiesEditTest.cpp` — `propertiesEdit` returning
