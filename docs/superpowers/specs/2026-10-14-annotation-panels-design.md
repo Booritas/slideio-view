@@ -367,7 +367,7 @@ branch introduced found inside the installed `.exe` — because a running viewer
 turns `cmake --install` into a silent no-op that still exits 0.
 
 **Passed:** V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V14, V15, V16,
-V18, V19 (two of its three call sites), V22.
+V17, V18, V19 (two of its three call sites), V22.
 
 Three results are worth reading in full:
 
@@ -386,8 +386,8 @@ Three results are worth reading in full:
   disabled and `modifiedAt` equal to `createdAt`. Line width and fill opacity
   round-trip through the widgets without registering as a change.
 
-**Not run:** V17 needs a list longer than the dock to demonstrate; V21 needs a
-slide carrying hundreds of annotations; V20 and V23 were not reached.
+**Not run:** V21 needs a slide carrying hundreds of annotations; V20 and V23 were
+not reached.
 
 **Open UX question, not a defect:** in read-only mode the properties fields stay
 enabled, so a user can type and is then told why the edit was refused. Greying
@@ -400,7 +400,7 @@ exists because a reviewer traced a path no test in this repo can reach.
 
 | # | Check |
 |---|-------|
-| V17 | **Known defect, parked.** Scroll the list away from the selected row, then change the selection from the viewport — the row does not scroll into view. Same on a sort change, and on first opening the dock. One line to fix (`AnnotationListPanel.cpp:171` restores the scrollbar after `applySelection`, overwriting its `scrollToItem`); left for a decision with it on screen |
+| V17 | **Tested 2026-10-14: passes.** Scroll the list away from the selected row, then change the selection from the viewport — the row scrolls into view. A review flagged `AnnotationListPanel.cpp:171`'s scrollbar restore as overwriting `applySelection`'s `scrollToItem`, but that only applies to rebuild paths, and `selectionChanged` deliberately connects to `applySelection` alone rather than to `rebuild`. Two narrow rebuild cases do keep their prior scroll offset instead of following the selection — reopening the dock, and changing the sort — which is defensible behaviour, though the comment at `:125-127` claims otherwise |
 | V18 | The View menu entry still reads "Annotation &List", with Alt+V,L working, after the list has rebuilt many times. Qt's `QDockWidget` overwrites its own toggle action's text whenever the dock title changes, and the dock title carries the annotation count |
 | V19 | Type a label, then File→Close (or open another slide, or quit) **without clicking away first**. The typed label must reach the file. A menu click moves no focus widget, so nothing commits the field unless `commitPendingEdit()` runs |
 | V20 | Hide the properties dock while a field holds an uncommitted edit; confirm the value survives. This depends on Qt delivering focus-out at hide time, which is not guaranteed |

@@ -122,8 +122,14 @@ void AnnotationListPanel::showEvent(QShowEvent* event)
 {
     QDockWidget::showEvent(event);
     // rebuild() does nothing while hidden, so whatever changed in the model
-    // since the dock was last visible is applied now. The scroll memory is
-    // dropped so the selected row is brought into view on opening.
+    // since the dock was last visible is applied now.
+    //
+    // The scroll memory is dropped so a later selection change scrolls rather
+    // than deciding the selection has not moved. It does NOT bring the selected
+    // row into view on opening: rebuild() restores the scroll offset the list
+    // had when it was last visible, which happens after applySelection and
+    // therefore wins. Reopening where the user left it is the behaviour; an
+    // earlier version of this comment claimed the opposite.
     m_impl->lastScrolledId.clear();
     rebuild();
 }
