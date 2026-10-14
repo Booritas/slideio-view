@@ -358,6 +358,41 @@ document says 3 has found the drift, not a defect.
 | V15 | An uncommitted label commits when the selection changes, rather than being discarded |
 | V16 | Switching slides clears both panels; no stale rows |
 
+### Results — run 2026-10-14 against `main` @ `054fc7e`
+
+Driven through UI Automation plus raw `keybd_event`, so the readings are exact
+widget state rather than pixels. The install was verified twice before starting
+— matching timestamps on the build and installed binaries, **and** strings this
+branch introduced found inside the installed `.exe` — because a running viewer
+turns `cmake --install` into a silent no-op that still exits 0.
+
+**Passed:** V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V14, V15, V16,
+V18, V19 (two of its three call sites), V22.
+
+Three results are worth reading in full:
+
+- **V15** — typing a label for one annotation and then clicking a *different*
+  row commits the text to the annotation it was typed for, leaving the other
+  untouched. This is the scenario an earlier draft of the plan would have
+  corrupted, by committing against `selectedId()` after the model had already
+  moved on.
+- **V22** — on a slide opened read-only after a slide-ID mismatch, the list
+  panel's Delete refuses with "These annotations are open read-only and cannot
+  be changed", pushes no undo step, and leaves the annotation in place. A
+  properties edit is refused the same way and the field snaps back. Before this
+  branch's final review, that path deleted the annotation, wrote nothing, and
+  said nothing.
+- **No spurious edit on selection** — selecting an annotation leaves Undo
+  disabled and `modifiedAt` equal to `createdAt`. Line width and fill opacity
+  round-trip through the widgets without registering as a change.
+
+**Not run:** V17 needs a list longer than the dock to demonstrate; V21 needs a
+slide carrying hundreds of annotations; V20 and V23 were not reached.
+
+**Open UX question, not a defect:** in read-only mode the properties fields stay
+enabled, so a user can type and is then told why the edit was refused. Greying
+them out instead is a defensible alternative and should be a deliberate choice.
+
 ### Added during implementation
 
 These came out of code review rather than the original design, and each one
