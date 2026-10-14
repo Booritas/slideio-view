@@ -11,6 +11,7 @@ add_library(slideio-viewer-core STATIC
     src/ColorManagement.cpp
     src/SlideId.cpp
     src/AnnotationGeometry.cpp
+    src/AnnotationMeasurement.cpp
     src/Annotation.cpp
     src/Iso8601.cpp
     src/AnnotationSerialization.cpp
