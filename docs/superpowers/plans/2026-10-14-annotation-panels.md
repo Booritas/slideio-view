@@ -260,9 +260,8 @@ namespace
 
 core::AnnotationGeometry rect(double x0, double y0, double x1, double y1)
 {
-    core::RectangleGeometry geometry;
-    geometry.rect = core::RectF{x0, y0, x1 - x0, y1 - y0};
-    return geometry;
+    // RectangleGeometry stores two corners, not an origin-plus-size rect.
+    return core::RectangleGeometry{core::PointF{x0, y0}, core::PointF{x1, y1}};
 }
 
 /// Adds a 10x10 annotation at `x0` and returns its id.
@@ -1068,9 +1067,8 @@ std::string testTypeName(core::AnnotationType type)
 
 core::AnnotationGeometry rect()
 {
-    core::RectangleGeometry geometry;
-    geometry.rect = core::RectF{0.0, 0.0, 10.0, 10.0};
-    return geometry;
+    // RectangleGeometry stores two corners, not an origin-plus-size rect.
+    return core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{10.0, 10.0}};
 }
 
 core::Annotation annotation(std::string id, std::string label, std::string classification,
