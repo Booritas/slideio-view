@@ -34,8 +34,26 @@ core::AnnotationGeometry rect()
     return geometry;
 }
 
+core::AnnotationGeometry polygonGeometry()
+{
+    core::PolygonGeometry geometry;
+    geometry.vertices = {core::PointF{0.0, 0.0}, core::PointF{10.0, 0.0},
+                         core::PointF{10.0, 10.0}};
+    geometry.closed = true;
+    return geometry;
+}
+
+core::AnnotationGeometry polylineGeometry()
+{
+    core::PolygonGeometry geometry;
+    geometry.vertices = {core::PointF{0.0, 0.0}, core::PointF{10.0, 10.0}};
+    geometry.closed = false;
+    return geometry;
+}
+
 core::Annotation annotation(std::string id, std::string label, std::string classification,
-                            int minutesOld = 0)
+                            int minutesOld = 0,
+                            const core::AnnotationGeometry& geometry = rect())
 {
     core::AnnotationProperties properties;
     properties.label = std::move(label);
@@ -43,10 +61,11 @@ core::Annotation annotation(std::string id, std::string label, std::string class
 
     core::AnnotationMetadata metadata;
     metadata.author = "tester";
-    metadata.createdAt = std::chrono::system_clock::time_point{} + std::chrono::minutes(minutesOld);
+    metadata.createdAt = std::chrono::system_clock::time_point{} +
+                         std::chrono::minutes(minutesOld);
     metadata.modifiedAt = metadata.createdAt;
 
-    return core::Annotation{std::move(id), rect(), std::move(properties), metadata};
+    return core::Annotation{std::move(id), geometry, std::move(properties), metadata};
 }
 
 } // namespace
@@ -150,7 +169,9 @@ TEST_CASE("sorting by label breaks ties by creation order", "[ui][AnnotationList
     for (int i = 0; i < 50; ++i) {
         annotations.push_back(annotation("same_" + std::to_string(i), "TieLabel", ""));
         if (i < 10) {
-            annotations.push_back(annotation("distinct_" + std::to_string(i), "Distinct_" + std::to_string(i), ""));
+            const auto id = "distinct_" + std::to_string(i);
+            const auto label = "Distinct_" + std::to_string(i);
+            annotations.push_back(annotation(id, label, ""));
         }
     }
 
@@ -178,7 +199,9 @@ TEST_CASE("sorting by classification breaks ties by creation order", "[ui][Annot
     for (int i = 0; i < 50; ++i) {
         annotations.push_back(annotation("same_" + std::to_string(i), "", "TieClass"));
         if (i < 10) {
-            annotations.push_back(annotation("distinct_" + std::to_string(i), "Distinct_" + std::to_string(i), ""));
+            const auto id = "distinct_" + std::to_string(i);
+            const auto label = "Distinct_" + std::to_string(i);
+            annotations.push_back(annotation(id, label, ""));
         }
     }
 
@@ -201,19 +224,20 @@ TEST_CASE("sorting by classification breaks ties by creation order", "[ui][Annot
 TEST_CASE("sorting by type breaks ties by creation order", "[ui][AnnotationList]")
 {
     std::vector<core::Annotation> annotations;
-    // Add 50 rectangles (all same type), interleaved with some labeled distinctly
+    // Add 50 rectangles (all same type), interleaved with polylines (different type)
     for (int i = 0; i < 50; ++i) {
-        annotations.push_back(annotation("rect_" + std::to_string(i), "", ""));
+        annotations.push_back(annotation("rect_" + std::to_string(i), "", "",
+                                         0, rect()));
         if (i < 10) {
-            annotations.push_back(annotation("labeled_" + std::to_string(i), "Label_" + std::to_string(i), ""));
+            annotations.push_back(annotation("poly_" + std::to_string(i), "", "",
+                                             0, polylineGeometry()));
         }
     }
 
-    // Use a callback that returns distinct names per type but we're using all rectangles
     const auto rows = ui::annotationRows(annotations, "", ui::AnnotationSortKey::Type,
                                          testTypeName);
 
-    // Find the unlabeled rectangle rows and verify their IDs are in creation order
+    // Find the rectangle rows and verify their IDs are in creation order
     std::vector<std::string> rectIds;
     for (const auto& row : rows) {
         if (row.type == "Rectangle" && row.label.find("Rectangle") == 0) {
@@ -233,7 +257,8 @@ TEST_CASE("sorting by modified time breaks ties by creation order", "[ui][Annota
     for (int i = 0; i < 50; ++i) {
         annotations.push_back(annotation("same_time_" + std::to_string(i), "", "", 100));
         if (i < 10) {
-            annotations.push_back(annotation("diff_time_" + std::to_string(i), "", "", i));
+            const auto id = "diff_time_" + std::to_string(i);
+            annotations.push_back(annotation(id, "", "", i));
         }
     }
 
@@ -280,30 +305,37 @@ TEST_CASE("filtering matches the display label including auto-numbered fallback"
     REQUIRE(rows[0].label == "Rectangle 2");
 }
 
-TEST_CASE("sorting by type with distinct type names is observable", "[ui][AnnotationList]")
+TEST_CASE("type names do not match filters", "[ui][AnnotationList]")
 {
     std::vector<core::Annotation> annotations;
-    // Create annotations of different types to verify Type sort works
-    for (int i = 0; i < 3; ++i) {
-        annotations.push_back(annotation("rect_" + std::to_string(i), "", ""));
-    }
+    // A labelled rectangle - filtering for "rectangle" should NOT match it
+    annotations.push_back(annotation("tumour", "Tumour", ""));
 
-    // Use a callback that returns distinctive names per type
-    const auto distinctNames = [](core::AnnotationType type) {
-        switch (type) {
-        case core::AnnotationType::Rectangle:
-            return std::string{"AAA"};
-        case core::AnnotationType::Polygon:
-            return std::string{"BBB"};
-        case core::AnnotationType::Polyline:
-            return std::string{"CCC"};
-        }
-        return std::string{"ZZZ"};
-    };
+    const auto rows = ui::annotationRows(annotations, "rectangle",
+                                         ui::AnnotationSortKey::CreationOrder, testTypeName);
+    REQUIRE(rows.empty());
+}
 
-    const auto rows = ui::annotationRows(annotations, "", ui::AnnotationSortKey::Type, distinctNames);
-    // All rectangles should have type "AAA"
-    for (const auto& row : rows) {
-        REQUIRE(row.type == "AAA");
-    }
+TEST_CASE("sorting by type orders rows by type name", "[ui][AnnotationList]")
+{
+    std::vector<core::Annotation> annotations;
+    // Build a mix of types in an order NOT sorted by type name
+    annotations.push_back(annotation("poly1", "Polygon 1", "", 0, polygonGeometry()));
+    annotations.push_back(annotation("rect1", "Rectangle 1", "", 0, rect()));
+    annotations.push_back(annotation("line1", "Freehand 1", "", 0, polylineGeometry()));
+    annotations.push_back(annotation("poly2", "Polygon 2", "", 0, polygonGeometry()));
+    annotations.push_back(annotation("rect2", "Rectangle 2", "", 0, rect()));
+    annotations.push_back(annotation("line2", "Freehand 2", "", 0, polylineGeometry()));
+
+    const auto rows = ui::annotationRows(annotations, "", ui::AnnotationSortKey::Type,
+                                         testTypeName);
+
+    REQUIRE(rows.size() == 6);
+    // Type names should be in order: Freehand Line, Polygon, Rectangle
+    REQUIRE(rows[0].type == "Freehand Line");
+    REQUIRE(rows[1].type == "Freehand Line");
+    REQUIRE(rows[2].type == "Polygon");
+    REQUIRE(rows[3].type == "Polygon");
+    REQUIRE(rows[4].type == "Rectangle");
+    REQUIRE(rows[5].type == "Rectangle");
 }
