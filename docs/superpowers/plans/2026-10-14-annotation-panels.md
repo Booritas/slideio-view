@@ -2208,8 +2208,12 @@ git commit -m "Add AnnotationPropertiesEdit, the properties editor's testable co
 - Modify: `src/ui/src/MainWindow.cpp` (Impl members, View menu, dock creation, wiring, destructor)
 
 **Interfaces:**
-- Consumes: `ui::propertiesEdit`, `ui::propertiesEditDescription`, `ui::kAnnotationClassifications` (Task 8); `app::AnnotationModel`; `app::setPropertiesWithUndo` (Task 2); `app::UndoRedoStack`.
-- Produces: `AnnotationPropertiesPanel::setAnnotationModel(app::AnnotationModel*)`, `setUndoStack(app::UndoRedoStack*)`.
+- Consumes: `ui::propertiesEdit`, `ui::propertiesEditDescription`, `ui::kAnnotationClassifications` (Task 8); `app::AnnotationModel`.
+- Produces: `AnnotationPropertiesPanel::setAnnotationModel(app::AnnotationModel*)`, and the signal `propertiesCommitted(const std::string& id, const core::AnnotationProperties& properties, const std::string& description)`.
+
+**The panel does not apply its own edits.** It emits `propertiesCommitted` and `MainWindow` applies it, behind the same read-only guard the list panel's `deleteRequested` handler uses. The panel therefore needs no undo stack and no persistence service.
+
+The reason is a defect found in the list panel during review: its Delete went straight to `app::deleteWithUndo`, bypassing the `annotationsEditable()` check the viewport's own Delete makes. On a slide whose annotation file failed to parse, the persistence service stays inactive and never writes, so the deletion vanished from the screen, saved nothing, and was lost on reopen — while the same keystroke on the canvas was refused with a message. A properties edit applied directly from this panel has exactly that shape. Routing both through `MainWindow` keeps one place in the codebase that knows whether the open slide is editable.
 
 - [ ] **Step 1: Write the header**
 
@@ -2257,16 +2261,26 @@ public:
     /// Non-owning; null is a legitimate state, as for the list panel.
     void setAnnotationModel(app::AnnotationModel* model);
 
-    /// Non-owning. Without it, edits still apply but are not undoable, so the
-    /// panel refuses to commit rather than produce an edit Ctrl+Z cannot reach.
-    void setUndoStack(app::UndoRedoStack* stack);
+signals:
+    /// A field was committed and actually changed something. MainWindow applies
+    /// it: it owns the undo stack and the read-only guard, and keeping both in
+    /// one place is what stops this panel and the viewport disagreeing about
+    /// whether the open slide may be edited.
+    void propertiesCommitted(const std::string& id, const core::AnnotationProperties& properties,
+                             const std::string& description);
 
 private:
     void repopulate();
     void setFieldsEnabled(bool enabled);
+    void updateColorSwatch();
     /// Builds the field values, asks propertiesEdit whether anything moved, and
-    /// if so routes it through setPropertiesWithUndo.
+    /// if so emits propertiesCommitted. Does not mutate the model.
     void commit();
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
+private:
 
     struct Impl;
     std::unique_ptr<Impl> m_impl;
@@ -2413,24 +2427,39 @@ Still inside the constructor, connect the commit triggers:
 
 ```cpp
     connect(m_impl->label, &QLineEdit::editingFinished, this, [this]() { commit(); });
-    connect(m_impl->classification, &QComboBox::currentTextChanged, this,
-            [this](const QString&) {
-                if (!m_impl->populating) {
-                    commit();
-                }
-            });
+
+    // activated (a deliberate pick from the list) and editingFinished on the
+    // editor (free text, on Enter or focus loss) -- NOT currentTextChanged.
+    // This combo is editable, so currentTextChanged fires per keystroke: typing
+    // "Tumor" would push five undo steps and restamp modifiedAt five times,
+    // filling a 50-step stack from one word.
+    connect(m_impl->classification, qOverload<int>(&QComboBox::activated), this,
+            [this](int) { commit(); });
+    connect(m_impl->classification->lineEdit(), &QLineEdit::editingFinished, this,
+            [this]() { commit(); });
+
     connect(m_impl->lineWidth, qOverload<int>(&QSpinBox::valueChanged), this, [this](int) {
         if (!m_impl->populating) {
             commit();
         }
     });
+
+    // sliderReleased covers a drag; valueChanged covers the keyboard and the
+    // wheel, which never emit sliderReleased at all. Gating valueChanged on
+    // isSliderDown() keeps a drag to one undo step instead of one per pixel.
     connect(m_impl->fillOpacity, &QSlider::sliderReleased, this, [this]() { commit(); });
-    connect(m_impl->notes, &QPlainTextEdit::textChanged, this, [this]() {
-        // Deliberately does not commit: notes commit on focus loss, through the
-        // event filter below. textChanged fires per keystroke.
+    connect(m_impl->fillOpacity, &QSlider::valueChanged, this, [this](int) {
+        if (!m_impl->populating && !m_impl->fillOpacity->isSliderDown()) {
+            commit();
+        }
     });
+
+    // Notes deliberately do not connect textChanged, which fires per keystroke.
+    // They commit on focus loss, through the event filter below.
     m_impl->notes->installEventFilter(this);
 ```
+
+`QComboBox::activated` carries an `int` overload in Qt 6; `lineEdit()` is non-null only while the combo is editable, which it is set to be above — construct it editable before connecting.
 
 The notes field commits on focus loss, through an event filter:
 
@@ -2532,7 +2561,7 @@ void AnnotationPropertiesPanel::repopulate()
 ```cpp
 void AnnotationPropertiesPanel::commit()
 {
-    if (m_impl->populating || m_impl->model == nullptr || m_impl->undoStack == nullptr) {
+    if (m_impl->populating || m_impl->model == nullptr) {
         return;
     }
     const std::string id = m_impl->model->selectedId();
@@ -2556,11 +2585,17 @@ void AnnotationPropertiesPanel::commit()
 
     const std::string description =
         propertiesEditDescription(annotation->properties(), *edited);
-    app::setPropertiesWithUndo(*m_impl->model, *m_impl->undoStack, id, *edited, description);
+
+    // Emitted, not applied. MainWindow owns the read-only guard and the undo
+    // stack, exactly as it does for the list panel's deleteRequested -- one
+    // place in the codebase decides whether the open slide may be edited.
+    emit propertiesCommitted(id, *edited, description);
 }
 ```
 
-`setAnnotationModel` mirrors the list panel's: disconnect the old model, connect `selectionChanged` to a lambda that calls `commit()` **before** `repopulate()` — so a label typed and then abandoned by clicking another annotation is committed rather than discarded — and connect `annotationChanged`, `cleared` and `modelReset` to `repopulate()` directly.
+`setAnnotationModel` mirrors the list panel's: disconnect the old model, connect `selectionChanged` to a lambda that calls `commit()` **before** `repopulate()` — so a label typed and then abandoned by clicking another annotation is committed rather than discarded — and connect `cleared` and `modelReset` to `repopulate()` directly.
+
+**Also connect `annotationAdded` and `annotationRemoved` to `repopulate()`, not just `annotationChanged`.** Undo and redo of a properties edit do not emit `annotationChanged` at all: `AnnotationEditCommand::apply` removes the annotation and re-inserts it, so it emits `annotationRemoved`, `annotationAdded` and `selectionChanged`. A panel listening only to `annotationChanged` would leave stale text in its fields after an undo — the very case the repopulation rule exists for.
 
 ```cpp
     connect(m_impl->model, &app::AnnotationModel::selectionChanged, this,
@@ -2587,10 +2622,29 @@ Mirror Task 7 exactly: an `annotationPropertiesPanel` member and an `annotationP
 
 ```cpp
     m_impl->annotationPropertiesPanel->setAnnotationModel(m_impl->annotations.get());
-    m_impl->annotationPropertiesPanel->setUndoStack(m_impl->undoStack.get());
+
+    connect(m_impl->annotationPropertiesPanel, &AnnotationPropertiesPanel::propertiesCommitted,
+            this,
+            [this](const std::string& id, const core::AnnotationProperties& properties,
+                   const std::string& description) {
+                // Same guard as the list panel's deleteRequested: a slide whose
+                // file could not be parsed is never written to, so an edit here
+                // would be applied on screen and silently lost on reopen.
+                if (m_impl->annotationPersistence != nullptr
+                    && !m_impl->annotationPersistence->isActive()) {
+                    m_impl->statusBarManager->showTransientMessage(
+                        tr("These annotations are open read-only and cannot be changed."));
+                    return;
+                }
+                if (m_impl->undoStack == nullptr) {
+                    return;
+                }
+                app::setPropertiesWithUndo(*m_impl->annotations, *m_impl->undoStack, id, properties,
+                                           description);
+            });
 ```
 
-Add its deletion to `~MainWindow` beside the list panel's.
+Add its deletion to `~MainWindow` beside the list panel's — **after** the `QSettings` save block, for the reason recorded there: `saveState()` serialises the dock layout, and a dock deleted before it is already out of that layout, so its position and visibility would never be restored.
 
 - [ ] **Step 5: Build and run every suite**
 
