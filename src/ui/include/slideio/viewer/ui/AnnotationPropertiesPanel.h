@@ -52,6 +52,19 @@ public:
     /// still show what was typed, and this snaps them back to what is stored.
     void revertToModel();
 
+    /// Whether the open slide's annotations may be changed at all. False for a
+    /// slide whose annotation file could not be parsed, or that the user chose
+    /// to open read-only after a slide-id mismatch: those load but are never
+    /// written to.
+    ///
+    /// The fields are disabled rather than left editable and refused on commit.
+    /// MainWindow still guards the commit -- this is the affordance, not the
+    /// rule -- but a field that cannot be used should not look as though it can.
+    /// The reason is already on the status bar, put there by the same
+    /// annotationsAvailableChanged signal that drives this, so a greyed field is
+    /// explained rather than mysterious.
+    void setEditingAllowed(bool allowed);
+
 signals:
     /// A field was committed and actually changed something. MainWindow applies
     /// it: it owns the undo stack and the read-only guard, and keeping both in

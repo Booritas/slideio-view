@@ -46,6 +46,12 @@ struct AnnotationPropertiesPanel::Impl
     /// True while repopulate() is writing into the widgets, so the signals that
     /// writing emits are not mistaken for the user editing.
     bool populating = false;
+
+    /// False for a slide whose annotations loaded but must never be written —
+    /// an unparseable file, or a slide-id mismatch opened read-only. Starts
+    /// true so a panel built before any slide is open behaves normally; the
+    /// first annotationsAvailableChanged corrects it.
+    bool editingAllowed = true;
 };
 
 AnnotationPropertiesPanel::AnnotationPropertiesPanel(QWidget* parent)
@@ -192,12 +198,30 @@ void AnnotationPropertiesPanel::setAnnotationModel(app::AnnotationModel* model)
 
 void AnnotationPropertiesPanel::setFieldsEnabled(bool enabled)
 {
-    m_impl->label->setEnabled(enabled);
-    m_impl->classification->setEnabled(enabled);
-    m_impl->colorButton->setEnabled(enabled);
-    m_impl->lineWidth->setEnabled(enabled);
-    m_impl->fillOpacity->setEnabled(enabled);
-    m_impl->notes->setEnabled(enabled);
+    // Two conditions, one switch: a field is usable only when an annotation is
+    // selected AND this slide's annotations may be changed at all.
+    const bool usable = enabled && m_impl->editingAllowed;
+    m_impl->label->setEnabled(usable);
+    m_impl->classification->setEnabled(usable);
+    m_impl->colorButton->setEnabled(usable);
+    m_impl->lineWidth->setEnabled(usable);
+    m_impl->fillOpacity->setEnabled(usable);
+    m_impl->notes->setEnabled(usable);
+}
+
+void AnnotationPropertiesPanel::setEditingAllowed(bool allowed)
+{
+    if (m_impl->editingAllowed == allowed) {
+        return;
+    }
+    m_impl->editingAllowed = allowed;
+
+    // Going read-only while a field holds an uncommitted edit: drop it rather
+    // than commit it. MainWindow would refuse the commit anyway, and refusing
+    // puts a transient message on screen for a change the user may have made
+    // several slides ago. repopulate(true) writes the stored values back over
+    // the focused field, which is what force exists for.
+    repopulate(true);
 }
 
 void AnnotationPropertiesPanel::updateColorSwatch()
@@ -304,7 +328,12 @@ void AnnotationPropertiesPanel::repopulate(bool force)
 
 void AnnotationPropertiesPanel::commit()
 {
-    if (m_impl->populating || m_impl->model == nullptr || m_impl->shownId.empty()) {
+    // editingAllowed is checked here as well as on the widgets: the flag can
+    // flip while a field holds focus, and commitPendingEdit() is called from
+    // MainWindow on paths (closeEvent, openSlide) that do not go through a
+    // widget signal at all.
+    if (m_impl->populating || m_impl->model == nullptr || m_impl->shownId.empty()
+        || !m_impl->editingAllowed) {
         return;
     }
     const std::string id = m_impl->shownId;

@@ -635,6 +635,15 @@ struct MainWindow::Impl
                              rectangleToolAction->setEnabled(available);
                              polygonToolAction->setEnabled(available);
                              freehandToolAction->setEnabled(available);
+                             // Same gate for the properties editor's fields. A
+                             // read-only slide still shows its annotations and
+                             // still lets them be selected; what it refuses is
+                             // changing them, and a field that cannot be used
+                             // should not look as though it can. The reason is
+                             // already going to the status bar just below.
+                             if (annotationPropertiesPanel != nullptr) {
+                                 annotationPropertiesPanel->setEditingAllowed(available);
+                             }
                              // Mirror that disabled state somewhere the user can
                              // actually see it. A disabled menu item renders
                              // identically to an enabled one, and the transient
