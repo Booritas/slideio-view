@@ -145,3 +145,63 @@ TEST_CASE("onStackChanged fires on push, undo, redo and clear", "[app][UndoRedoS
 
     REQUIRE(changes == 4);
 }
+
+namespace
+{
+
+/// Pushes another command from inside its own undo(), which is what the
+/// annotation properties panel does indirectly: AnnotationEditCommand::apply
+/// ends with setSelected, that reaches the panel's selectionChanged slot
+/// synchronously, and the slot commits -- all while undo() is still running.
+class ReentrantCommand : public app::ICommand
+{
+public:
+    ReentrantCommand(app::UndoRedoStack& stack, std::vector<std::string>& log)
+        : m_stack(stack)
+        , m_log(log)
+    {
+    }
+
+    void execute() override { m_log.push_back("redo:reentrant"); }
+
+    void undo() override
+    {
+        m_log.push_back("undo:reentrant");
+        if (!m_pushed) {
+            m_pushed = true;
+            m_stack.push(std::make_unique<RecordingCommand>("intruder", m_log));
+        }
+    }
+
+    [[nodiscard]] std::string description() const override { return "reentrant"; }
+
+private:
+    app::UndoRedoStack& m_stack;
+    std::vector<std::string>& m_log;
+    bool m_pushed = false;
+};
+
+} // namespace
+
+TEST_CASE("a push from inside undo cannot corrupt the stack position",
+          "[app][UndoRedoStack]")
+{
+    // undo() runs the command and THEN decrements the index. A push landing in
+    // between sets the index to the new end, and the decrement afterwards lands
+    // on the command that was just undone -- so Ctrl+Z would undo it a second
+    // time, while the pushed command sits in the redo slot having never run.
+    std::vector<std::string> log;
+    app::UndoRedoStack stack;
+    stack.push(cmd("first", log));
+    stack.push(std::make_unique<ReentrantCommand>(stack, log));
+
+    stack.undo();
+
+    // The reentrant command is undone, so the position must now be on "first".
+    REQUIRE(stack.canUndo());
+    REQUIRE(stack.undoDescription() == "first");
+    // And redoing must replay the command that was just undone, not something
+    // that was never executed.
+    REQUIRE(stack.canRedo());
+    REQUIRE(stack.redoDescription() == "reentrant");
+}

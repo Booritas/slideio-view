@@ -310,6 +310,12 @@ void AnnotationPropertiesPanel::updateMeasurements(const core::Annotation& annot
         if (metrics.area.has_value()) {
             m_impl->areaValue->setText(
                 QString::fromStdString(core::formatArea(*metrics.area, units)));
+        } else if (!metrics.selfIntersecting) {
+            // Closed, no area, and NOT because it crosses itself -- a shape with
+            // too few points reaches this. ShapeMetrics exists to say why an
+            // area is absent, and naming a reason that is not the real one is
+            // worse than naming none, so say nothing rather than guess.
+            m_impl->areaValue->clear();
         } else {
             // Said in the row itself, not in a tooltip. These numbers may reach
             // a report, so the reason one is missing has to be as visible as the

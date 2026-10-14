@@ -71,6 +71,10 @@ private:
     /// Index of the command undo() would apply; -1 when there is nothing to undo.
     int m_currentIndex = -1;
     int m_maxDepth;
+    /// True while undo() or redo() is running a command. An edit recorded during
+    /// one is a consequence of it, never a user action, and pushing it would
+    /// move m_currentIndex out from under the step still in progress.
+    bool m_applying = false;
 };
 
 } // namespace slideio::viewer::app

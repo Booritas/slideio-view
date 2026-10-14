@@ -6,6 +6,16 @@
 namespace slideio::viewer::ui
 {
 
+namespace
+{
+/// The zoom range every navigation path must leave the viewport inside. Hoisted
+/// out of zoomToPoint so showRect enforces the same bounds: a view outside this
+/// range is one the rest of the application treats as invalid, and the next
+/// zoom-in would clamp back and visibly jump outward.
+constexpr double kMinScale = 0.001;
+constexpr double kMaxScale = 100.0;
+} // namespace
+
 ViewportController::ViewportController(std::shared_ptr<core::TilePyramid> pyramid,
                                        std::shared_ptr<core::ITileCache> cache,
                                        std::shared_ptr<infra::TileLoadScheduler> scheduler)
@@ -66,8 +76,6 @@ void ViewportController::zoomToPoint(double sx, double sy, double factor)
     double currentScale = m_viewport.scale();
     double newScale = currentScale * factor;
 
-    static constexpr double kMinScale = 0.001;
-    static constexpr double kMaxScale = 100.0;
     newScale = std::max(kMinScale, std::min(kMaxScale, newScale));
 
     m_viewport.zoomToPoint(sx, sy, newScale);
@@ -83,6 +91,12 @@ void ViewportController::fitToSlide()
 void ViewportController::showRect(const core::RectF& target, double marginFraction)
 {
     m_viewport.fitToRect(target, marginFraction);
+    // fitToRect sizes the view to the shape and knows nothing of this
+    // application's zoom limits, so a small annotation would otherwise land
+    // well past kMaxScale -- a 10-pixel rectangle fits at a scale above 100.
+    // The view would then be outside the range every other path enforces, and
+    // the next Zoom In would clamp down and jump the view OUTWARD.
+    m_viewport.setScale(std::max(kMinScale, std::min(kMaxScale, m_viewport.scale())));
     requestVisibleTiles();
 }
 

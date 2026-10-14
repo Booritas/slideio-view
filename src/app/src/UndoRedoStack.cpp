@@ -19,6 +19,17 @@ void UndoRedoStack::push(std::unique_ptr<ICommand> command)
         return;
     }
 
+    // Applying a command can reach code that records an edit: an annotation
+    // command re-selects what it restored, a panel sees the selection change
+    // and commits its fields. That edit is a consequence of the undo, not a
+    // user action, and recording it here would set m_currentIndex to the new
+    // end -- after which undo()'s own decrement lands on the command it just
+    // undid, leaving it undoable twice and the pushed one in the redo slot
+    // having never run.
+    if (m_applying) {
+        return;
+    }
+
     // Everything after the current position is a future this edit supersedes.
     m_commands.erase(m_commands.begin() + (static_cast<std::ptrdiff_t>(m_currentIndex) + 1),
                      m_commands.end());
@@ -44,7 +55,9 @@ void UndoRedoStack::undo()
     if (!canUndo()) {
         return;
     }
+    m_applying = true;
     m_commands[static_cast<std::size_t>(m_currentIndex)]->undo();
+    m_applying = false;
     --m_currentIndex;
     notifyChanged();
 }
@@ -55,7 +68,9 @@ void UndoRedoStack::redo()
         return;
     }
     ++m_currentIndex;
+    m_applying = true;
     m_commands[static_cast<std::size_t>(m_currentIndex)]->execute();
+    m_applying = false;
     notifyChanged();
 }
 
