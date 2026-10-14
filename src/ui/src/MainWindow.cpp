@@ -10,6 +10,7 @@
 #include "slideio/viewer/ui/AboutDialog.h"
 #include "slideio/viewer/ui/AnnotationInteraction.h"
 #include "slideio/viewer/ui/AnnotationListPanel.h"
+#include "slideio/viewer/ui/AnnotationPropertiesPanel.h"
 #include "slideio/viewer/ui/AnnotationShapeName.h"
 #include "slideio/viewer/ui/AnnotationSettings.h"
 #include "slideio/viewer/ui/AppPaths.h"
@@ -140,6 +141,7 @@ struct MainWindow::Impl
     SlidePropertiesPanel* propertiesPanel = nullptr;
     MetadataPanel* metadataPanel = nullptr;
     AnnotationListPanel* annotationListPanel = nullptr;
+    AnnotationPropertiesPanel* annotationPropertiesPanel = nullptr;
     LoadingOverlay* loadingOverlay = nullptr;
 
     // File path of the most recently opened slide. Used to detect intra-slide
@@ -169,6 +171,7 @@ struct MainWindow::Impl
     QAction* propertiesToggleAction = nullptr;
     QAction* metadataToggleAction = nullptr;
     QAction* annotationListToggleAction = nullptr;
+    QAction* annotationPropertiesToggleAction = nullptr;
     QAction* colorManagementAction = nullptr;
     QAction* setDefaultProfileAction = nullptr;
     QAction* clearDefaultProfileAction = nullptr;
@@ -434,6 +437,7 @@ struct MainWindow::Impl
         viewMenu->addAction(propertiesToggleAction);
         viewMenu->addAction(metadataToggleAction);
         viewMenu->addAction(annotationListToggleAction);
+        viewMenu->addAction(annotationPropertiesToggleAction);
         viewMenu->addSeparator();
         viewMenu->addAction(colorManagementAction);
         viewMenu->addSeparator();
@@ -1578,6 +1582,12 @@ MainWindow::MainWindow(QWidget* parent)
     addDockWidget(Qt::RightDockWidgetArea, m_impl->annotationListPanel);
     m_impl->annotationListPanel->hide();
 
+    // Annotation properties dock (hidden by default)
+    m_impl->annotationPropertiesPanel = new AnnotationPropertiesPanel(this);
+    m_impl->annotationPropertiesPanel->setObjectName(QStringLiteral("AnnotationPropertiesPanel"));
+    addDockWidget(Qt::RightDockWidgetArea, m_impl->annotationPropertiesPanel);
+    m_impl->annotationPropertiesPanel->hide();
+
     // Create actions and menus
     m_impl->createActions();
     m_impl->channelMixerToggleAction = m_impl->channelMixerPanel->toggleViewAction();
@@ -1605,6 +1615,10 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->annotationListToggleAction->setText("Annotation &List");
     m_impl->annotationListToggleAction->setShortcut(QKeySequence("Ctrl+Shift+L"));
     m_impl->annotationListToggleAction->setStatusTip("Toggle the annotation list panel");
+    m_impl->annotationPropertiesToggleAction = m_impl->annotationPropertiesPanel->toggleViewAction();
+    m_impl->annotationPropertiesToggleAction->setText("Annotation &Properties");
+    m_impl->annotationPropertiesToggleAction->setShortcut(QKeySequence("Ctrl+Shift+E"));
+    m_impl->annotationPropertiesToggleAction->setStatusTip("Toggle the annotation properties panel");
     m_impl->createMenus();
     m_impl->connectSignals();
 
@@ -1616,6 +1630,23 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->buildAnnotationPersistence();
 
     m_impl->annotationListPanel->setAnnotationModel(m_impl->annotations.get());
+    m_impl->annotationPropertiesPanel->setAnnotationModel(m_impl->annotations.get());
+
+    connect(m_impl->annotationPropertiesPanel, &AnnotationPropertiesPanel::propertiesCommitted, this,
+            [this](const std::string& id, const core::AnnotationProperties& properties,
+                   const std::string& description) {
+                // Same guard as the list panel's deleteRequested: a slide whose file could not be
+                // parsed is never written to, so an edit here would show on screen and be lost.
+                if (m_impl->annotationPersistence != nullptr && !m_impl->annotationPersistence->isActive()) {
+                    m_impl->statusBarManager->showTransientMessage(
+                        tr("These annotations are open read-only and cannot be changed."));
+                    return;
+                }
+                if (m_impl->undoStack == nullptr) {
+                    return;
+                }
+                app::setPropertiesWithUndo(*m_impl->annotations, *m_impl->undoStack, id, properties, description);
+            });
 
     connect(m_impl->annotationListPanel, &AnnotationListPanel::annotationActivated, this,
             [this](const std::string& id) {
@@ -1705,6 +1736,9 @@ MainWindow::~MainWindow()
 
     delete m_impl->annotationListPanel;
     m_impl->annotationListPanel = nullptr;
+
+    delete m_impl->annotationPropertiesPanel;
+    m_impl->annotationPropertiesPanel = nullptr;
 }
 
 void MainWindow::openSlide(const std::string& path, const std::string& driverId)

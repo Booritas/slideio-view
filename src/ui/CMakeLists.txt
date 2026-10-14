@@ -14,6 +14,7 @@ add_library(slideio-viewer-ui STATIC
     src/AnnotationListPolicy.cpp
     src/AnnotationListPanel.cpp
     src/AnnotationPropertiesEdit.cpp
+    src/AnnotationPropertiesPanel.cpp
     src/AnnotationSettings.cpp
     src/AppPaths.cpp
     src/AssociatedImageWindow.cpp
