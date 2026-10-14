@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
+#include <string>
 
 namespace slideio::viewer::core
 {
@@ -23,6 +25,39 @@ bool withinSpan(PointF a, PointF b, PointF c)
 {
     return std::min(a.x, b.x) <= c.x && c.x <= std::max(a.x, b.x)
            && std::min(a.y, b.y) <= c.y && c.y <= std::max(a.y, b.y);
+}
+
+/// `value` rendered with three significant figures and no exponent.
+std::string threeSignificantFigures(double value)
+{
+    const double magnitude = std::abs(value);
+
+    // Zero has no significant figures. Give it the shape a single-digit value
+    // gets, so a column of measurements lines up: "0.00" beside "1.00".
+    int decimals = 2;
+    if (magnitude > 0.0) {
+        // The decimal count must come from the magnitude AFTER rounding, not
+        // before. 0.9996 rounds to 1.000, which is four significant figures;
+        // choosing from the rounded value gives "1.00" instead. The same step
+        // is what lets formatLength promote 999.6 um to "1.00 mm".
+        const int exponent = static_cast<int>(std::floor(std::log10(magnitude)));
+        const double step = std::pow(10.0, exponent - 2);
+        const double rounded = std::round(magnitude / step) * step;
+        const int roundedExponent = static_cast<int>(std::floor(std::log10(rounded)));
+        decimals = std::max(0, 2 - roundedExponent);
+    }
+
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "%.*f", decimals, value);
+    return std::string(buffer);
+}
+
+/// `value` with no decimals at all, for pixel counts.
+std::string wholeNumber(double value)
+{
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "%.0f", value);
+    return std::string(buffer);
 }
 
 /// `shape` with every vertex scaled into physical units.
@@ -145,6 +180,37 @@ ShapeMetrics measureKnown(const AnnotationGeometry& geometry, PixelSize pixelSiz
     }
     metrics.area = std::abs(twiceSigned) / 2.0;
     return metrics;
+}
+
+std::string formatLength(double value, MeasurementUnits units)
+{
+    if (units == MeasurementUnits::Pixels) {
+        return wholeNumber(value) + " px";
+    }
+
+    const std::string asMicrons = threeSignificantFigures(value * 1e6);
+    // Re-read the ROUNDED text, not the raw value: 999.6 um rounds to "1000",
+    // which belongs in millimetres. Testing the raw value instead would print
+    // "1000 um" -- four significant figures in the smaller unit.
+    if (std::stod(asMicrons) < 1000.0) {
+        return asMicrons + " \xC2\xB5m";
+    }
+    return threeSignificantFigures(value * 1e3) + " mm";
+}
+
+std::string formatArea(double value, MeasurementUnits units)
+{
+    if (units == MeasurementUnits::Pixels) {
+        return wholeNumber(value) + " px\xC2\xB2";
+    }
+
+    // 1 m^2 is 1e12 um^2, and 1 mm^2 is 1e6 um^2. Same rounding-then-choosing
+    // order as formatLength, for the same reason.
+    const std::string asMicrons = threeSignificantFigures(value * 1e12);
+    if (std::stod(asMicrons) < 1e6) {
+        return asMicrons + " \xC2\xB5m\xC2\xB2";
+    }
+    return threeSignificantFigures(value * 1e6) + " mm\xC2\xB2";
 }
 
 bool isSelfIntersecting(const Outline& outline)

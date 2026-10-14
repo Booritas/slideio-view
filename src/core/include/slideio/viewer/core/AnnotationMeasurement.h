@@ -81,4 +81,30 @@ struct ShapeMetrics
 /// ask this question about one.
 [[nodiscard]] bool isSelfIntersecting(const Outline& outline);
 
+/// Which unit system a formatter's input is in. The enum exists so a caller
+/// cannot pass pixels where metres are expected and get a plausible wrong
+/// answer.
+enum class MeasurementUnits
+{
+    Physical, ///< metres, and square metres
+    Pixels,   ///< pixels, and square pixels
+};
+
+/// `value` as a human-readable length. Physical input reads in microns below
+/// one millimetre and millimetres at or above it; pixel input reads in px.
+///
+/// Three significant figures throughout, so the mantissa always reads 1-999 and
+/// two people measuring the same shape write down the same number. The unit is
+/// chosen AFTER rounding, so 999.6 um becomes "1.00 mm" rather than "1000 um".
+///
+/// Locale-free UTF-8: no thousands separators, and the micro sign spelled as
+/// the two bytes the rest of this codebase already uses. Grouping and
+/// translation are presentation decisions; this layer produces numbers, not
+/// prose.
+[[nodiscard]] std::string formatLength(double value, MeasurementUnits units);
+
+/// `value` as a human-readable area, on the same rules: square microns below
+/// one square millimetre, square millimetres at or above.
+[[nodiscard]] std::string formatArea(double value, MeasurementUnits units);
+
 } // namespace slideio::viewer::core

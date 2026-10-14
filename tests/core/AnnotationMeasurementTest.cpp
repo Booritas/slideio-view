@@ -3,6 +3,7 @@
 #include "slideio/viewer/core/AnnotationMeasurement.h"
 
 #include <cmath>
+#include <string>
 #include <vector>
 
 using namespace slideio::viewer;
@@ -244,4 +245,63 @@ TEST_CASE("measureKnown ignores the flag for an open path", "[core][AnnotationMe
         core::measureKnown(polygon({{0.0, 0.0}, {10.0, 0.0}}, false), core::PixelSize{}, true);
     REQUIRE_FALSE(m.area.has_value());
     REQUIRE_FALSE(m.selfIntersecting);
+}
+
+TEST_CASE("lengths below a millimetre read in microns", "[core][AnnotationMeasurement]")
+{
+    // 245 um = 245e-6 m.
+    REQUIRE(core::formatLength(245e-6, core::MeasurementUnits::Physical) == "245 \xC2\xB5m");
+    REQUIRE(core::formatLength(1e-6, core::MeasurementUnits::Physical) == "1.00 \xC2\xB5m");
+    REQUIRE(core::formatLength(0.5e-6, core::MeasurementUnits::Physical) == "0.500 \xC2\xB5m");
+}
+
+TEST_CASE("lengths at or above a millimetre read in millimetres",
+          "[core][AnnotationMeasurement]")
+{
+    REQUIRE(core::formatLength(1e-3, core::MeasurementUnits::Physical) == "1.00 mm");
+    REQUIRE(core::formatLength(1.234e-3, core::MeasurementUnits::Physical) == "1.23 mm");
+    REQUIRE(core::formatLength(15e-3, core::MeasurementUnits::Physical) == "15.0 mm");
+}
+
+TEST_CASE("a length rounding up to the threshold switches unit",
+          "[core][AnnotationMeasurement]")
+{
+    // Review Focus 4. 999.6 um is 1000 um at three significant figures.
+    // Printing "1000 um" would be four significant figures AND the wrong unit.
+    REQUIRE(core::formatLength(999.6e-6, core::MeasurementUnits::Physical) == "1.00 mm");
+    REQUIRE(core::formatLength(999.4e-6, core::MeasurementUnits::Physical) == "999 \xC2\xB5m");
+}
+
+TEST_CASE("areas pick their unit at one square millimetre",
+          "[core][AnnotationMeasurement]")
+{
+    // 1 mm^2 = 1e-6 m^2. 872 um^2 = 872e-12 m^2.
+    REQUIRE(core::formatArea(872e-12, core::MeasurementUnits::Physical) == "872 \xC2\xB5m\xC2\xB2");
+    REQUIRE(core::formatArea(1e-6, core::MeasurementUnits::Physical) == "1.00 mm\xC2\xB2");
+    REQUIRE(core::formatArea(4.56e-6, core::MeasurementUnits::Physical) == "4.56 mm\xC2\xB2");
+}
+
+TEST_CASE("a whole-slide area stays in millimetres, never scientific",
+          "[core][AnnotationMeasurement]")
+{
+    // Review Focus 5. 15 mm x 15 mm = 225 mm^2 = 2.25e-4 m^2.
+    const std::string shown = core::formatArea(2.25e-4, core::MeasurementUnits::Physical);
+    REQUIRE(shown == "225 mm\xC2\xB2");
+    REQUIRE(shown.find('e') == std::string::npos);
+    REQUIRE(shown.find('E') == std::string::npos);
+}
+
+TEST_CASE("pixel measurements are labelled and carry no separators",
+          "[core][AnnotationMeasurement]")
+{
+    REQUIRE(core::formatLength(1480.0, core::MeasurementUnits::Pixels) == "1480 px");
+    REQUIRE(core::formatArea(12480.0, core::MeasurementUnits::Pixels) == "12480 px\xC2\xB2");
+    // Locale-free: grouping is a presentation decision and core does not make it.
+    REQUIRE(core::formatArea(12480.0, core::MeasurementUnits::Pixels).find(',') == std::string::npos);
+}
+
+TEST_CASE("zero formats cleanly in both unit systems", "[core][AnnotationMeasurement]")
+{
+    REQUIRE(core::formatLength(0.0, core::MeasurementUnits::Physical) == "0.00 \xC2\xB5m");
+    REQUIRE(core::formatArea(0.0, core::MeasurementUnits::Pixels) == "0 px\xC2\xB2");
 }
