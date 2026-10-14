@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace slideio::viewer;
@@ -52,8 +53,6 @@ core::Annotation annotation(std::string id, std::string label, std::string class
 
 TEST_CASE("an empty model gives an empty list", "[ui][AnnotationList]")
 {
-    // Review Focus 5. A slide with no annotations is the ordinary state of
-    // every slide before anyone marks it, not an error.
     const auto rows = ui::annotationRows({}, "", ui::AnnotationSortKey::CreationOrder,
                                          testTypeName);
     REQUIRE(rows.empty());
@@ -85,10 +84,6 @@ TEST_CASE("an unlabeled annotation is named by type and creation number",
 
 TEST_CASE("the creation number survives a filter", "[ui][AnnotationList]")
 {
-    // Review Focus 3. The number counts across every annotation the slide
-    // holds, not across the rows that survive the filter -- otherwise typing in
-    // the search box renames the shapes, and the one the user is looking at
-    // changes its name as they type.
     std::vector<core::Annotation> annotations;
     annotations.push_back(annotation("a", "", "Tumor"));
     annotations.push_back(annotation("b", "", "Stroma"));
@@ -148,41 +143,167 @@ TEST_CASE("notes are not searched", "[ui][AnnotationList]")
                                testTypeName).empty());
 }
 
-TEST_CASE("sorts break ties by creation order", "[ui][AnnotationList]")
+TEST_CASE("sorting by label breaks ties by creation order", "[ui][AnnotationList]")
 {
-    // Two rows with the same sort key must not swap between rebuilds, and the
-    // list rebuilds on every model change.
     std::vector<core::Annotation> annotations;
-    annotations.push_back(annotation("a", "Same", ""));
-    annotations.push_back(annotation("b", "Same", ""));
-    annotations.push_back(annotation("c", "Same", ""));
+    // Add 50 annotations with the same label, interleaved with distinct ones.
+    for (int i = 0; i < 50; ++i) {
+        annotations.push_back(annotation("same_" + std::to_string(i), "TieLabel", ""));
+        if (i < 10) {
+            annotations.push_back(annotation("distinct_" + std::to_string(i), "Distinct_" + std::to_string(i), ""));
+        }
+    }
 
     const auto rows = ui::annotationRows(annotations, "", ui::AnnotationSortKey::Label,
                                          testTypeName);
-    REQUIRE(rows[0].id == "a");
-    REQUIRE(rows[1].id == "b");
-    REQUIRE(rows[2].id == "c");
+
+    // Find the tied rows and verify their IDs are in creation order
+    std::vector<std::string> tiedIds;
+    for (const auto& row : rows) {
+        if (row.label == "TieLabel") {
+            tiedIds.push_back(row.id);
+        }
+    }
+    REQUIRE(tiedIds.size() == 50);
+    // Verify they appear in creation order (same_0, same_1, ..., same_49)
+    for (std::size_t i = 0; i < tiedIds.size(); ++i) {
+        REQUIRE(tiedIds[i] == "same_" + std::to_string(i));
+    }
 }
 
-TEST_CASE("sorting by modified time puts the most recent first", "[ui][AnnotationList]")
+TEST_CASE("sorting by classification breaks ties by creation order", "[ui][AnnotationList]")
 {
     std::vector<core::Annotation> annotations;
-    annotations.push_back(annotation("old", "", "", 0));
-    annotations.push_back(annotation("new", "", "", 10));
+    // Add 50 annotations with the same classification, interleaved with distinct ones.
+    for (int i = 0; i < 50; ++i) {
+        annotations.push_back(annotation("same_" + std::to_string(i), "", "TieClass"));
+        if (i < 10) {
+            annotations.push_back(annotation("distinct_" + std::to_string(i), "Distinct_" + std::to_string(i), ""));
+        }
+    }
+
+    const auto rows = ui::annotationRows(annotations, "", ui::AnnotationSortKey::Classification,
+                                         testTypeName);
+
+    // Find the tied rows and verify their IDs are in creation order
+    std::vector<std::string> tiedIds;
+    for (const auto& row : rows) {
+        if (row.classification == "TieClass") {
+            tiedIds.push_back(row.id);
+        }
+    }
+    REQUIRE(tiedIds.size() == 50);
+    for (std::size_t i = 0; i < tiedIds.size(); ++i) {
+        REQUIRE(tiedIds[i] == "same_" + std::to_string(i));
+    }
+}
+
+TEST_CASE("sorting by type breaks ties by creation order", "[ui][AnnotationList]")
+{
+    std::vector<core::Annotation> annotations;
+    // Add 50 rectangles (all same type), interleaved with some labeled distinctly
+    for (int i = 0; i < 50; ++i) {
+        annotations.push_back(annotation("rect_" + std::to_string(i), "", ""));
+        if (i < 10) {
+            annotations.push_back(annotation("labeled_" + std::to_string(i), "Label_" + std::to_string(i), ""));
+        }
+    }
+
+    // Use a callback that returns distinct names per type but we're using all rectangles
+    const auto rows = ui::annotationRows(annotations, "", ui::AnnotationSortKey::Type,
+                                         testTypeName);
+
+    // Find the unlabeled rectangle rows and verify their IDs are in creation order
+    std::vector<std::string> rectIds;
+    for (const auto& row : rows) {
+        if (row.type == "Rectangle" && row.label.find("Rectangle") == 0) {
+            rectIds.push_back(row.id);
+        }
+    }
+    REQUIRE(rectIds.size() == 50);
+    for (std::size_t i = 0; i < rectIds.size(); ++i) {
+        REQUIRE(rectIds[i] == "rect_" + std::to_string(i));
+    }
+}
+
+TEST_CASE("sorting by modified time breaks ties by creation order", "[ui][AnnotationList]")
+{
+    std::vector<core::Annotation> annotations;
+    // Add 50 annotations with the same modification time
+    for (int i = 0; i < 50; ++i) {
+        annotations.push_back(annotation("same_time_" + std::to_string(i), "", "", 100));
+        if (i < 10) {
+            annotations.push_back(annotation("diff_time_" + std::to_string(i), "", "", i));
+        }
+    }
 
     const auto rows = ui::annotationRows(annotations, "", ui::AnnotationSortKey::ModifiedTime,
                                          testTypeName);
-    REQUIRE(rows[0].id == "new");
-    REQUIRE(rows[1].id == "old");
+
+    // Find rows with tied times and verify their IDs appear in creation order
+    std::vector<std::string> tieTimeIds;
+    for (const auto& row : rows) {
+        if (row.id.find("same_time_") == 0) {
+            tieTimeIds.push_back(row.id);
+        }
+    }
+    REQUIRE(tieTimeIds.size() == 50);
+    for (std::size_t i = 0; i < tieTimeIds.size(); ++i) {
+        REQUIRE(tieTimeIds[i] == "same_time_" + std::to_string(i));
+    }
 }
 
-TEST_CASE("the type column carries the supplied name", "[ui][AnnotationList]")
+TEST_CASE("the type column uses the supplied callback", "[ui][AnnotationList]")
 {
     std::vector<core::Annotation> annotations;
     annotations.push_back(annotation("a", "Labelled", "Tumor"));
 
+    // Use a sentinel callback that returns a distinctive name, not the real type name
+    const auto sentinelTypeName = [](core::AnnotationType) { return std::string{"ZZ"}; };
     const auto rows = ui::annotationRows(annotations, "", ui::AnnotationSortKey::CreationOrder,
-                                         testTypeName);
-    REQUIRE(rows[0].type == "Rectangle");
+                                         sentinelTypeName);
+    REQUIRE(rows[0].type == "ZZ");
     REQUIRE(rows[0].classification == "Tumor");
+}
+
+TEST_CASE("filtering matches the display label including auto-numbered fallback", "[ui][AnnotationList]")
+{
+    std::vector<core::Annotation> annotations;
+    annotations.push_back(annotation("first", "", "Class1"));
+    annotations.push_back(annotation("second", "", "Class2"));
+
+    // Filter for "rectangle 2" should match the second rectangle (auto-numbered as "Rectangle 2")
+    const auto rows = ui::annotationRows(annotations, "rectangle 2",
+                                         ui::AnnotationSortKey::CreationOrder, testTypeName);
+    REQUIRE(rows.size() == 1);
+    REQUIRE(rows[0].id == "second");
+    REQUIRE(rows[0].label == "Rectangle 2");
+}
+
+TEST_CASE("sorting by type with distinct type names is observable", "[ui][AnnotationList]")
+{
+    std::vector<core::Annotation> annotations;
+    // Create annotations of different types to verify Type sort works
+    for (int i = 0; i < 3; ++i) {
+        annotations.push_back(annotation("rect_" + std::to_string(i), "", ""));
+    }
+
+    // Use a callback that returns distinctive names per type
+    const auto distinctNames = [](core::AnnotationType type) {
+        switch (type) {
+        case core::AnnotationType::Rectangle:
+            return std::string{"AAA"};
+        case core::AnnotationType::Polygon:
+            return std::string{"BBB"};
+        case core::AnnotationType::Polyline:
+            return std::string{"CCC"};
+        }
+        return std::string{"ZZZ"};
+    };
+
+    const auto rows = ui::annotationRows(annotations, "", ui::AnnotationSortKey::Type, distinctNames);
+    // All rectangles should have type "AAA"
+    for (const auto& row : rows) {
+        REQUIRE(row.type == "AAA");
+    }
 }

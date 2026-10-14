@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <string>
+#include <utility>
 
 namespace slideio::viewer::ui
 {
@@ -48,19 +50,22 @@ std::vector<AnnotationRow> annotationRows(const std::vector<core::Annotation>& a
         const core::Annotation& annotation = annotations[i];
         const core::AnnotationProperties& properties = annotation.properties();
 
-        if (!needle.empty() && !containsFold(properties.label, needle)
+        const std::string type = typeName(annotation.type());
+
+        // Compute display label first: it's the fallback for filtering if there's
+        // no stored label.
+        const std::string displayLabel = properties.label.empty() ? type + " " + std::to_string(i + 1)
+                                                                  : properties.label;
+
+        // Filter against display label and classification, not notes or type.
+        if (!needle.empty() && !containsFold(displayLabel, needle)
             && !containsFold(properties.classification, needle)) {
             continue;
         }
 
-        const std::string type = typeName ? typeName(annotation.type()) : std::string{"Shape"};
-
         AnnotationRow row;
         row.id = annotation.id();
-        // The number is the position on the slide, not in this list: it is
-        // computed before any filtering or sorting touches the order.
-        row.label = properties.label.empty() ? type + " " + std::to_string(i + 1)
-                                             : properties.label;
+        row.label = displayLabel;
         row.type = type;
         row.classification = properties.classification;
 
