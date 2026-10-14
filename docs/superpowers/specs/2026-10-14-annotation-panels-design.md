@@ -358,6 +358,21 @@ document says 3 has found the drift, not a defect.
 | V15 | An uncommitted label commits when the selection changes, rather than being discarded |
 | V16 | Switching slides clears both panels; no stale rows |
 
+### Added during implementation
+
+These came out of code review rather than the original design, and each one
+exists because a reviewer traced a path no test in this repo can reach.
+
+| # | Check |
+|---|-------|
+| V17 | **Known defect, parked.** Scroll the list away from the selected row, then change the selection from the viewport — the row does not scroll into view. Same on a sort change, and on first opening the dock. One line to fix (`AnnotationListPanel.cpp:171` restores the scrollbar after `applySelection`, overwriting its `scrollToItem`); left for a decision with it on screen |
+| V18 | The View menu entry still reads "Annotation &List", with Alt+V,L working, after the list has rebuilt many times. Qt's `QDockWidget` overwrites its own toggle action's text whenever the dock title changes, and the dock title carries the annotation count |
+| V19 | Type a label, then File→Close (or open another slide, or quit) **without clicking away first**. The typed label must reach the file. A menu click moves no focus widget, so nothing commits the field unless `commitPendingEdit()` runs |
+| V20 | Hide the properties dock while a field holds an uncommitted edit; confirm the value survives. This depends on Qt delivering focus-out at hide time, which is not guaranteed |
+| V21 | Drag an annotation with both docks open on a slide carrying many annotations. The viewport updates the model per mouse-move, so the panels used to rebuild per frame; they now skip work while hidden, but a visible dock still rebuilds. Watch for lag |
+| V22 | On a slide whose annotation file fails to parse (the read-only state), confirm Delete **from the list panel** and a properties edit are both refused with the status-bar message, not applied silently. The viewport's own Delete already refused; the panels are new paths to the same operation |
+| V23 | Invoke Undo from the Edit **menu** (not Ctrl+Z) while a properties field holds an uncommitted edit. Whether the edit is saved or discarded depends on whether opening a menu sends focus-out; both outcomes are safe but they look different, so note which you see |
+
 **Regression surface from section 1.** The ownership move rewrites the viewport
 constructor and `~MainWindow`'s teardown, so group V ends by re-running the
 existing checks that exercise model lifetime: a slide switch, a colour-profile
