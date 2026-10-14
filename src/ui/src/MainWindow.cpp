@@ -1,4 +1,5 @@
 #include "slideio/viewer/ui/MainWindow.h"
+#include "slideio/viewer/app/AnnotationEditing.h"
 #include "slideio/viewer/app/AnnotationModel.h"
 #include "slideio/viewer/app/AnnotationPersistenceService.h"
 #include "slideio/viewer/app/UndoRedoStack.h"
@@ -8,6 +9,8 @@
 #include "slideio/viewer/infra/QSettingsColorProfileOverrideStore.h"
 #include "slideio/viewer/ui/AboutDialog.h"
 #include "slideio/viewer/ui/AnnotationInteraction.h"
+#include "slideio/viewer/ui/AnnotationListPanel.h"
+#include "slideio/viewer/ui/AnnotationShapeName.h"
 #include "slideio/viewer/ui/AnnotationSettings.h"
 #include "slideio/viewer/ui/AppPaths.h"
 #include "slideio/viewer/ui/AssociatedImageWindow.h"
@@ -136,6 +139,7 @@ struct MainWindow::Impl
     SceneThumbnailPanel* associatedImagesPanel = nullptr;
     SlidePropertiesPanel* propertiesPanel = nullptr;
     MetadataPanel* metadataPanel = nullptr;
+    AnnotationListPanel* annotationListPanel = nullptr;
     LoadingOverlay* loadingOverlay = nullptr;
 
     // File path of the most recently opened slide. Used to detect intra-slide
@@ -164,6 +168,7 @@ struct MainWindow::Impl
     QAction* associatedImagesToggleAction = nullptr;
     QAction* propertiesToggleAction = nullptr;
     QAction* metadataToggleAction = nullptr;
+    QAction* annotationListToggleAction = nullptr;
     QAction* colorManagementAction = nullptr;
     QAction* setDefaultProfileAction = nullptr;
     QAction* clearDefaultProfileAction = nullptr;
@@ -428,6 +433,7 @@ struct MainWindow::Impl
         viewMenu->addAction(associatedImagesToggleAction);
         viewMenu->addAction(propertiesToggleAction);
         viewMenu->addAction(metadataToggleAction);
+        viewMenu->addAction(annotationListToggleAction);
         viewMenu->addSeparator();
         viewMenu->addAction(colorManagementAction);
         viewMenu->addSeparator();
@@ -1566,6 +1572,12 @@ MainWindow::MainWindow(QWidget* parent)
     addDockWidget(Qt::RightDockWidgetArea, m_impl->metadataPanel);
     m_impl->metadataPanel->hide();
 
+    // Annotation list dock (hidden by default)
+    m_impl->annotationListPanel = new AnnotationListPanel(this);
+    m_impl->annotationListPanel->setObjectName(QStringLiteral("AnnotationListPanel"));
+    addDockWidget(Qt::RightDockWidgetArea, m_impl->annotationListPanel);
+    m_impl->annotationListPanel->hide();
+
     // Create actions and menus
     m_impl->createActions();
     m_impl->channelMixerToggleAction = m_impl->channelMixerPanel->toggleViewAction();
@@ -1588,6 +1600,11 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->metadataToggleAction->setText("Meta&data");
     m_impl->metadataToggleAction->setShortcut(QKeySequence("Ctrl+Shift+D"));
     m_impl->metadataToggleAction->setStatusTip("Toggle the slide/scene metadata panel");
+
+    m_impl->annotationListToggleAction = m_impl->annotationListPanel->toggleViewAction();
+    m_impl->annotationListToggleAction->setText("Annotation &List");
+    m_impl->annotationListToggleAction->setShortcut(QKeySequence("Ctrl+Shift+L"));
+    m_impl->annotationListToggleAction->setStatusTip("Toggle the annotation list panel");
     m_impl->createMenus();
     m_impl->connectSignals();
 
@@ -1597,6 +1614,21 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->annotationSettings = std::make_unique<AnnotationSettings>();
     m_impl->annotations->setDefaultAuthor(m_impl->annotationSettings->userName().toStdString());
     m_impl->buildAnnotationPersistence();
+
+    m_impl->annotationListPanel->setAnnotationModel(m_impl->annotations.get());
+
+    connect(m_impl->annotationListPanel, &AnnotationListPanel::annotationActivated, this,
+            [this](const std::string& id) { m_impl->viewportWidget->showAnnotation(id); });
+
+    connect(m_impl->annotationListPanel, &AnnotationListPanel::deleteRequested, this,
+            [this](const std::string& id) {
+                const core::Annotation* annotation = m_impl->annotations->find(id);
+                if (annotation == nullptr || m_impl->undoStack == nullptr) {
+                    return;
+                }
+                const QString what = tr("Delete %1").arg(shapeName(*annotation));
+                app::deleteWithUndo(*m_impl->annotations, *m_impl->undoStack, id, what.toStdString());
+            });
 
     // Load the configured default ICC profile (if any) now that the viewport
     // and the actions that reflect this setting both exist.
@@ -1647,13 +1679,21 @@ MainWindow::~MainWindow()
     // ahead of m_impl -- rather than relying on ~ViewportWidget never touching
     // what it was given, which is a fact about another file that nobody
     // changing it will think to come back and check.
-    delete m_impl->viewportWidget;
-    m_impl->viewportWidget = nullptr;
-
-    // Save window geometry and dock layout
+    //
+    // The window state is saved first. saveState() serialises the dock layout
+    // by objectName, so a dock deleted before it is already out of the layout
+    // and its position and visibility would never be written. The viewport is
+    // the central widget, which saveState does not record, so its order does
+    // not matter -- but any dock deleted below must come after the save.
     QSettings settings;
     settings.setValue("mainWindow/geometry", saveGeometry());
     settings.setValue("mainWindow/state", saveState());
+
+    delete m_impl->viewportWidget;
+    m_impl->viewportWidget = nullptr;
+
+    delete m_impl->annotationListPanel;
+    m_impl->annotationListPanel = nullptr;
 }
 
 void MainWindow::openSlide(const std::string& path, const std::string& driverId)
