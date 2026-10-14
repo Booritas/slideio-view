@@ -308,7 +308,7 @@ TEST_CASE("undoing a delete puts the annotation back at its original index",
     REQUIRE(model.indexOf(third) == 2);
 }
 
-TEST_CASE("undoing the delete of a selected annotation leaves no selection",
+TEST_CASE("deleting a selected annotation clears the selection, and undo brings it back",
           "[app][AnnotationEditing]")
 {
     // Review Focus 2. Three states, and the seam must not disturb any of them:
@@ -717,10 +717,20 @@ void ViewportWidget::pushDeleteCommand(const std::string& id)
 }
 ```
 
-This changes the shape of the call site: previously the caller removed the annotation and then asked the widget to record it; now `deleteWithUndo` does both. **Find every caller of `pushDeleteCommand` and remove the `m_impl->annotations->remove(id)` that precedes it**, or the annotation is deleted twice and the second delete returns false, leaving no undo step at all. Search with:
+This changes the shape of the call site. Previously `pushDeleteCommand(id)` recorded the deletion *while the annotation was still present* and the caller removed it on the next line; now `deleteWithUndo` does both.
+
+There is exactly one caller, at `src/ui/src/ViewportWidget.cpp:4232-4233` (the Delete-key handler in `keyPressEvent`):
+
+```cpp
+        const std::string doomedId = m_impl->annotations->selectedId();
+        pushDeleteCommand(doomedId);
+        m_impl->annotations->remove(doomedId);   // <-- delete this line
+```
+
+Delete the `remove` line. Leaving it is not catastrophic — `remove()` on an id already gone returns false and does nothing, so the annotation is still deleted once and the undo step is still pushed — but it leaves a line that reads as if it were doing the work, which is how the next person to touch this handler gets it wrong. Confirm the count before and after:
 
 ```bash
-grep -n "pushDeleteCommand" src/ui/src/ViewportWidget.cpp
+grep -n "pushDeleteCommand\|annotations->remove(" src/ui/src/ViewportWidget.cpp
 ```
 
 Add to the include block:
@@ -2667,7 +2677,7 @@ git commit -m "Record the group V manual run and close follow-up item 8"
 **The three tasks most likely to go wrong, and why:**
 
 - **Task 4 (ownership).** No test can observe it, and a lifetime mistake surfaces as a crash on exit rather than a build failure. Do step 9's manual checks properly, especially the fourth one — closing the window inside the autosave debounce is the case the destructor change exists for.
-- **Task 3 (deletion routing).** `pushDeleteCommand` changes from "record what the caller already did" to "do it and record it". If a caller's own `remove()` is left in place, the annotation is deleted, the second delete fails, and **no undo step is pushed at all** — a silent data-loss path. Grep for every caller.
+- **Task 3 (deletion routing).** `pushDeleteCommand` changes from "record what the caller already did" to "do it and record it". There is exactly one caller (`ViewportWidget.cpp:4232-4233`) and its `remove()` call *follows* the push, so leaving it behind is redundant rather than destructive — the annotation is deleted once and the undo step is still recorded. Delete it anyway: a line that looks like it performs the deletion but does not is how the next change to that handler goes wrong.
 - **Task 9 (properties commit loop).** The panel writes into its own widgets on repopulate, and those writes emit the same signals a user's edit does. The `populating` flag is what keeps a repopulation from being mistaken for an edit; if it is missed on any connection, selecting an annotation pushes a spurious undo step and restamps `modifiedAt`.
 
 **On the `restore` call in Task 2.** `AnnotationModel` has no properties setter — `setGeometry` restamps `modifiedAt` and would be wrong for a revert, which is exactly why `restore` was added in `9826da6`. `setPropertiesWithUndo` builds the `after` state itself (so `setProperties` stamps it once, correctly) and then calls `restore` to put the whole annotation back under its own id without a second stamp.
