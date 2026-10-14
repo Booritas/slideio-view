@@ -8,9 +8,11 @@ Item 18 is fixed, 2026-10-13, widened to cover save failures and the mismatch
 resolution; item 0's older check 3 is covered as a side effect. P11 and older
 checks 1, 2, 4, 5 and 6 were verified by the project owner on 2026-10-13.
 **Item 0 was closed on 2026-10-12/13; group U (undo/redo) reopened it as the only
-unrun checks. Group U was run 2026-10-14 against `main` @ `9ca86f3`: 18 of 19
-pass, U9 alone not run, and the run turned up one new defect — Escape-cancelling
-a move restamps `modifiedAt`. Both sit in the group U results table in item 0.** It also carries a
+unrun checks. Group U was run 2026-10-14 against `main` @ `9ca86f3` and all 19
+pass.** The run turned up one defect that is not on the list — Escape-cancelling
+a move restamps `modifiedAt` — which was fixed the same day and its own
+re-check then run. All of it sits in the group U results table in item 0. It
+also carries a
 correction — earlier drafts said the subsystem had not been run and called
 several checks first-ever observations, which was wrong and was never checked
 with the project owner, who tests this application regularly.
@@ -324,8 +326,8 @@ not cover.
    | backward-compat (unplanned) | pass | The CZI's `.s0` file held two rectangles written 2026-10-11 by a pre-branch build; the new build read and appended to it without damage. |
 
    **Group U — undo/redo, added 2026-10-13 with sub-project D. Run 2026-10-14
-   against `main` @ `9ca86f3`; results in the table below the list. 18 of 19
-   pass, U9 not run.**
+   against `main` @ `9ca86f3`; all 19 pass. Results in the table below the
+   list, with the one defect the run found, and its fix, after it.**
    Spec: `2026-10-13-annotation-undo-redo-design.md`. Run on one slide with
    annotations already present. The command and stack logic is unit-tested in
    `app-tests`; everything below is the wiring, which no suite can reach
@@ -437,7 +439,7 @@ not cover.
    | U6 | pass | Ctrl+Z with the button held did nothing; the polygon stayed at the dragged position and the drag completed into one Move. |
    | U7 | pass | After an Escape-cancelled move the stack was unchanged (redo branch intact); Ctrl+Z then undid the **previous** operation, not a no-op step. |
    | U8 | pass | Non-empty stack before the switch; Undo greyed on the other slide and greyed again on return. |
-   | U9 | **not run** | Needs an annotation file staged to mismatch the slide it is loaded against, which is the only route to the read-only state. Both the in-place edit and the additive copy were refused by this session's permission guard on the annotation store. Left for a human. |
+   | U9 | pass | Staged by copying an annotations file to `f1812756893ac12a.s1.annotations.json`, so its stored key `{1a5b05d9e96d7a52, 0}` disagreed with the `{f1812756893ac12a, 1}` it loaded under. Opening scene 1 raised the mismatch dialog; **Open Read-Only** left both Edit items greyed, and they stayed greyed through a draw, a move and a delete attempt. Stronger than the check asks for: the three drawing tools are *themselves* disabled, so no drawing tool can even be selected, and the status bar reads "Annotations disabled". The staged file was byte-identical to its source afterwards — a read-only document is never written, as §"A file we could not parse is never a file we write to" requires. |
    | U10 | pass | Undone state autosaved, slide reopened from disk, and exactly the undone state loaded — the two undone annotations stayed gone. |
    | U11 | pass | Menu named every operation (`Undo Draw Polygon`, `Undo Delete Polygon`, `Undo Move Polygon`); status bar showed `Undo: Draw Polygon` / `Redo: Draw Polygon`; mid-trace the item read **`Undo Vertex`**. |
    | U12 | pass | Focus genuinely stolen mid-drag by another window (foreground handle changed). The move was **recorded**, and after Ctrl+Z the whole file was byte-identical to the pre-check snapshot apart from the document's own save time — no other annotation moved. |
@@ -471,10 +473,16 @@ not cover.
    asserting `modifiedAt` survives the round trip; it also asserts that
    `setGeometry` does restamp, so the test would notice if the mechanism ever
    changed underneath it. **The widget wiring itself is not covered** — no
-   suite creates a `QApplication` — so the Escape path needs one manual
-   re-check: note a saved annotation's `modifiedAt`, drag it past the
-   threshold, press Escape, let autosave run, and read `modifiedAt` again. It
-   must be unchanged. That re-check had not been run when this was written.
+   suite creates a `QApplication` — so the Escape path keeps a manual re-check.
+
+   **Re-check run 2026-10-14 against the fix: pass.** The annotation was
+   dragged +120px (well past the threshold — the shape visibly followed, so
+   this is the above-threshold path, not the one `04412cb` covers), Escape
+   pressed with the button still down, autosave left to run. Every vertex
+   returned to `3603.847908745247` and `modifiedAt` stayed
+   `2026-10-14T07:06:39Z`; before the fix the same sequence moved it to
+   `07:15:41Z`. Edit ▸ Undo stayed greyed, so the cancelled move still records
+   no step.
 
    **Not checkable on this platform:** the Redo shortcut fix (duplicate
    registration of Ctrl+Shift+Z) only misbehaves where `QKeySequence::Redo` is
@@ -870,11 +878,13 @@ remain open.
   which is deliberate, the alternative being silent data corruption the first
   time someone dragged an ellipse. **Closed 2026-10-12** by the polygon and
   freehand widening; the `static_assert`s are gone, replaced by real dispatch.
-- **Sub-project F (panels)** — items 7 and 8: `ViewportWidget` never connects to
-  `AnnotationModel`'s signals (it repaints because it is the only mutator, which
-  stops being true the moment a panel edits an annotation), and the app-layer
-  model is owned by a presentation widget. Persistence did not move it; F is
-  where the second consumer appears and justifies the move.
+- **Sub-project F (panels)** — item 8: the app-layer model is owned by a
+  presentation widget. Persistence did not move it; F is where the second
+  consumer appears and justifies the move. **Item 7 was closed 2026-10-13** by
+  sub-project D, which connected `ViewportWidget` to all six of
+  `AnnotationModel`'s signals — an undone create has to vanish from the screen
+  without the widget having done anything, so undo/redo forced the connection
+  ahead of the panels.
 - **Sub-project E2** — advisory file locking (FR-ANN-32). Two instances editing
   one slide's annotations currently have a last-writer-wins collision.
 - **Sub-project E3** — write-ahead log and incremental save, and with it
