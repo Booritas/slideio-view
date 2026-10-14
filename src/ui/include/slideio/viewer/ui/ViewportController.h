@@ -37,6 +37,10 @@ public:
 
     void fitToSlide();
 
+    /// Centres the view on `target` and zooms so it fits with `marginFraction`
+    /// of the screen free on each side.
+    void showRect(const core::RectF& target, double marginFraction);
+
     void setActualPixels();
 
     const core::Viewport& viewport() const;

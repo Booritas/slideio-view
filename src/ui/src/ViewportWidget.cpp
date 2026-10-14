@@ -2662,6 +2662,27 @@ void ViewportWidget::fitToSlide()
     }
 }
 
+void ViewportWidget::showAnnotation(const std::string& id)
+{
+    if (m_impl->controller == nullptr) {
+        return;
+    }
+    const core::Annotation* annotation = m_impl->annotations->find(id);
+    if (annotation == nullptr) {
+        return;
+    }
+
+    if (m_impl->glInitialized && m_impl->slideOpen) {
+        m_impl->activateSnapshot();
+    }
+    // 0.15 leaves enough slide around the shape to see what it sits in. A
+    // pathologist navigating to a mark is looking at its surroundings, not
+    // only at the outline.
+    m_impl->controller->showRect(annotation->boundingBox(), 0.15);
+    emit viewportChanged();
+    update();
+}
+
 void ViewportWidget::setActualPixels()
 {
     if (m_impl->controller) {

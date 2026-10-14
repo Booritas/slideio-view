@@ -98,6 +98,13 @@ public:
     GpuInfo glInfo() const;
 
     void fitToSlide();
+
+    /// Brings one annotation into view, centred, with a margin around it. A
+    /// no-op when `id` names nothing the model holds -- a list row can outlive
+    /// its annotation by one event-loop turn when an undo removes it while the
+    /// double-click is already queued.
+    void showAnnotation(const std::string& id);
+
     void setActualPixels();
     void zoomIn();
     void zoomOut();

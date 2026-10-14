@@ -80,6 +80,12 @@ void ViewportController::fitToSlide()
     requestVisibleTiles();
 }
 
+void ViewportController::showRect(const core::RectF& target, double marginFraction)
+{
+    m_viewport.fitToRect(target, marginFraction);
+    requestVisibleTiles();
+}
+
 void ViewportController::setActualPixels()
 {
     m_viewport.setActualPixels(m_slideWidth, m_slideHeight);
