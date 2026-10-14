@@ -284,7 +284,24 @@ viewer makes that a silent no-op that still exits 0.
 | W6 | A shape crossing 1 mm switches from µm to mm, and one crossing 1 mm² from µm² to mm² |
 | W7 | Selecting an annotation pushes no undo step and does not restamp `modifiedAt` — measurements are derived and must mutate nothing |
 | W8 | **Dragging a long freehand trace with the properties dock open stays responsive.** This is what catches a mistake in the §3 cache |
-| W9 | Measurements survive a slide close and reopen, recomputed from the stored geometry |
+| W9 | Measurements survive a slide close and reopen. **Write the numbers down first — the reopened values must be identical, not merely present.** That is what catches a calibration failing to re-arrive through `setPixelSize`: without it the panel falls back to pixel units silently, and W5 would not distinguish that |
+
+### Added after the whole-branch review
+
+Each exists because the first nine would pass while something specific was broken.
+
+| # | Check |
+|---|-------|
+| W10 | Draw a region about 300 µm across and read Area: it must show **three** significant figures, not five. Then a region just under 1 mm across must promote to `1.00 mm²` rather than reading `999999 µm²`. W1 passes either way, because a hand calculation does not care how many digits are displayed |
+| W11 | Select a closed annotation, deselect; select an open trace, deselect. With nothing selected the Area row must reappear and the caption return to "Perimeter", both values empty |
+| W12 | Delete the selected annotation with the dock open, then Ctrl+Z. Area and Perimeter must come back identical, with no `unavailable` flicker in between |
+| W13 | Drag a closed polygon of a few hundred vertices with the dock open and watch the Area field: it must not change by a single digit. W8 covers whether that path stays *responsive*; nothing else covers whether it stays *correct* |
+| W14 | Drag the self-intersecting trace from W4 and confirm `unavailable (self-intersecting)` persists rather than a number appearing. The cache stores `true` as readily as `false` |
+
+**Ordering note for W5:** run it immediately after a calibrated slide in the same
+session, not from a cold start. One `setPixelSize` call clears both the
+calibration and the cache, so only a slide-to-slide transition shows both
+resetting.
 
 ## Compliance note
 
