@@ -49,7 +49,15 @@ class ViewportWidget : public QOpenGLWidget
     Q_OBJECT
 
 public:
-    explicit ViewportWidget(QWidget* parent = nullptr);
+    /// `model` must outlive this widget. MainWindow owns it and deletes this
+    /// widget explicitly before releasing it; see ~MainWindow.
+    ///
+    /// A reference rather than a setter, unlike setPersistenceService and
+    /// setUndoStack: this widget works perfectly well without those two and
+    /// null-guards both, but it cannot paint, hit-test or draw without a model.
+    /// A null-tolerant model pointer would be a dozen early returns describing a
+    /// state that must never occur.
+    explicit ViewportWidget(app::AnnotationModel& model, QWidget* parent = nullptr);
     ~ViewportWidget() override;
 
     ViewportWidget(const ViewportWidget&) = delete;
@@ -127,10 +135,6 @@ public:
     /// drawing tool.
     void setActiveTool(AnnotationTool tool);
     [[nodiscard]] AnnotationTool activeTool() const;
-
-    /// The open slide's annotations. Owned by the widget, as the viewport
-    /// controller is; never null. Cleared whenever the open slide changes.
-    [[nodiscard]] app::AnnotationModel* annotationModel() const;
 
     /// Non-owning. MainWindow owns the service; the widget only calls it at the
     /// two points in the slide lifecycle where the ordering matters.

@@ -198,6 +198,16 @@ struct MainWindow::Impl
 
     std::unique_ptr<infra::QSettingsColorProfileOverrideStore> overrideStore;
 
+    /// Owned here, not by the viewport. The viewport renders it, the panels
+    /// list and edit it, and persistence saves it -- four consumers across two
+    /// layers, so the application layer's state belongs to the window that
+    /// coordinates them rather than to one of the things that draws it.
+    ///
+    /// Declared ahead of the persistence stack below so it is destroyed after
+    /// it: the service holds an AnnotationModel& and the undo stack's commands
+    /// hold one each, and members die in reverse declaration order.
+    std::unique_ptr<app::AnnotationModel> annotations;
+
     // The annotation persistence stack. Built once, in
     // buildAnnotationPersistence(), and never rebuilt: the service holds a
     // core::IAnnotationRepository& bound at construction, so replacing the
@@ -1157,7 +1167,7 @@ void MainWindow::Impl::buildAnnotationPersistence()
     annotationRepository = std::make_unique<infra::JsonAnnotationRepository>(
         annotationSettings->workspaceDirectory().toStdString());
     annotationPersistence = std::make_unique<app::AnnotationPersistenceService>(
-        *annotationRepository, *viewportWidget->annotationModel());
+        *annotationRepository, *annotations);
     viewportWidget->setPersistenceService(annotationPersistence.get());
 
     undoStack = std::make_unique<app::UndoRedoStack>();
@@ -1177,9 +1187,9 @@ void MainWindow::Impl::buildAnnotationPersistence()
         }
         undoStack->clear();
     };
-    QObject::connect(viewportWidget->annotationModel(), &app::AnnotationModel::cleared, owner,
+    QObject::connect(annotations.get(), &app::AnnotationModel::cleared, owner,
                      clearUndoUnlessReopening);
-    QObject::connect(viewportWidget->annotationModel(), &app::AnnotationModel::modelReset, owner,
+    QObject::connect(annotations.get(), &app::AnnotationModel::modelReset, owner,
                      clearUndoUnlessReopening);
 
     // Starting or ending a trace changes what Ctrl+Z means, and therefore
@@ -1417,8 +1427,7 @@ bool MainWindow::Impl::openPreferences()
     }
 
     annotationSettings->setUserName(dialog.userName());
-    viewportWidget->annotationModel()->setDefaultAuthor(
-        annotationSettings->userName().toStdString());
+    annotations->setDefaultAuthor(annotationSettings->userName().toStdString());
 
     const QString entered = dialog.workspaceDirectory();
     // Resolve the entry before comparing: a cleared field means "use the
@@ -1503,7 +1512,8 @@ MainWindow::MainWindow(QWidget* parent)
         "QMenu::item:selected { background: #4A90D9; }");
 
     // Create viewport (central widget)
-    m_impl->viewportWidget = new ViewportWidget(this);
+    m_impl->annotations = std::make_unique<app::AnnotationModel>();
+    m_impl->viewportWidget = new ViewportWidget(*m_impl->annotations, this);
     setCentralWidget(m_impl->viewportWidget);
 
     // Create overlay widgets as children of the viewport
@@ -1585,8 +1595,7 @@ MainWindow::MainWindow(QWidget* parent)
     // static because QSettings() needs the organization and application names
     // that main() sets before this window is built.
     m_impl->annotationSettings = std::make_unique<AnnotationSettings>();
-    m_impl->viewportWidget->annotationModel()->setDefaultAuthor(
-        m_impl->annotationSettings->userName().toStdString());
+    m_impl->annotations->setDefaultAuthor(m_impl->annotationSettings->userName().toStdString());
     m_impl->buildAnnotationPersistence();
 
     // Load the configured default ICC profile (if any) now that the viewport
@@ -1631,15 +1640,15 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow()
 {
-    // The persistence service and the undo stack both die with m_impl, before
-    // ~QMainWindow deletes the viewport that holds raw pointers to them. Cut
-    // both links here rather than rely on ~ViewportWidget never touching them
-    // -- that is a fact about another file, and nobody changing it will think
-    // to come back and check this one.
-    if (m_impl && m_impl->viewportWidget) {
-        m_impl->viewportWidget->setPersistenceService(nullptr);
-        m_impl->viewportWidget->setUndoStack(nullptr);
-    }
+    // m_impl dies before ~QMainWindow deletes this window's children, so
+    // anything Qt-owned that holds the model, the persistence service or the
+    // undo stack would outlive all three. The viewport holds the model by
+    // reference and cannot be cut loose from it, so it is deleted here instead,
+    // ahead of m_impl -- rather than relying on ~ViewportWidget never touching
+    // what it was given, which is a fact about another file that nobody
+    // changing it will think to come back and check.
+    delete m_impl->viewportWidget;
+    m_impl->viewportWidget = nullptr;
 
     // Save window geometry and dock layout
     QSettings settings;

@@ -1419,7 +1419,9 @@ struct ViewportWidget::Impl
     // Where the drag began, for telling a click from a drag at release.
     QPoint pressPos;
 
-    std::unique_ptr<app::AnnotationModel> annotations;
+    /// Non-owning. MainWindow owns the model and guarantees it outlives this
+    /// widget by deleting the widget first.
+    app::AnnotationModel* annotations = nullptr;
     bool drawing = false;
 
     /// A shape being built across several press/release pairs.
@@ -1934,7 +1936,7 @@ struct ViewportWidget::Impl
     }
 };
 
-ViewportWidget::ViewportWidget(QWidget* parent)
+ViewportWidget::ViewportWidget(app::AnnotationModel& model, QWidget* parent)
     : QOpenGLWidget(parent)
     , m_impl(std::make_unique<Impl>())
 {
@@ -1947,7 +1949,7 @@ ViewportWidget::ViewportWidget(QWidget* parent)
     setAttribute(Qt::WA_NoSystemBackground, true);
     setAutoFillBackground(false);
 
-    m_impl->annotations = std::make_unique<app::AnnotationModel>();
+    m_impl->annotations = &model;
 
     // Until undo/redo, this widget was the only thing that mutated the model, so
     // repainting from its own mutation sites was sufficient. It no longer is: an
@@ -1958,17 +1960,17 @@ ViewportWidget::ViewportWidget(QWidget* parent)
     //
     // Closes item 7 of the annotation persistence follow-ups.
     const auto repaintOnModelChange = [this]() { update(); };
-    connect(m_impl->annotations.get(), &app::AnnotationModel::annotationAdded, this,
+    connect(m_impl->annotations, &app::AnnotationModel::annotationAdded, this,
             repaintOnModelChange);
-    connect(m_impl->annotations.get(), &app::AnnotationModel::annotationRemoved, this,
+    connect(m_impl->annotations, &app::AnnotationModel::annotationRemoved, this,
             repaintOnModelChange);
-    connect(m_impl->annotations.get(), &app::AnnotationModel::annotationChanged, this,
+    connect(m_impl->annotations, &app::AnnotationModel::annotationChanged, this,
             repaintOnModelChange);
-    connect(m_impl->annotations.get(), &app::AnnotationModel::selectionChanged, this,
+    connect(m_impl->annotations, &app::AnnotationModel::selectionChanged, this,
             repaintOnModelChange);
-    connect(m_impl->annotations.get(), &app::AnnotationModel::cleared, this,
+    connect(m_impl->annotations, &app::AnnotationModel::cleared, this,
             repaintOnModelChange);
-    connect(m_impl->annotations.get(), &app::AnnotationModel::modelReset, this,
+    connect(m_impl->annotations, &app::AnnotationModel::modelReset, this,
             repaintOnModelChange);
 }
 
@@ -2882,11 +2884,6 @@ void ViewportWidget::pushMoveCommand(const std::string& id,
     const QString what = tr("Move %1").arg(shapeName(edit->after));
     m_impl->undoStack->push(app::AnnotationEditCommand::create(
         *m_impl->annotations, id, edit->before, edit->after, what.toStdString()));
-}
-
-app::AnnotationModel* ViewportWidget::annotationModel() const
-{
-    return m_impl->annotations.get();
 }
 
 void ViewportWidget::paintAnnotations(QPainter& painter)
