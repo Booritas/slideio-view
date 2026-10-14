@@ -425,3 +425,60 @@ PHI-handling surface. The `author` field remains self-asserted and
 unauthenticated, as `setDefaultAuthor` already documents; that is unchanged by
 F and remains a gap for the user-identity work in Stage 4, which is where
 EU MDR and EU AI Act record-attribution obligations will have to be met.
+
+## Deferred findings
+
+Raised during implementation review, judged not worth blocking on, and recorded
+here so they are not rediscovered from scratch. None is a correctness defect;
+several are gaps in what the tests would catch if someone changed the code.
+
+**Worth doing when next in these files**
+
+- `src/ui/src/AnnotationListPolicy.cpp` — the filter folds case but the Label,
+  Classification and Type sorts compare raw bytes, so "apple" sorts after
+  "Zeta". The label sort is also lexical, so "Rectangle 10" precedes
+  "Rectangle 2". Neither is covered by a test.
+- `src/ui/src/ViewportWidget.cpp` — the comment at the Delete-key handler still
+  says the id is "captured before the remove". The handler no longer removes
+  anything; `pushDeleteCommand` does. The capture is still needed, because
+  `selectedId()` is empty afterwards, but the wording is now false.
+- The read-only message exists twice, in `ViewportWidget.cpp` under translation
+  context `"ViewportWidget"` and in `MainWindow.cpp` under `"MainWindow"`.
+  Identical in English; a translated build could show two sentences for one
+  condition. Sharing it needs a decision about where such a string lives —
+  widening `readOnlyEditMessage()` out of its anonymous namespace was
+  considered and rejected.
+- `tests/core/ViewportTest.cpp` carries a stray "Review Focus 1." comment copied
+  from a planning document, and `src/ui/CMakeLists.txt` lists
+  `AnnotationShapeName.cpp` out of alphabetical order.
+
+**Test gaps, where a regression would pass unnoticed**
+
+- `Viewport::fitToRect`'s 0.45 margin clamp has no test, and `Viewport.h` does
+  not document that the clamp exists.
+- `AnnotationEditing`'s "stores the properties" test asserts neither the
+  classification nor that `modifiedAt` advances on a real edit. Its
+  unchanged-edit test compares `modifiedAt` for equality, which a coarse
+  `system_clock` could satisfy even if a restamp happened — the return value and
+  `canUndo()` assertions carry the real proof.
+- The four tie-break tests rely on `std::sort` actually reordering equal keys
+  once the `byCreation` fallback is removed. That is likely at 60 elements but
+  not guaranteed; the guarantee is empirical (each was observed to fail when
+  deliberately broken), not theoretical.
+- `AnnotationListPolicy` has no test for a notes field that matches while the
+  label does not, nor for a modified-time tie.
+
+**Known behaviour, documented rather than changed**
+
+- `lineWidth`/`fillOpacity` are floats, so a NaN arriving from a hand-edited
+  file clamps to 1.0 and 0.0 respectively — accidental but benign, and better
+  than the repeated-push a raw NaN comparison would cause. There is a comment at
+  the clamp saying so.
+- A hand-edited `fillOpacity` of 0.333 quantises to the slider's resolution and
+  is corrected once on the next commit. Consistent with `propertiesEdit`'s
+  documented "a clamp counts as a change, persisted once" rule, and self-healing.
+- Nothing in this codebase clamps maximum zoom — `fitToRect` on a sub-pixel
+  bounding box produces a very large but finite scale, the same as holding
+  Ctrl+= would. A pre-existing property of the zoom system, not of this work.
+- `AnnotationPropertiesEdit`'s field-walk test is a single `TEST_CASE`, so the
+  first failing field stops the rest.
