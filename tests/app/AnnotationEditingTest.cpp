@@ -59,14 +59,15 @@ TEST_CASE("undoing a delete puts the annotation back at its original index",
     REQUIRE(model.indexOf(third) == 2);
 }
 
-TEST_CASE("undoing the delete of a selected annotation leaves no selection",
+TEST_CASE("deleting a selected annotation clears the selection, and undo brings it back",
           "[app][AnnotationEditing]")
 {
-    // Review Focus 2. remove() clears the selection when it named the removed
-    // annotation. Undo puts the annotation back, and a selection restored with
-    // it would be a selection the user never made -- while leaving a selection
-    // naming a removed annotation would be a state setSelected refuses to
-    // produce. The annotation comes back; the selection does not.
+    // Three states, and the seam must not disturb any of them: remove() clears
+    // the selection when it named the removed annotation;
+    // AnnotationEditCommand::apply re-selects on restore, deliberately, so an
+    // annotation put back outside the current view can be found
+    // (AnnotationEditCommand.cpp:74-78); and redoing the delete clears it again
+    // through that same remove().
     app::AnnotationModel model;
     app::UndoRedoStack stack;
     const std::string id = addRect(model, 0.0);
@@ -78,7 +79,7 @@ TEST_CASE("undoing the delete of a selected annotation leaves no selection",
 
     stack.undo();
     REQUIRE(model.find(id) != nullptr);
-    REQUIRE(model.selectedId().empty());
+    REQUIRE(model.selectedId() == id);
 
     stack.redo();
     REQUIRE(model.find(id) == nullptr);
