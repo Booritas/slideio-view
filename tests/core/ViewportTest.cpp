@@ -124,3 +124,58 @@ TEST_CASE("Viewport visibleSlideRect", "[core][Viewport]")
     REQUIRE(rect.width > 0);
     REQUIRE(rect.height > 0);
 }
+
+TEST_CASE("fitToRect centres on the target and fits it", "[core][Viewport]")
+{
+    Viewport viewport(0.0, 0.0, 1.0, 800, 600);
+    viewport.fitToRect(RectF{100.0, 200.0, 400.0, 300.0}, 0.1);
+
+    REQUIRE_THAT(viewport.centerX(), WithinAbs(300.0, 1e-9));
+    REQUIRE_THAT(viewport.centerY(), WithinAbs(350.0, 1e-9));
+
+    // 400 wide into 800 screen px with 10% margin on each side: 640/400 = 1.6.
+    // 300 tall into 600 screen px likewise: 480/300 = 1.6. Both agree here.
+    REQUIRE_THAT(viewport.scale(), WithinAbs(1.6, 1e-9));
+}
+
+TEST_CASE("fitToRect fits the tighter axis", "[core][Viewport]")
+{
+    Viewport viewport(0.0, 0.0, 1.0, 800, 600);
+    // Wide and short: width is the binding constraint.
+    viewport.fitToRect(RectF{0.0, 0.0, 800.0, 100.0}, 0.0);
+    REQUIRE_THAT(viewport.scale(), WithinAbs(1.0, 1e-9));
+}
+
+TEST_CASE("fitToRect survives a degenerate box", "[core][Viewport]")
+{
+    // Review Focus 1. A perfectly horizontal freehand line has zero height, and
+    // a vertical one zero width. Fitting the zero axis would divide by it; the
+    // annotation still has to end up centred and visible rather than at an
+    // infinite or NaN scale.
+    Viewport viewport(0.0, 0.0, 1.0, 800, 600);
+    viewport.fitToRect(RectF{100.0, 50.0, 400.0, 0.0}, 0.1);
+
+    REQUIRE_THAT(viewport.centerX(), WithinAbs(300.0, 1e-9));
+    REQUIRE_THAT(viewport.centerY(), WithinAbs(50.0, 1e-9));
+    REQUIRE_THAT(viewport.scale(), WithinAbs(1.6, 1e-9));
+    REQUIRE(std::isfinite(viewport.scale()));
+
+    // Both axes degenerate -- a point annotation, or a trace whose vertices all
+    // coincide. There is no meaningful zoom, so the previous one is kept and
+    // only the centre moves.
+    Viewport point(0.0, 0.0, 2.5, 800, 600);
+    point.fitToRect(RectF{10.0, 20.0, 0.0, 0.0}, 0.1);
+    REQUIRE_THAT(point.centerX(), WithinAbs(10.0, 1e-9));
+    REQUIRE_THAT(point.centerY(), WithinAbs(20.0, 1e-9));
+    REQUIRE_THAT(point.scale(), WithinAbs(2.5, 1e-9));
+}
+
+TEST_CASE("fitToRect ignores a screen with no area", "[core][Viewport]")
+{
+    // Matches fitToSlide's guard: a widget that has not been laid out yet.
+    Viewport viewport(5.0, 6.0, 1.0, 0, 0);
+    viewport.fitToRect(RectF{100.0, 200.0, 400.0, 300.0}, 0.1);
+    REQUIRE_THAT(viewport.centerX(), WithinAbs(5.0, 1e-9));
+    REQUIRE_THAT(viewport.centerY(), WithinAbs(6.0, 1e-9));
+    REQUIRE_THAT(viewport.scale(), WithinAbs(1.0, 1e-9));
+}

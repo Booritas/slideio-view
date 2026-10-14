@@ -28,6 +28,16 @@ public:
 
     void fitToSlide(int slideWidth, int slideHeight);
 
+    /// Centres on `target` and zooms so it fits the screen with
+    /// `marginFraction` of the screen left free on each side (0.1 leaves 10%
+    /// top, bottom, left and right). Used to bring one annotation into view.
+    ///
+    /// A degenerate axis is skipped rather than fitted: a perfectly horizontal
+    /// freehand line has zero height, and fitting that axis would divide by
+    /// zero. When both axes are degenerate there is no zoom the box implies, so
+    /// the current scale is kept and only the centre moves.
+    void fitToRect(const Rect<double>& target, double marginFraction);
+
     void setActualPixels(int slideWidth, int slideHeight);
 
     Rect<double> visibleSlideRect() const;

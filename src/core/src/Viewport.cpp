@@ -114,6 +114,40 @@ void Viewport::fitToSlide(int slideWidth, int slideHeight)
     m_scale = std::min(scaleX, scaleY);
 }
 
+void Viewport::fitToRect(const Rect<double>& target, double marginFraction)
+{
+    if (m_screenWidth <= 0 || m_screenHeight <= 0) {
+        return;
+    }
+
+    m_centerX = target.x + target.width / 2.0;
+    m_centerY = target.y + target.height / 2.0;
+
+    // Clamped so a caller cannot ask for a margin that consumes the whole
+    // screen, which would leave no room for the annotation it is trying to show.
+    const double margin = std::max(0.0, std::min(marginFraction, 0.45));
+    const double usableWidth = m_screenWidth * (1.0 - 2.0 * margin);
+    const double usableHeight = m_screenHeight * (1.0 - 2.0 * margin);
+
+    // Each axis contributes a candidate scale only if it has extent. A zero
+    // width or height is not a malformed annotation -- a freehand line drawn
+    // along one axis produces exactly that -- so it is skipped, not rejected.
+    double scale = 0.0;
+    if (target.width > 0.0) {
+        scale = usableWidth / target.width;
+    }
+    if (target.height > 0.0) {
+        const double scaleY = usableHeight / target.height;
+        scale = scale > 0.0 ? std::min(scale, scaleY) : scaleY;
+    }
+
+    // Both axes degenerate: a point, or a trace whose vertices coincide. There
+    // is no zoom the box implies, so the current one is kept.
+    if (scale > 0.0) {
+        m_scale = scale;
+    }
+}
+
 void Viewport::setActualPixels(int slideWidth, int slideHeight)
 {
     m_scale = 1.0;
