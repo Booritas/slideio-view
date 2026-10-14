@@ -60,6 +60,7 @@ add_executable(slideio-viewer-ui-tests
     ui/AboutInfoTest.cpp
     ui/AnnotationInteractionTest.cpp
     ui/AnnotationListPolicyTest.cpp
+    ui/AnnotationPropertiesEditTest.cpp
     ui/AnnotationSettingsTest.cpp
     ui/ColorProfilePolicyTest.cpp
     ui/DriverFiltersTest.cpp

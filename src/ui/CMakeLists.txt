@@ -13,6 +13,7 @@ add_library(slideio-viewer-ui STATIC
     src/AnnotationShapeName.cpp
     src/AnnotationListPolicy.cpp
     src/AnnotationListPanel.cpp
+    src/AnnotationPropertiesEdit.cpp
     src/AnnotationSettings.cpp
     src/AppPaths.cpp
     src/AssociatedImageWindow.cpp
