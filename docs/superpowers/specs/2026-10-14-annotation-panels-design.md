@@ -321,6 +321,14 @@ they get a check list, following the P-group and U-group precedent. Run against
 an installed binary, with the viewer killed before `cmake --install` and the
 install verified by timestamp, not exit code.
 
+**Setup — the fixture slides carry annotations from the U-group run of
+2026-10-14.** The H&E slide holds 5 annotations where earlier specs describe 3,
+and `pJP31mCherry.czi` has a file holding 1 that it did not have before. These
+were left in place deliberately. V3 therefore checks that the list's count
+matches what the slide actually holds and what the viewport actually paints —
+it is not written against a fixed number, and a reader finding 5 where an older
+document says 3 has found the drift, not a defect.
+
 | # | Check |
 |---|-------|
 | V1 | Both docks toggle from the View menu and from Ctrl+Shift+L / Ctrl+Shift+E |
