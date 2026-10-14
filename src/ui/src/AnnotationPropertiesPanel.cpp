@@ -18,6 +18,8 @@
 #include <QSpinBox>
 #include <QWidget>
 
+#include <map>
+
 namespace slideio::viewer::ui
 {
 
@@ -42,6 +44,34 @@ struct AnnotationPropertiesPanel::Impl
     QLabel* author = nullptr;
     QLabel* created = nullptr;
     QLabel* modified = nullptr;
+
+    QLabel* areaValue = nullptr;
+    QLabel* lengthValue = nullptr;
+    /// The QFormLayout row index of the Area row, so it can be hidden for an
+    /// open trace, which has no area at all.
+    int areaRow = -1;
+    /// The caption of the length row, retitled between "Perimeter" and "Length"
+    /// as the shape changes.
+    QLabel* lengthCaption = nullptr;
+
+    /// Physical size of one pixel on the open slide. A non-positive component
+    /// means the slide carries no calibration and measurements read in pixels.
+    core::PixelSize pixelSize;
+
+    /// Self-intersection by annotation id.
+    ///
+    /// The panel repopulates on annotationChanged, which ViewportWidget emits on
+    /// EVERY mouse-move of a drag. The test is O(n^2) -- about a millisecond at
+    /// a thousand vertices, but around 125 ms at five thousand -- so running it
+    /// per frame would make dragging a long trace unusable. Caching is safe
+    /// because self-intersection, area and perimeter are all
+    /// translation-invariant: moving a shape cannot change any of them.
+    ///
+    /// *** VERTEX EDITING MUST INVALIDATE THIS CACHE WHEN IT LANDS. ***
+    /// A stale "not self-intersecting" after a reshape would show an area that
+    /// disagrees with the shaded region, which is the single failure this whole
+    /// feature is designed to prevent.
+    std::map<std::string, bool> selfIntersectionById;
 
     /// True while repopulate() is writing into the widgets, so the signals that
     /// writing emits are not mistaken for the user editing.
@@ -99,6 +129,17 @@ AnnotationPropertiesPanel::AnnotationPropertiesPanel(QWidget* parent)
     form->addRow(tr("Created"), m_impl->created);
     m_impl->modified = new QLabel(contents);
     form->addRow(tr("Modified"), m_impl->modified);
+
+    m_impl->areaValue = new QLabel(contents);
+    form->addRow(tr("Area"), m_impl->areaValue);
+    m_impl->areaRow = form->rowCount() - 1;
+
+    // One row, two captions: a closed shape has a perimeter, an open trace has
+    // a length. PolygonGeometry already uses one flag to mean two shapes, and
+    // this follows it.
+    m_impl->lengthCaption = new QLabel(tr("Perimeter"), contents);
+    m_impl->lengthValue = new QLabel(contents);
+    form->addRow(m_impl->lengthCaption, m_impl->lengthValue);
 
     setWidget(contents);
     setFieldsEnabled(false);
@@ -179,8 +220,15 @@ void AnnotationPropertiesPanel::setAnnotationModel(app::AnnotationModel* model)
         connect(m_impl->model, &app::AnnotationModel::annotationAdded, this, refresh);
         connect(m_impl->model, &app::AnnotationModel::annotationRemoved, this, refresh);
         connect(m_impl->model, &app::AnnotationModel::annotationChanged, this, refresh);
-        connect(m_impl->model, &app::AnnotationModel::cleared, this, refresh);
-        connect(m_impl->model, &app::AnnotationModel::modelReset, this, refresh);
+        // These two mean the contents are being replaced wholesale, so every
+        // cached measurement answers for an annotation that may no longer
+        // exist -- and ids are not unique across slides.
+        const auto refreshAfterReset = [this]() {
+            m_impl->selfIntersectionById.clear();
+            repopulate(true);
+        };
+        connect(m_impl->model, &app::AnnotationModel::cleared, this, refreshAfterReset);
+        connect(m_impl->model, &app::AnnotationModel::modelReset, this, refreshAfterReset);
         connect(m_impl->model, &app::AnnotationModel::selectionChanged, this, [this](const std::string& id) {
             // Commit first: Qt does not guarantee focus-out reaches the field
             // before the new selection arrives, and a label typed and then
@@ -222,6 +270,61 @@ void AnnotationPropertiesPanel::setEditingAllowed(bool allowed)
     // several slides ago. repopulate(true) writes the stored values back over
     // the focused field, which is what force exists for.
     repopulate(true);
+}
+
+void AnnotationPropertiesPanel::setPixelSize(core::PixelSize pixelSize)
+{
+    m_impl->pixelSize = pixelSize;
+    // A different slide means different calibration and a different set of
+    // annotations. Ids are not unique across slides, so a surviving entry could
+    // answer for the wrong shape.
+    m_impl->selfIntersectionById.clear();
+    repopulate(true);
+}
+
+void AnnotationPropertiesPanel::updateMeasurements(const core::Annotation& annotation)
+{
+    const bool calibrated = m_impl->pixelSize.x > 0.0 && m_impl->pixelSize.y > 0.0;
+    const core::PixelSize scale = calibrated ? m_impl->pixelSize : core::PixelSize{1.0, 1.0};
+    const auto units = calibrated ? core::MeasurementUnits::Physical : core::MeasurementUnits::Pixels;
+
+    // Ask the expensive question only when the answer is not already known.
+    // Everything measured here is translation-invariant, so an entry stays
+    // right for as long as the outline itself is unchanged.
+    const auto cached = m_impl->selfIntersectionById.find(annotation.id());
+    const core::ShapeMetrics metrics =
+        cached == m_impl->selfIntersectionById.end()
+            ? core::measure(annotation.geometry(), scale)
+            : core::measureKnown(annotation.geometry(), scale, cached->second);
+
+    if (metrics.closed) {
+        m_impl->selfIntersectionById[annotation.id()] = metrics.selfIntersecting;
+    }
+
+    auto* form = qobject_cast<QFormLayout*>(widget()->layout());
+    if (metrics.closed) {
+        if (form != nullptr && m_impl->areaRow >= 0) {
+            form->setRowVisible(m_impl->areaRow, true);
+        }
+        m_impl->lengthCaption->setText(tr("Perimeter"));
+        if (metrics.area.has_value()) {
+            m_impl->areaValue->setText(
+                QString::fromStdString(core::formatArea(*metrics.area, units)));
+        } else {
+            // Said in the row itself, not in a tooltip. These numbers may reach
+            // a report, so the reason one is missing has to be as visible as the
+            // number would have been.
+            m_impl->areaValue->setText(tr("unavailable (self-intersecting)"));
+        }
+    } else {
+        if (form != nullptr && m_impl->areaRow >= 0) {
+            form->setRowVisible(m_impl->areaRow, false);
+        }
+        m_impl->lengthCaption->setText(tr("Length"));
+    }
+
+    m_impl->lengthValue->setText(
+        QString::fromStdString(core::formatLength(metrics.outlineLength, units)));
 }
 
 void AnnotationPropertiesPanel::updateColorSwatch()
@@ -285,6 +388,8 @@ void AnnotationPropertiesPanel::repopulate(bool force)
         m_impl->author->clear();
         m_impl->created->clear();
         m_impl->modified->clear();
+        m_impl->areaValue->clear();
+        m_impl->lengthValue->clear();
         setFieldsEnabled(false);
         m_impl->populating = false;
         return;
@@ -322,6 +427,8 @@ void AnnotationPropertiesPanel::repopulate(bool force)
     m_impl->author->setText(QString::fromStdString(annotation->metadata().author));
     m_impl->created->setText(QString::fromStdString(core::formatIso8601Utc(annotation->metadata().createdAt)));
     m_impl->modified->setText(QString::fromStdString(core::formatIso8601Utc(annotation->metadata().modifiedAt)));
+
+    updateMeasurements(*annotation);
 
     m_impl->populating = false;
 }

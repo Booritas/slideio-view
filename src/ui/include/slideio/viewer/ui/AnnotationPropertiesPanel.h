@@ -2,6 +2,8 @@
 
 #include "slideio/viewer/core/Annotation.h"
 
+#include "slideio/viewer/core/AnnotationMeasurement.h"
+
 #include <QDockWidget>
 
 #include <memory>
@@ -65,6 +67,13 @@ public:
     /// explained rather than mysterious.
     void setEditingAllowed(bool allowed);
 
+    /// Physical size of one pixel on the open slide, from SlideInfo's
+    /// resolutionX/resolutionY. A non-positive component means the slide
+    /// carries no calibration, and measurements are then shown in pixels
+    /// rather than suppressed -- a labelled "12480 px²" is a real number that
+    /// can be exported, where a scale bar with no scale would be meaningless.
+    void setPixelSize(core::PixelSize pixelSize);
+
 signals:
     /// A field was committed and actually changed something. MainWindow applies
     /// it: it owns the undo stack and the read-only guard, and keeping both in
@@ -85,6 +94,9 @@ private:
     void repopulate(bool force = false);
     void setFieldsEnabled(bool enabled);
     void updateColorSwatch();
+    /// Recomputes the Area and Perimeter/Length rows for `annotation`, choosing
+    /// physical or pixel units from the slide's calibration.
+    void updateMeasurements(const core::Annotation& annotation);
     /// Builds the field values, asks propertiesEdit whether anything moved, and
     /// if so emits propertiesCommitted. Does not mutate the model.
     void commit();

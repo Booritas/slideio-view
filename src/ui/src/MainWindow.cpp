@@ -743,6 +743,12 @@ struct MainWindow::Impl
                 // menu and persisted across runs by save/restoreState().
                 const auto& info = viewportWidget->slideInfo();
                 zoomIndicatorWidget->setResolution(info.resolutionX);
+                if (annotationPropertiesPanel != nullptr) {
+                    // Measurements need both axes: pixels are not necessarily
+                    // square, and a perimeter does not scale by a single factor.
+                    annotationPropertiesPanel->setPixelSize(
+                        core::PixelSize{info.resolutionX, info.resolutionY});
+                }
                 if (info.numChannels > 0) {
                     channelMixerPanel->setChannels(info.channels);
                 } else {
