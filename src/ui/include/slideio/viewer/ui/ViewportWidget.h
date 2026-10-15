@@ -90,6 +90,10 @@ public:
     // slide is open or the open slide could not be identified.
     const std::string& currentSlideId() const;
 
+    /// The scene this viewport is showing. Half of the annotation key: a
+    /// multi-scene file's scenes have one slide id between them.
+    [[nodiscard]] int currentSceneIndex() const;
+
     ViewportController* controller() const;
 
     // OpenGL strings captured when the context came up. Every field is empty

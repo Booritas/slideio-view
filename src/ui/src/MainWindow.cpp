@@ -3,6 +3,7 @@
 #include "slideio/viewer/app/AnnotationModel.h"
 #include "slideio/viewer/app/AnnotationPersistenceService.h"
 #include "slideio/viewer/app/UndoRedoStack.h"
+#include "slideio/viewer/app/WorkspaceSwitch.h"
 #include "slideio/viewer/core/ColorManagement.h"
 #include "slideio/viewer/core/SlideId.h"
 #include "slideio/viewer/infra/JsonAnnotationRepository.h"
@@ -23,6 +24,7 @@
 #include "slideio/viewer/ui/ShortcutPolicy.h"
 #include "slideio/viewer/ui/SlidePropertiesPanel.h"
 #include "slideio/viewer/ui/SlideProfilesDialog.h"
+#include "slideio/viewer/ui/WorkspaceChangeDialog.h"
 #include "slideio/viewer/ui/MetadataPanel.h"
 #include "slideio/viewer/ui/MinimapWidget.h"
 #include "slideio/viewer/ui/PreferencesDialog.h"
@@ -224,6 +226,9 @@ struct MainWindow::Impl
     std::unique_ptr<AnnotationSettings> annotationSettings;
     std::unique_ptr<infra::JsonAnnotationRepository> annotationRepository;
     std::unique_ptr<app::AnnotationPersistenceService> annotationPersistence;
+    /// Owns what happens to the open slide's annotations when the workspace
+    /// folder changes. Built beside the service, because it drives it.
+    std::unique_ptr<app::WorkspaceSwitch> workspaceSwitch;
     std::unique_ptr<app::UndoRedoStack> undoStack;
     QAction* undoAction = nullptr;
     QAction* redoAction = nullptr;
@@ -236,6 +241,10 @@ struct MainWindow::Impl
     void buildAnnotationPersistence();
     void updateUndoActions();
     bool openPreferences();
+    /// Says what the workspace change did to the annotations. A merge that
+    /// silently changes a set of clinical findings is not acceptable; the count
+    /// is the receipt.
+    void reportWorkspaceSwitch(const app::WorkspaceSwitchResult& result);
 
     void createActions()
     {
@@ -1456,6 +1465,20 @@ void MainWindow::Impl::buildAnnotationPersistence()
                              saveFailureReported = false;
                          }
                      });
+
+    // Built last, because it drives the service above and re-points the
+    // repository through these two callbacks rather than reaching for
+    // infra::JsonAnnotationRepository from the app layer.
+    workspaceSwitch = std::make_unique<app::WorkspaceSwitch>(
+        *annotationRepository, *annotations, *annotationPersistence,
+        [this]() { return annotationRepository->workspaceRoot(); },
+        [this](std::string root) { annotationRepository->setWorkspaceRoot(std::move(root)); });
+    workspaceSwitch->setResolver(
+        [this](const core::WorkspaceSwitchFacts& facts, const core::WorkspaceSwitchOptions& options) {
+            WorkspaceChangeDialog dialog(facts, options, owner);
+            dialog.exec();
+            return dialog.choice();
+        });
 }
 
 bool MainWindow::Impl::openPreferences()
@@ -1479,43 +1502,71 @@ bool MainWindow::Impl::openPreferences()
     const QString requested = AnnotationSettings::resolveWorkspaceDirectory(entered);
 
     if (requested != QString::fromStdString(annotationRepository->workspaceRoot())) {
-        // Before that flush, and so before the aboutToCloseSlide listener,
-        // which on this path is too late to help: endSlide() below deactivates
-        // the service, and an inactive service drops every mutation that
-        // reaches it (AnnotationPersistenceService::markDirty, pinned by
-        // "endSlide flushes and then goes inactive"). The reopen at the end of
-        // this function would then emit aboutToCloseSlide, commit the field
-        // into a model nobody is writing any more, and discard it on the load
-        // from the new root. This is the one close path that flushes itself
-        // instead of letting closeSlide() do it, so it is the one path that
-        // has to commit for itself too.
+        // Before everything: a field typed into but not yet committed would
+        // otherwise be lost, and this is the one close path that does not go
+        // through closeSlide()'s aboutToCloseSlide listener.
         if (annotationPropertiesPanel != nullptr) {
             annotationPropertiesPanel->commitPendingEdit();
         }
 
-        // Flush to the OLD root before re-pointing, or the open slide's unsaved
-        // work is written nowhere.
-        const QString beforeFlush = annotationSettings->workspaceDirectory();
-        const core::SaveResult flushed = annotationPersistence->endSlide();
-        if (flushed.status == core::SaveStatus::Saved
-            || flushed.status == core::SaveStatus::NothingToDo) {
+        // Captured before the setting is written, so Cancel can put it back.
+        const QString previousWorkspace = annotationSettings->workspaceDirectory();
+
+        annotationSettings->setWorkspaceDirectory(entered);
+        // Read the path back rather than reusing `entered`: an empty or
+        // whitespace-only entry clears the setting, and the repository must
+        // then follow the default workspace rather than root itself at "".
+        const QString resolved = annotationSettings->workspaceDirectory();
+
+        if (!viewportWidget->isSlideOpen()) {
+            // Nothing to carry over and nothing to ask about. Re-rooted, never
+            // rebuilt: the service holds a core::IAnnotationRepository& bound at
+            // construction, so destroying the repository out from under it is a
+            // dangling reference.
+            annotationRepository->setWorkspaceRoot(resolved.toStdString());
+            return annotationSettings->hasUserName();
+        }
+
+        // WorkspaceSwitch re-points the repository itself, because what it
+        // writes and where depends on what the new folder turns out to hold. It
+        // also flushes to the old root and re-enters the slide, which is why
+        // there is no endSlide() and no reopenCurrentScene() here any more. The
+        // flush in particular must not be done twice: run() reads isActive()
+        // before its own flush to decide whether the annotations may be
+        // written, so a flush performed here would make every switch look
+        // read-only and silently withhold copy, keep-current and merge.
+        core::SlideProvenance provenance;
+        const core::SlideInfo& info = viewportWidget->slideInfo();
+        provenance.path = viewportWidget->currentFilePath();
+        provenance.fileName =
+            QFileInfo(QString::fromStdString(provenance.path)).fileName().toStdString();
+        provenance.width = info.width;
+        provenance.height = info.height;
+
+        const core::AnnotationKey key{viewportWidget->currentSlideId(),
+                                      viewportWidget->currentSceneIndex()};
+        const app::WorkspaceSwitchResult switched =
+            workspaceSwitch->run(resolved.toStdString(), key, provenance);
+
+        if (switched.flush == core::SaveStatus::Saved
+            || switched.flush == core::SaveStatus::NothingToDo) {
             saveFailureReported = false;
         }
-        const QString afterFlush = annotationSettings->workspaceDirectory();
 
-        if (afterFlush != beforeFlush) {
-            // That flush failed and the save-failure resolver rescued it to a
+        if (switched.rescued) {
+            // The flush failed and the save-failure resolver rescued it to a
             // folder the user picked mid-failure, which it has already made the
             // workspace and the repository root. Applying the dialog's value on
             // top would strand the file it just saved somewhere this
             // application never looks again, and say nothing about it. The more
             // recent choice wins; the user is told where their work went.
-            // Gated on the flush actually succeeding: when the retries against the
-            // new folder failed too, endSlide() abandoned the annotations and
-            // claiming they were saved would be false. The folder in use is
+            // Gated on the flush actually succeeding: when the retries against
+            // the new folder failed too, endSlide() abandoned the annotations
+            // and claiming they were saved would be false. The folder in use is
             // named either way, so the typed value is not mistaken for it.
-            const QString folder = QDir::toNativeSeparators(afterFlush);
-            if (flushed.status == core::SaveStatus::Saved) {
+            const QString folder =
+                QDir::toNativeSeparators(annotationSettings->workspaceDirectory());
+            if (switched.flush == core::SaveStatus::Saved) {
                 statusBarManager->showTransientMessage(
                     tr("Annotations were saved to %1, which is now the annotation folder "
                        "(your entry was not used).")
@@ -1526,25 +1577,50 @@ bool MainWindow::Impl::openPreferences()
                        "The annotations were NOT saved.")
                         .arg(folder));
             }
-        } else {
-            annotationSettings->setWorkspaceDirectory(entered);
-            // Read the path back rather than reusing `entered`: an empty or
-            // whitespace-only entry clears the setting, and the repository must
-            // then follow the default workspace rather than root itself at "".
-            const QString resolved = annotationSettings->workspaceDirectory();
-            // Re-rooted, never rebuilt: the service holds a
-            // core::IAnnotationRepository& bound at construction, so destroying
-            // the repository out from under it is a dangling reference.
-            annotationRepository->setWorkspaceRoot(resolved.toStdString());
+            return annotationSettings->hasUserName();
         }
 
-        if (viewportWidget->isSlideOpen()) {
-            // Reopening is how the slide re-enters beginSlide() against the new
-            // root -- whichever of the two folders above it ended up being.
-            viewportWidget->reopenCurrentScene();
+        if (switched.choice == app::WorkspaceChoice::Cancel) {
+            // The folder in use did not change, so neither should the setting.
+            annotationSettings->setWorkspaceDirectory(previousWorkspace);
         }
+        reportWorkspaceSwitch(switched);
     }
     return annotationSettings->hasUserName();
+}
+
+void MainWindow::Impl::reportWorkspaceSwitch(const app::WorkspaceSwitchResult& result)
+{
+    if (result.write == core::SaveStatus::NotWritable || result.write == core::SaveStatus::Failed) {
+        statusBarManager->showTransientMessage(
+            tr("The annotations could not be written to the new folder (%1). They are still in the "
+               "folder you switched from.")
+                .arg(QDir::toNativeSeparators(QString::fromStdString(result.writePath))));
+        return;
+    }
+
+    switch (result.choice) {
+    case app::WorkspaceChoice::Merge:
+        statusBarManager->showTransientMessage(tr("Merged: %1 added, %2 superseded, %3 kept.")
+                                                   .arg(result.merge.adopted)
+                                                   .arg(result.merge.superseded)
+                                                   .arg(result.merge.kept));
+        break;
+    case app::WorkspaceChoice::Copy:
+    case app::WorkspaceChoice::KeepCurrent:
+        statusBarManager->showTransientMessage(tr("Annotations copied to the new folder."));
+        break;
+    case app::WorkspaceChoice::LoadNew:
+        if (result.asked) {
+            statusBarManager->showTransientMessage(
+                tr("Now showing the new folder's annotations. The previous ones are unchanged where "
+                   "they were."));
+        }
+        break;
+    case app::WorkspaceChoice::Cancel:
+        statusBarManager->showTransientMessage(tr("The annotation folder was not changed."));
+        break;
+    }
 }
 
 MainWindow::MainWindow(QWidget* parent)

@@ -2639,6 +2639,11 @@ const std::string& ViewportWidget::currentSlideId() const
     return m_impl->currentSlideId;
 }
 
+int ViewportWidget::currentSceneIndex() const
+{
+    return m_impl->currentSceneIndex;
+}
+
 bool ViewportWidget::isSlideOpen() const
 {
     return m_impl->slideOpen;
