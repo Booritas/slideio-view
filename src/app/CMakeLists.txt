@@ -5,6 +5,7 @@ add_library(slideio-viewer-app STATIC
     src/UndoRedoStack.cpp
     src/AnnotationEditCommand.cpp
     src/AnnotationEditing.cpp
+    src/WorkspaceSwitch.cpp
     # Listed so AUTOMOC runs moc on them: it does not scan headers that live in a
     # different directory from their .cpp.
     include/slideio/viewer/app/AnnotationModel.h

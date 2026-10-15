@@ -89,6 +89,12 @@ public:
     [[nodiscard]] bool isDirty() const;
     [[nodiscard]] bool isActive() const;
 
+    /// When the open document's history began: the loaded file's createdAt, or
+    /// the moment this slide was begun if there was no file. A workspace switch
+    /// reads it BEFORE its flush, so that endSlide() clearing more state in
+    /// future cannot quietly change what a merged document claims.
+    [[nodiscard]] std::chrono::system_clock::time_point documentCreatedAt() const;
+
 signals:
     void loadFailed(const QString& path, const QString& message);
     void saveFailed(const QString& path, const QString& message);

@@ -251,6 +251,11 @@ bool AnnotationPersistenceService::isActive() const
     return m_active;
 }
 
+std::chrono::system_clock::time_point AnnotationPersistenceService::documentCreatedAt() const
+{
+    return m_createdAt;
+}
+
 void AnnotationPersistenceService::markDirty()
 {
     if (m_loading || !m_active) {
