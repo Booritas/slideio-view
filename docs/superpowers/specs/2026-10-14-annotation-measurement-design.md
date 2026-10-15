@@ -367,16 +367,19 @@ Whoever re-runs this should read it that way rather than hunting the boundary.
 
 **W15 — ran as originally written, and the check turned out not to be able to
 fail.** An annotation was created, a label typed, and the workspace folder
-changed; the annotation vanished from the viewport. Nothing had been lost: the
-label reached the old root (`"label": "rect"`, document written 19:23:54Z), and
-the annotation vanished only because the new folder holds no file for that
-slide, which is what the setting means.
+changed; the annotation vanished from the viewport. Nothing had been lost. The
+annotation was written, with its label, to the workspace that was active when it
+was drawn — annotation `modifiedAt` 19:33:09Z, document written 19:33:12Z, a
+plain autosave three seconds later. The folder change came minutes after that,
+and the viewer then loaded from a folder holding no file for that slide.
 
-The reason it could not fail: every gesture the original W15 named moves focus —
-a scene thumbnail is a click, Preferences and the profile items are popups — and
-`QLineEdit::editingFinished` fires on focus loss, so the edit was always
-committed before the close path began. W15 is now written around Ctrl+W and
-Alt+F4, window-scoped shortcuts that never touch focus. Re-run it that way.
+The reason it could not fail: the commit at 19:33:09Z happened while the slide
+was still open, so no close path was involved at all. Every gesture the original
+W15 named moves focus — a scene thumbnail is a click, Preferences and the
+profile items are popups — and `QLineEdit::editingFinished` fires on focus loss,
+so the edit is committed and usually autosaved before the close even begins.
+W15 is now written around Ctrl+W and Alt+F4, window-scoped shortcuts that never
+touch focus. Re-run it that way.
 
 **It did surface a real defect in passing, fixed in `9ec4ced`.**
 
