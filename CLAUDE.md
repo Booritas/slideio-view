@@ -36,12 +36,14 @@ Supporting discovery documents (`phase1-requirements-discovery.md`, `phase2-ux-c
 
 ```
 Presentation (Qt UI)   →  MainWindow, ViewportWidget, PreferencesDialog,
-                          AnnotationSettings, Panels, dialogs                  (26 .cpp)
+                          AnnotationSettings, Panels, dialogs                  (32 .cpp)
 Application (Services) →  AnnotationModel, AnnotationPersistenceService,
-                          UndoRedoStack, AnnotationEditCommand,
-                          SlideViewerService, _CaseService_                     (5 .cpp)
+                          UndoRedoStack, AnnotationEditCommand, AnnotationEditing,
+                          WorkspaceSwitch, SlideViewerService, _CaseService_    (7 .cpp)
 Domain (Core Logic)    →  Annotation, AnnotationSerialization, AutosavePolicy,
-                          Iso8601, Viewport, TilePyramid, CoordinateSystem     (16 .cpp)
+                          Iso8601, Viewport, TilePyramid, CoordinateSystem,
+                          AnnotationMeasurement, AnnotationMerge,
+                          WorkspaceSwitchPolicy                                (19 .cpp)
 Infrastructure         →  SlideIOAdapter, LruTileCache, TileLoadScheduler,
                           JsonAnnotationRepository,
                           QSettingsColorProfileOverrideStore, _RemoteClient_    (6 .cpp)
