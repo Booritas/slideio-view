@@ -109,6 +109,13 @@ WorkspaceChangeDialog::WorkspaceChangeDialog(const core::WorkspaceSwitchFacts& f
 
     if (preferred != nullptr) {
         preferred->setDefault(true);
+    } else {
+        // Nothing constructive is on offer -- the new folder's file could not be
+        // parsed, or these annotations are read-only. The remaining choice
+        // switches away from what is on screen, so Enter must not reach for it:
+        // without an explicit default the first auto-default button wins, and
+        // that is the switch, not Cancel.
+        cancel->setDefault(true);
     }
 
     layout->addWidget(buttons);

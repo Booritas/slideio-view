@@ -95,6 +95,15 @@ public:
     /// future cannot quietly change what a merged document claims.
     [[nodiscard]] std::chrono::system_clock::time_point documentCreatedAt() const;
 
+    /// Marks the open document as needing a save. Normally this happens by
+    /// itself, from the model's own edit signals. It is public for one caller:
+    /// a workspace switch that put content into the model through replaceAll(),
+    /// which is a load-shaped operation and deliberately does not dirty
+    /// anything. Without this the restored set would sit unsaved until the user
+    /// happened to edit it, and a close would discard it as "nothing to do".
+    /// No-op while inactive, like every other route to dirtiness.
+    void markDirty();
+
 signals:
     void loadFailed(const QString& path, const QString& message);
     void saveFailed(const QString& path, const QString& message);
@@ -108,7 +117,6 @@ signals:
     void activeChanged(bool active);
 
 private:
-    void markDirty();
     void onAutosaveTick();
     void onModelCleared();
     void setActive(bool active);

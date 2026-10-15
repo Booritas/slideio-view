@@ -241,6 +241,12 @@ struct MainWindow::Impl
     void buildAnnotationPersistence();
     void updateUndoActions();
     bool openPreferences();
+    /// Enables or disables everything that writes annotations, and says why not.
+    /// Driven from two signals: ViewportWidget::annotationsAvailableChanged,
+    /// which carries the better wording on an open or close, and
+    /// AnnotationPersistenceService::activeChanged, which is the only one that
+    /// fires on a workspace switch.
+    void applyAnnotationAvailability(bool available, const QString& reason);
     /// Says what the workspace change did to the annotations. A merge that
     /// silently changes a set of clinical findings is not acceptable; the count
     /// is the receipt.
@@ -638,39 +644,7 @@ struct MainWindow::Impl
 
         QObject::connect(viewportWidget, &ViewportWidget::annotationsAvailableChanged, owner,
                          [this](bool available, const QString& reason) {
-                             rectangleToolAction->setEnabled(available);
-                             polygonToolAction->setEnabled(available);
-                             freehandToolAction->setEnabled(available);
-                             // Same gate for the properties editor's fields. A
-                             // read-only slide still shows its annotations and
-                             // still lets them be selected; what it refuses is
-                             // changing them, and a field that cannot be used
-                             // should not look as though it can. The reason is
-                             // already going to the status bar just below.
-                             if (annotationPropertiesPanel != nullptr) {
-                                 annotationPropertiesPanel->setEditingAllowed(available);
-                             }
-                             // Mirror that disabled state somewhere the user can
-                             // actually see it. A disabled menu item renders
-                             // identically to an enabled one, and the transient
-                             // message below is gone in four seconds -- so without
-                             // this, a user who reaches for a tool a minute later
-                             // gets silence and no way to learn why. Set before the
-                             // early return, so closing a slide clears it too.
-                             statusBarManager->setAnnotationsBlocked(
-                                 !available && viewportWidget->isSlideOpen(), reason);
-                             if (available || !viewportWidget->isSlideOpen()) {
-                                 // Either fine, or the transient "no slide" that
-                                 // every slide switch emits -- leave the tool alone,
-                                 // as the slideClosed handler deliberately does.
-                                 return;
-                             }
-                             // A real gate: an associated image, an unidentifiable
-                             // slide, or a file we can read but must not write.
-                             viewportWidget->setActiveTool(AnnotationTool::Pan);
-                             if (!reason.isEmpty()) {
-                                 statusBarManager->showTransientMessage(reason);
-                             }
+                             applyAnnotationAvailability(available, reason);
                          });
 
         QObject::connect(viewportWidget, &ViewportWidget::annotationEditBlocked, owner,
@@ -1464,6 +1438,23 @@ void MainWindow::Impl::buildAnnotationPersistence()
                          if (active) {
                              saveFailureReported = false;
                          }
+                         // This signal's own documentation says the ui enables
+                         // and disables the drawing tools from it, and until now
+                         // the ui did not: enablement hung solely off
+                         // ViewportWidget::annotationsAvailableChanged, which is
+                         // emitted only when a slide opens or closes. A
+                         // workspace switch opens no slide, so a switch that
+                         // landed on an unwritable file left every tool enabled
+                         // and the user drew into a model nobody was saving.
+                         //
+                         // Second in line deliberately. On an open or a close
+                         // the viewport emits afterwards with a reason naming
+                         // the actual obstacle -- an associated image, an
+                         // unidentified slide -- and that better message wins.
+                         applyAnnotationAvailability(
+                             active, active ? QString()
+                                            : tr("Annotations are read-only for this slide: "
+                                                 "the stored file could not be used."));
                      });
 
     // Built last, because it drives the service above and re-points the
@@ -1518,7 +1509,13 @@ bool MainWindow::Impl::openPreferences()
         // then follow the default workspace rather than root itself at "".
         const QString resolved = annotationSettings->workspaceDirectory();
 
-        if (!viewportWidget->isSlideOpen()) {
+        if (!viewportWidget->isSlideOpen() || viewportWidget->isAuxImageShown()) {
+            // An associated image answers isSlideOpen() with true -- slideOpen
+            // is set in the shared open path -- and carries the file's slide id
+            // with scene index 0. Handing that key to the switch would make it
+            // beginSlide() scene 0 and paint the tissue's annotations over a
+            // label, which is exactly what the open path refuses to do.
+            //
             // Nothing to carry over and nothing to ask about. Re-rooted, never
             // rebuilt: the service holds a core::IAnnotationRepository& bound at
             // construction, so destroying the repository out from under it is a
@@ -1583,19 +1580,78 @@ bool MainWindow::Impl::openPreferences()
         if (switched.choice == app::WorkspaceChoice::Cancel) {
             // The folder in use did not change, so neither should the setting.
             annotationSettings->setWorkspaceDirectory(previousWorkspace);
+        } else {
+            // Re-asserted, because the save-failure resolver may have written
+            // the setting during the flush without the root ending up anywhere
+            // new -- a user who hits "Choose Another Folder" and picks the one
+            // already in use. run() sees no root change, correctly carries on
+            // with the switch, and the setting would otherwise be left naming
+            // the old folder while the repository writes to the new one. The
+            // next launch would then root at the old folder and everything
+            // saved this session would be invisible.
+            annotationSettings->setWorkspaceDirectory(entered);
         }
         reportWorkspaceSwitch(switched);
     }
     return annotationSettings->hasUserName();
 }
 
+void MainWindow::Impl::applyAnnotationAvailability(bool available, const QString& reason)
+{
+    rectangleToolAction->setEnabled(available);
+    polygonToolAction->setEnabled(available);
+    freehandToolAction->setEnabled(available);
+    // Same gate for the properties editor's fields. A read-only slide still
+    // shows its annotations and still lets them be selected; what it refuses is
+    // changing them, and a field that cannot be used should not look as though
+    // it can. The reason is already going to the status bar just below.
+    if (annotationPropertiesPanel != nullptr) {
+        annotationPropertiesPanel->setEditingAllowed(available);
+    }
+    // Mirror that disabled state somewhere the user can actually see it. A
+    // disabled menu item renders identically to an enabled one, and the
+    // transient message below is gone in four seconds -- so without this, a user
+    // who reaches for a tool a minute later gets silence and no way to learn
+    // why. Set before the early return, so closing a slide clears it too.
+    statusBarManager->setAnnotationsBlocked(!available && viewportWidget->isSlideOpen(), reason);
+    if (available || !viewportWidget->isSlideOpen()) {
+        // Either fine, or the transient "no slide" that every slide switch
+        // emits -- leave the tool alone, as the slideClosed handler
+        // deliberately does.
+        return;
+    }
+    // A real gate: an associated image, an unidentifiable slide, or a file we
+    // can read but must not write.
+    viewportWidget->setActiveTool(AnnotationTool::Pan);
+    if (!reason.isEmpty()) {
+        statusBarManager->showTransientMessage(reason);
+    }
+}
+
 void MainWindow::Impl::reportWorkspaceSwitch(const app::WorkspaceSwitchResult& result)
 {
     if (result.write == core::SaveStatus::NotWritable || result.write == core::SaveStatus::Failed) {
+        const QString path = QDir::toNativeSeparators(QString::fromStdString(result.writePath));
+        if (result.flush == core::SaveStatus::NotWritable
+            || result.flush == core::SaveStatus::Failed) {
+            // Both folders refused the write, so the annotations are on screen
+            // and nowhere else. Saying "they are still in the folder you
+            // switched from" here would be false, and a transient line is the
+            // wrong weight for it: this is the one case where closing the slide
+            // loses clinical findings.
+            QMessageBox::critical(
+                owner, tr("Annotations are not saved anywhere"),
+                tr("Neither the folder you switched from nor %1 could be written.\n\n"
+                   "Your annotations are still open and are being retried, but they are "
+                   "currently not saved in either folder. Choose a writable folder in "
+                   "Preferences before closing the slide.")
+                    .arg(path));
+            return;
+        }
         statusBarManager->showTransientMessage(
-            tr("The annotations could not be written to the new folder (%1). They are still in the "
-               "folder you switched from.")
-                .arg(QDir::toNativeSeparators(QString::fromStdString(result.writePath))));
+            tr("The annotations could not be written to %1. They are still in the folder you "
+               "switched from, and the save is being retried.")
+                .arg(path));
         return;
     }
 

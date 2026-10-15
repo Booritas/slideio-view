@@ -2639,6 +2639,11 @@ const std::string& ViewportWidget::currentSlideId() const
     return m_impl->currentSlideId;
 }
 
+bool ViewportWidget::isAuxImageShown() const
+{
+    return !m_impl->currentAuxImageName.empty();
+}
+
 int ViewportWidget::currentSceneIndex() const
 {
     return m_impl->currentSceneIndex;

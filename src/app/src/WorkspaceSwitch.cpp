@@ -137,6 +137,13 @@ WorkspaceSwitchResult WorkspaceSwitch::run(const std::string& newRoot,
     if (result.choice == WorkspaceChoice::Cancel) {
         m_repointTo(oldRoot);
         m_persistence.beginSlide(key, provenance);
+        if (facts.flushFailed) {
+            // Step 1 could not write, so the file beginSlide has just reloaded
+            // is older than what the user is looking at. Cancelling a dialog
+            // must not cost them the difference.
+            m_model.replaceAll(current);
+            m_persistence.markDirty();
+        }
         return result;
     }
 
@@ -168,7 +175,9 @@ WorkspaceSwitchResult WorkspaceSwitch::run(const std::string& newRoot,
         document.slide = provenance;
         document.createdAt = earlierCreatedAt(currentCreatedAt, probe.document.createdAt);
         document.modifiedAt = std::chrono::system_clock::now();
-        document.annotations = std::move(toWrite);
+        // Copied, not moved: when the save fails, this set is the only
+        // remaining copy of what the user is looking at.
+        document.annotations = toWrite;
 
         const core::SaveResult saved = m_repository.save(document);
         result.write = saved.status;
@@ -178,6 +187,18 @@ WorkspaceSwitchResult WorkspaceSwitch::run(const std::string& newRoot,
     // 7. Re-enter the slide against whichever root is now in effect. The file is
     // the source of truth; the model is never hand-patched.
     m_persistence.beginSlide(key, provenance);
+
+    if (write && result.write != core::SaveStatus::Saved) {
+        // Except here, where the file is demonstrably not the truth: the save
+        // above never reached it. This one write does not go through
+        // endSlide()'s retry loop or the save-failure resolver, so letting the
+        // reload win would drop the set with nothing but a transient message --
+        // and when step 1 also failed, that set exists nowhere else. Putting it
+        // back and dirtying it hands the retry to the ordinary autosave
+        // machinery, which does have the resolver and does report abandonment.
+        m_model.replaceAll(toWrite);
+        m_persistence.markDirty();
+    }
     return result;
 }
 

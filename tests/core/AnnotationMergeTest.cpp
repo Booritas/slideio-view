@@ -136,6 +136,24 @@ TEST_CASE("a repeated id inside one set drops nothing", "[core][AnnotationMerge]
     REQUIRE(outcome.superseded == 1);
 }
 
+TEST_CASE("a repeated id inside the incoming set collapses onto one slot",
+          "[core][AnnotationMerge]")
+{
+    // The two sides are not symmetric, and the header must not claim they are.
+    // A repeat inside `current` keeps both copies because only the first is
+    // indexed; a repeat inside `incoming` meets the slot its own first copy
+    // just created and is compared against it like any other collision.
+    const std::vector<core::Annotation> incoming{annotation("x", 100, 0, 1.0),
+                                                 annotation("x", 300, 0, 2.0)};
+
+    const core::MergeOutcome outcome = core::mergeAnnotations({}, incoming);
+
+    REQUIRE(outcome.annotations.size() == 1);
+    REQUIRE(outcome.annotations[0].boundingBox().x == 2.0);
+    REQUIRE(outcome.adopted == 1);
+    REQUIRE(outcome.superseded == 1);
+}
+
 TEST_CASE("empty inputs", "[core][AnnotationMerge]")
 {
     const std::vector<core::Annotation> one{annotation("a", 100)};

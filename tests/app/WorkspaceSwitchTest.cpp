@@ -200,6 +200,84 @@ TEST_CASE("use-the-new-folder's writes nothing", "[app][WorkspaceSwitch]")
     REQUIRE(h.persistence.isActive());
 }
 
+TEST_CASE("keep-current writes the on-screen set over the new folder's file",
+          "[app][WorkspaceSwitch]")
+{
+    // The one choice that deliberately destroys a file, and so the one whose
+    // failure costs another reader their annotations.
+    Harness h;
+    h.openWith({annotation("a", 100), annotation("b", 100)});
+
+    core::AnnotationDocument inNew;
+    inNew.slideId = kKey.slideId;
+    inNew.annotations = {annotation("z", 500)};
+    h.repository.stored[{"/new", FakeRootRepository::keyText(kKey)}] = inNew;
+
+    h.sut.setResolver([](const core::WorkspaceSwitchFacts& facts,
+                         const core::WorkspaceSwitchOptions& options) {
+        REQUIRE(options.keepCurrent);
+        REQUIRE(facts.newCount == 1);
+        return app::WorkspaceChoice::KeepCurrent;
+    });
+
+    const app::WorkspaceSwitchResult result = h.sut.run("/new", kKey, provenance());
+
+    REQUIRE(result.write == core::SaveStatus::Saved);
+    const core::AnnotationDocument& written =
+        h.repository.stored[{"/new", FakeRootRepository::keyText(kKey)}];
+    REQUIRE(written.annotations.size() == 2);
+    REQUIRE(written.annotations[0].id() == "a");
+    REQUIRE(written.annotations[1].id() == "b");
+    REQUIRE(h.model.annotations().size() == 2);
+}
+
+TEST_CASE("a write that fails keeps the annotations in the model and dirty",
+          "[app][WorkspaceSwitch]")
+{
+    // beginSlide reloads from the new folder's file. When the write never
+    // reached that file, the file is not the truth, and letting it win would
+    // drop the user's work on the floor with only a transient message.
+    Harness h;
+    h.openWith({annotation("a", 100), annotation("b", 100)});
+    h.repository.nextSave = core::SaveStatus::NotWritable;
+    h.sut.setResolver([](const core::WorkspaceSwitchFacts&, const core::WorkspaceSwitchOptions&) {
+        return app::WorkspaceChoice::Copy;
+    });
+
+    const app::WorkspaceSwitchResult result = h.sut.run("/new", kKey, provenance());
+
+    REQUIRE(result.write == core::SaveStatus::NotWritable);
+    REQUIRE(h.model.annotations().size() == 2);
+    // Dirty, so the ordinary autosave machinery -- with its retries and its
+    // save-failure resolver -- owns the retry instead of this one-shot save.
+    REQUIRE(h.persistence.isDirty());
+    REQUIRE(h.persistence.isActive());
+}
+
+TEST_CASE("cancel after a failed flush keeps the on-screen set",
+          "[app][WorkspaceSwitch]")
+{
+    Harness h;
+    h.openWith({annotation("a", 100)});
+    // One annotation on disk, two on screen, and the flush that would have
+    // reconciled them fails.
+    h.model.add(core::RectangleGeometry{core::PointF{5.0, 5.0}, core::PointF{6.0, 6.0}});
+    h.repository.nextSave = core::SaveStatus::NotWritable;
+    h.sut.setResolver([](const core::WorkspaceSwitchFacts&, const core::WorkspaceSwitchOptions&) {
+        return app::WorkspaceChoice::Cancel;
+    });
+
+    const app::WorkspaceSwitchResult result = h.sut.run("/new", kKey, provenance());
+
+    REQUIRE(result.choice == app::WorkspaceChoice::Cancel);
+    REQUIRE(h.repository.root == "/old");
+    // Without the restore, beginSlide reloads the one-annotation file and the
+    // second annotation is gone -- from a dialog the user cancelled.
+    REQUIRE(h.model.annotations().size() == 2);
+    REQUIRE(h.persistence.isDirty());
+    REQUIRE(h.persistence.isActive());
+}
+
 TEST_CASE("cancel re-points back and leaves the slide saving", "[app][WorkspaceSwitch]")
 {
     Harness h;

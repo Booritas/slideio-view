@@ -90,6 +90,12 @@ public:
     // slide is open or the open slide could not be identified.
     const std::string& currentSlideId() const;
 
+    /// True when an associated image (a label or macro thumbnail) is on screen
+    /// rather than a real scene. It has no annotations of its own, and its slide
+    /// id is the file's, so treating it as a scene would load scene 0's
+    /// annotations over it.
+    [[nodiscard]] bool isAuxImageShown() const;
+
     /// The scene this viewport is showing. Half of the annotation key: a
     /// multi-scene file's scenes have one slide id between them.
     [[nodiscard]] int currentSceneIndex() const;

@@ -35,9 +35,15 @@ struct MergeOutcome
 /// replacement takes the slot the old one held, and ids only `incoming` had are
 /// appended.
 ///
-/// An id repeated inside one input is left alone: both copies survive and only
-/// the first is matched. That is malformed input, not a case to silently
-/// "repair" by dropping a clinical finding.
+/// An id repeated inside one input is malformed, and the two sides handle it
+/// differently -- deliberately, because only one of them can be handled well.
+/// A repeat inside `current` keeps both copies, since only the first is
+/// indexed and the second is matched by nothing. A repeat inside `incoming`
+/// meets the slot its own first copy just created and is compared against it
+/// like any other collision, so the later-stamped one of the two survives.
+/// Neither case is "repaired": note that AnnotationModel::replaceAll drops
+/// duplicate ids on the way into the model anyway, so a document carrying one
+/// cannot round-trip through this application whatever this function does.
 ///
 /// Nothing is deduplicated by geometry. Two identical shapes under different
 /// ids are two findings, possibly from two readers.
