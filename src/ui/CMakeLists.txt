@@ -37,6 +37,7 @@ add_library(slideio-viewer-ui STATIC
     src/SlidePropertiesPanel.cpp
     src/MetadataPanel.cpp
     src/SlideProfilesDialog.cpp
+    src/WorkspaceChangeDialog.cpp
     src/MainWindow.cpp
 )
 
