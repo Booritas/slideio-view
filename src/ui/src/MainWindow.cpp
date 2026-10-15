@@ -1479,6 +1479,20 @@ bool MainWindow::Impl::openPreferences()
     const QString requested = AnnotationSettings::resolveWorkspaceDirectory(entered);
 
     if (requested != QString::fromStdString(annotationRepository->workspaceRoot())) {
+        // Before that flush, and so before the aboutToCloseSlide listener,
+        // which on this path is too late to help: endSlide() below deactivates
+        // the service, and an inactive service drops every mutation that
+        // reaches it (AnnotationPersistenceService::markDirty, pinned by
+        // "endSlide flushes and then goes inactive"). The reopen at the end of
+        // this function would then emit aboutToCloseSlide, commit the field
+        // into a model nobody is writing any more, and discard it on the load
+        // from the new root. This is the one close path that flushes itself
+        // instead of letting closeSlide() do it, so it is the one path that
+        // has to commit for itself too.
+        if (annotationPropertiesPanel != nullptr) {
+            annotationPropertiesPanel->commitPendingEdit();
+        }
+
         // Flush to the OLD root before re-pointing, or the open slide's unsaved
         // work is written nowhere.
         const QString beforeFlush = annotationSettings->workspaceDirectory();
