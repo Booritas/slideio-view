@@ -337,21 +337,32 @@ move the third significant figure and make a correct panel look wrong. This run
 first appeared to fail for exactly that reason: 419 × 336 gives 7248 µm², which
 would display as `7250`. And the rectangle's perimeter is 2(w + h), not (w + h).
 
-**Also passed, same build:** W2, W3, W4, W5, W7, W8, W9, W12, W13, W14, W16.
+**Also passed, same build:** W2, W3, W4, W5, W6, W7, W8, W9, W12, W13, W14, W16.
 
-That covers the shape-dependent rows (W2-W4), uncalibrated fallback (W5), the
+W6 is the one with two thresholds in it: `formatLength` promotes at 1000 µm and
+`formatArea` at 1 mm², in different functions feeding different rows. On this
+slide a square of about 1102 px reads `1.00 mm` and `62500 µm²` at the same
+time — the length promoted, the area not — which is what shows the two rows
+decide independently. Drawn to a deliberate size rather than hunting the exact
+boundary: the status bar's ±0.5 px per edge is already ±0.05% of the area,
+which is the width of the promotion window, so a hand-drawn boundary case tests
+the mouse. The boundary itself is pinned by core-tests.
+
+The rest covers the shape-dependent rows (W2-W4), uncalibrated fallback (W5), the
 "measurement mutates nothing" guarantee (W7), both drag checks — responsive
 under a long trace (W8) and the area not moving by a digit under a
 several-hundred-vertex drag (W13) — the cache holding `true` as readily as
 `false` (W14), identical values across a close and reopen (W9), delete-and-undo
 (W12), and the Delete key itself (W16).
 
-**Not yet run:** W6, W10's upward half, W11, W15.
+**Not yet run:** W10's upward half, W11, W15.
 
-- **W6** — a shape crossing 1 mm and one crossing 1 mm². On this slide 1 mm is
-  about 4400 px, and 1 mm² needs both sides at that.
-- **W10 upward** — a region just under 1 mm across must promote to `1.00 mm²`
-  rather than reading `999999 µm²`. W1 and the downward half do not reach it.
+- **W10 upward** — written as "a region just under 1 mm across must promote to
+  `1.00 mm²` rather than reading `999999 µm²`", but the six digits are the
+  symptom, not the case: the pre-fix formatter printed the raw value with no
+  decimals, so *every* six-digit µm² area came out in full. Any of them
+  exposes it, and the target is then hundreds of pixels wide rather than one.
+  On this slide a 4350 px square must read `974000 µm²`, not `974399 µm²`.
 - **W11** — with nothing selected, the Area row reappears and the caption
   returns to "Perimeter". The empty state is the one W2's row-hiding can leave
   behind.
