@@ -12,6 +12,7 @@ add_library(slideio-viewer-core STATIC
     src/SlideId.cpp
     src/AnnotationGeometry.cpp
     src/AnnotationMeasurement.cpp
+    src/AnnotationMerge.cpp
     src/Annotation.cpp
     src/Iso8601.cpp
     src/AnnotationSerialization.cpp
