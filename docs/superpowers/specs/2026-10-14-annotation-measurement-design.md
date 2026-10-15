@@ -306,7 +306,7 @@ nothing silently.
 
 | # | Check |
 |---|-------|
-| W15 | Type a label into the properties panel and, **without clicking away or pressing Enter**, switch scenes from the scene panel. Reopen that scene: the typed label must be there. Repeat with a colour-profile change (Set Slide Profile, then Clear) and with changing the annotation workspace folder. Before the fix these five paths kept the text only because clicking the scene thumbnail moved focus first |
+| W15 | Type a label into the properties panel and, with the cursor still in the field, press **Ctrl+W**. Reopen the slide: the label must be there. Repeat with **Alt+F4** and reopen the application. Both are window-scoped shortcuts, so they reach `closeSlide()` without the field ever losing focus — which is what makes them the only gestures that can fail. Driving the same paths by mouse (a scene thumbnail, the Preferences dialog, a profile menu item) proves nothing: the click or popup fires `editingFinished` first and the edit is already committed before the close begins |
 | W16 | Select an annotation, press Delete, and confirm it goes. This is the ordinary path and passes either way; it is listed because the fix changed what the Delete key is gated on, and a regression here is silent — the key would simply do nothing |
 
 **Ordering note for W5:** run it immediately after a calibrated slide in the same
@@ -365,9 +365,22 @@ them exposes it, which makes the target hundreds of pixels wide rather than one
 — on this slide a 4350 px square must read `974000 µm²`, not `974399 µm²`.
 Whoever re-runs this should read it that way rather than hunting the boundary.
 
-**W15 found a defect, fixed in `9ec4ced`; needs a re-run against that build.**
+**W15 — ran as originally written, and the check turned out not to be able to
+fail.** An annotation was created, a label typed, and the workspace folder
+changed; the annotation vanished from the viewport. Nothing had been lost: the
+label reached the old root (`"label": "rect"`, document written 19:23:54Z), and
+the annotation vanished only because the new folder holds no file for that
+slide, which is what the setting means.
 
-The workspace-folder sub-case lost a typed label. `openPreferences()` is the one
+The reason it could not fail: every gesture the original W15 named moves focus —
+a scene thumbnail is a click, Preferences and the profile items are popups — and
+`QLineEdit::editingFinished` fires on focus loss, so the edit was always
+committed before the close path began. W15 is now written around Ctrl+W and
+Alt+F4, window-scoped shortcuts that never touch focus. Re-run it that way.
+
+**It did surface a real defect in passing, fixed in `9ec4ced`.**
+
+`openPreferences()` is the one
 close path that flushes on its own — it calls `endSlide()` before re-pointing
 the repository, so the open slide's work reaches the *old* root rather than
 being written nowhere. But `endSlide()` also deactivates the service, and
