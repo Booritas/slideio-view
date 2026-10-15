@@ -321,7 +321,7 @@ The install was verified by hashing rather than by timestamp: the installed and
 built `slideio-viewer.exe` are byte-identical (SHA-256 `f7f01907…`), which a
 silently skipped copy could not produce.
 
-**Passed:** W1, and the first half of W10.
+**Passed:** W1 and W10 — see the note below on what W10 is actually asking for.
 
 A rectangle stored as `topLeft (10324.826354229825, 9963.783141444372)`,
 `bottomRight (10743.707703930888, 10300.308157983869)` — 418.8813 × 336.5250 px,
@@ -355,14 +355,15 @@ several-hundred-vertex drag (W13) — the cache holding `true` as readily as
 `false` (W14), identical values across a close and reopen (W9), delete-and-undo
 (W12), and the Delete key itself (W16).
 
-**Not yet run:** W10's upward half, W11, W15.
+**W10 passed in both directions.** It is written as "a region just under 1 mm
+across must promote to `1.00 mm²` rather than reading `999999 µm²`", but the six
+digits are the symptom, not the case: the pre-fix formatter printed the raw
+value with no decimals, so *every* six-digit µm² area came out in full. Any of
+them exposes it, which makes the target hundreds of pixels wide rather than one
+— on this slide a 4350 px square must read `974000 µm²`, not `974399 µm²`.
+Whoever re-runs this should read it that way rather than hunting the boundary.
 
-- **W10 upward** — written as "a region just under 1 mm across must promote to
-  `1.00 mm²` rather than reading `999999 µm²`", but the six digits are the
-  symptom, not the case: the pre-fix formatter printed the raw value with no
-  decimals, so *every* six-digit µm² area came out in full. Any of them
-  exposes it, and the target is then hundreds of pixels wide rather than one.
-  On this slide a 4350 px square must read `974000 µm²`, not `974399 µm²`.
+**Not yet run:** W11, W15.
 - **W11** — with nothing selected, the Area row reappears and the caption
   returns to "Perimeter". The empty state is the one W2's row-hiding can leave
   behind.
