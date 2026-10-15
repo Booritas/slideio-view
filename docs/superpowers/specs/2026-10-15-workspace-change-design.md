@@ -56,6 +56,8 @@ struct WorkspaceSwitchResult
 {
     WorkspaceChoice choice = WorkspaceChoice::Cancel;
     bool asked = false;                 ///< false when no dialog was warranted
+    bool rescued = false;               ///< the save-failure resolver re-pointed the workspace
+    core::SaveStatus flush = core::SaveStatus::NothingToDo;  ///< how step 1 went
     core::MergeOutcome merge;           ///< zeroed unless choice == Merge
     core::SaveStatus write = core::SaveStatus::NothingToDo;
     std::string writePath;              ///< empty when nothing was written
@@ -221,7 +223,11 @@ is not acceptable; the count is the receipt.
   existing `SaveFailureResolver` may rescue the save to a folder the user picks
   mid-failure — which it then makes the workspace. That folder beats the
   dialog's entry, as it does today: the switch is abandoned, no probe, no
-  dialog, and the existing message names the folder in use.
+  dialog, and the existing message names the folder in use. **`run()` detects
+  this itself**, by comparing the root across step 1's flush, because it owns
+  that flush — `openPreferences()` must not flush as well, since `run()` reads
+  `isActive()` beforehand to decide whether the annotations may be written at
+  all, and a prior flush would make every switch look read-only.
 - **Undo stack: cleared on every switch**, including `Copy`, where the set does
   not change. A command recorded against one store, replayed after the store
   moved, would re-add into a folder it was never recorded against. One rule,
