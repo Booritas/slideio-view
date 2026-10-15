@@ -314,6 +314,33 @@ session, not from a cold start. One `setPixelSize` call clears both the
 calibration and the cache, so only a slide-to-slide transition shows both
 resetting.
 
+### Results — run 2026-10-15 against `main` @ `5203a80`
+
+Run by the project owner on `Philips-1.tiff`, scene 0, pixel size 0.2269 µm.
+The install was verified by hashing rather than by timestamp: the installed and
+built `slideio-viewer.exe` are byte-identical (SHA-256 `f7f01907…`), which a
+silently skipped copy could not produce.
+
+**Passed:** W1, and the first half of W10.
+
+A rectangle stored as `topLeft (10324.826354229825, 9963.783141444372)`,
+`bottomRight (10743.707703930888, 10300.308157983869)` — 418.8813 × 336.5250 px,
+so 95.0442 × 76.3575 µm. Hand calculation: perimeter 2 × (95.0442 + 76.3575) =
+342.80 µm, area 95.0442 × 76.3575 = 7257.34 µm². Panel: `343` and `7260`. Both
+are those values at three significant figures, which is also W10 in the
+downward direction — 7257.34 displayed as five digits would have failed here.
+
+**Method note for anyone re-running W1.** Hand-compute from the corners in the
+saved JSON, not from the status bar. The status bar rounds the cursor position
+to whole slide pixels, which on a ~400 px side is ±0.24% per edge — enough to
+move the third significant figure and make a correct panel look wrong. This run
+first appeared to fail for exactly that reason: 419 × 336 gives 7248 µm², which
+would display as `7250`. And the rectangle's perimeter is 2(w + h), not (w + h).
+
+**Not yet run:** W2-W9, W11-W16, and the second half of W10 — a region just
+under 1 mm across, which on this slide is about 4400 px, promoting to `1.00 mm²`
+rather than reading `999999 µm²`.
+
 ## Compliance note
 
 Measurements are derived from annotations, which are clinical findings on
