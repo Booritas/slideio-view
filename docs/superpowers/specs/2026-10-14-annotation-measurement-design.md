@@ -337,7 +337,8 @@ move the third significant figure and make a correct panel look wrong. This run
 first appeared to fail for exactly that reason: 419 × 336 gives 7248 µm², which
 would display as `7250`. And the rectangle's perimeter is 2(w + h), not (w + h).
 
-**Also passed, same build:** W2, W3, W4, W5, W6, W7, W8, W9, W12, W13, W14, W16.
+**Also passed, same build:** W2, W3, W4, W5, W6, W7, W8, W9, W11, W12, W13,
+W14, W16.
 
 W6 is the one with two thresholds in it: `formatLength` promotes at 1000 µm and
 `formatArea` at 1 mm², in different functions feeding different rows. On this
@@ -353,7 +354,8 @@ The rest covers the shape-dependent rows (W2-W4), uncalibrated fallback (W5), th
 under a long trace (W8) and the area not moving by a digit under a
 several-hundred-vertex drag (W13) — the cache holding `true` as readily as
 `false` (W14), identical values across a close and reopen (W9), delete-and-undo
-(W12), and the Delete key itself (W16).
+(W12), the Delete key itself (W16), and the empty state restoring the Area row
+and the "Perimeter" caption after an open trace had hidden them (W11).
 
 **W10 passed in both directions.** It is written as "a region just under 1 mm
 across must promote to `1.00 mm²` rather than reading `999999 µm²`", but the six
@@ -363,10 +365,8 @@ them exposes it, which makes the target hundreds of pixels wide rather than one
 — on this slide a 4350 px square must read `974000 µm²`, not `974399 µm²`.
 Whoever re-runs this should read it that way rather than hunting the boundary.
 
-**Not yet run:** W11, W15.
-- **W11** — with nothing selected, the Area row reappears and the caption
-  returns to "Perimeter". The empty state is the one W2's row-hiding can leave
-  behind.
+**Not yet run:** W15.
+
 - **W15** — the only check that distinguishes a committed pending edit from one
   that survived because the click moved focus first. Nothing automated covers
   the `aboutToCloseSlide` path at all.
