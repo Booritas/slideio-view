@@ -236,6 +236,12 @@ struct MainWindow::Impl
     // At most one save-failure dialog per run of bad luck. A failed save stays
     // dirty and is retried on the autosave debounce, so without this latch an
     // unwritable workspace puts a modal on screen every two seconds.
+    /// True between loadingStarted and loadingFinished. A slide open is async and
+    /// its completion is delivered on a queued connection, which runs inside any
+    /// modal dialog's nested event loop -- so an open can finish while the
+    /// workspace-change dialog is up and swap the model out from under a switch
+    /// that already captured the old slide's key.
+    bool slideLoadInFlight = false;
     bool saveFailureReported = false;
 
     void buildAnnotationPersistence();
@@ -955,6 +961,7 @@ struct MainWindow::Impl
                 loadingOverlay->resize(viewportWidget->size());
                 loadingOverlay->move(0, 0);
                 loadingOverlay->raise();
+                slideLoadInFlight = true;
                 loadingOverlay->start(displayName);
             });
 
@@ -964,6 +971,7 @@ struct MainWindow::Impl
             });
 
         QObject::connect(viewportWidget, &ViewportWidget::loadingFinished, owner, [this]() {
+            slideLoadInFlight = false;
             loadingOverlay->stop();
         });
 
@@ -1493,6 +1501,21 @@ bool MainWindow::Impl::openPreferences()
     const QString requested = AnnotationSettings::resolveWorkspaceDirectory(entered);
 
     if (requested != QString::fromStdString(annotationRepository->workspaceRoot())) {
+        if (slideLoadInFlight) {
+            // A switch captures the open slide's key and set, then shows a
+            // modal dialog. An async open completing during that dialog --
+            // queued connections do run in a modal nested loop -- would call
+            // beginSlide() for the NEW slide underneath it, after which the
+            // switch would write the previous slide's annotations and then load
+            // them back over a slide they do not belong to. Refusing is enough:
+            // a modal dialog is also what stops the user starting an open once
+            // the switch is already under way.
+            statusBarManager->showTransientMessage(
+                tr("The annotation folder was not changed: a slide is still opening. "
+                   "Try again once it has finished."));
+            return annotationSettings->hasUserName();
+        }
+
         // Before everything: a field typed into but not yet committed would
         // otherwise be lost, and this is the one close path that does not go
         // through closeSlide()'s aboutToCloseSlide listener.
