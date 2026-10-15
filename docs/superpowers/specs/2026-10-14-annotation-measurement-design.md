@@ -337,9 +337,27 @@ move the third significant figure and make a correct panel look wrong. This run
 first appeared to fail for exactly that reason: 419 × 336 gives 7248 µm², which
 would display as `7250`. And the rectangle's perimeter is 2(w + h), not (w + h).
 
-**Not yet run:** W2-W9, W11-W16, and the second half of W10 — a region just
-under 1 mm across, which on this slide is about 4400 px, promoting to `1.00 mm²`
-rather than reading `999999 µm²`.
+**Also passed, same build:** W2, W3, W4, W5, W7, W8, W9, W12, W13, W14, W16.
+
+That covers the shape-dependent rows (W2-W4), uncalibrated fallback (W5), the
+"measurement mutates nothing" guarantee (W7), both drag checks — responsive
+under a long trace (W8) and the area not moving by a digit under a
+several-hundred-vertex drag (W13) — the cache holding `true` as readily as
+`false` (W14), identical values across a close and reopen (W9), delete-and-undo
+(W12), and the Delete key itself (W16).
+
+**Not yet run:** W6, W10's upward half, W11, W15.
+
+- **W6** — a shape crossing 1 mm and one crossing 1 mm². On this slide 1 mm is
+  about 4400 px, and 1 mm² needs both sides at that.
+- **W10 upward** — a region just under 1 mm across must promote to `1.00 mm²`
+  rather than reading `999999 µm²`. W1 and the downward half do not reach it.
+- **W11** — with nothing selected, the Area row reappears and the caption
+  returns to "Perimeter". The empty state is the one W2's row-hiding can leave
+  behind.
+- **W15** — the only check that distinguishes a committed pending edit from one
+  that survived because the click moved focus first. Nothing automated covers
+  the `aboutToCloseSlide` path at all.
 
 ## Compliance note
 
