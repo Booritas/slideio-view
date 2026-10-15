@@ -187,6 +187,14 @@ signals:
     void viewportChanged();
     void cursorMoved(double slideX, double slideY);
     void slideOpened(const std::string& filePath);
+    /// The first statement of closeSlide(), ahead of the persistence flush and
+    /// of everything it tears down. The model is still whole here, which is the
+    /// point: this is the last moment an editor can push a half-typed field
+    /// into it and have that edit reach the file. Every path that empties the
+    /// model -- a new slide, a scene switch, a colour-profile reopen, the Close
+    /// action, quitting -- goes through closeSlide(), so a listener placed here
+    /// covers all of them, including ones written later.
+    void aboutToCloseSlide();
     void slideClosed();
     void thumbnailReady(const QImage& thumbnail);
     void errorOccurred(const std::string& message);
@@ -235,7 +243,11 @@ private:
     /// set or the annotation is not in the model. Called after the mutation has
     /// already gone through AnnotationModel's own API.
     void pushCreateCommand(const std::string& id);
-    void pushDeleteCommand(const std::string& id);
+    /// Removes `id` and records the removal. Unlike the push* functions around
+    /// it, this one performs the mutation as well, which is why it must not be
+    /// gated on the undo stack: with no stack the annotation still goes, just
+    /// unrecorded. Gating it would make the Delete key a silent no-op.
+    void deleteAnnotation(const std::string& id);
     /// Records one completed move drag as a single step. Called on release, not
     /// from the per-frame setGeometry that drives the live preview.
     void pushMoveCommand(const std::string& id, const std::optional<core::Annotation>& original);

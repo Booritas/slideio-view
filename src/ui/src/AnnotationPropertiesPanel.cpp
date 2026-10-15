@@ -443,8 +443,8 @@ void AnnotationPropertiesPanel::commit()
 {
     // editingAllowed is checked here as well as on the widgets: the flag can
     // flip while a field holds focus, and commitPendingEdit() is called from
-    // MainWindow on paths (closeEvent, openSlide) that do not go through a
-    // widget signal at all.
+    // MainWindow's aboutToCloseSlide listener, a path that does not go through
+    // a widget signal at all.
     if (m_impl->populating || m_impl->model == nullptr || m_impl->shownId.empty()
         || !m_impl->editingAllowed) {
         return;

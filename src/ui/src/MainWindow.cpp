@@ -494,11 +494,8 @@ struct MainWindow::Impl
         }
 
         QObject::connect(closeAction, &QAction::triggered, owner, [this]() {
-            // Before closeSlide(): a field typed into but not yet committed
-            // would otherwise be wiped when the model empties.
-            if (annotationPropertiesPanel != nullptr) {
-                annotationPropertiesPanel->commitPendingEdit();
-            }
+            // A pending properties edit is committed by the aboutToCloseSlide
+            // listener above, which closeSlide() emits before it flushes.
             viewportWidget->closeSlide();
             closeAction->setEnabled(false);
             // Reset the tool here rather than on the slideClosed signal, which
@@ -669,6 +666,19 @@ struct MainWindow::Impl
 
         QObject::connect(viewportWidget, &ViewportWidget::annotationEditBlocked, owner,
                          [this](const QString& reason) { statusBarManager->showTransientMessage(reason); });
+
+        // A field typed into but not yet committed would otherwise be wiped
+        // when the model empties. This used to be a call placed by hand ahead
+        // of the three closeSlide() sites MainWindow owns, which left the five
+        // that go through openScene() and reopenCurrentScene() -- a scene
+        // switch, a workspace-folder change, and three colour-profile paths --
+        // relying on the focus moving first. That is luck, not design. The
+        // signal fires from closeSlide() itself, so every path is covered.
+        QObject::connect(viewportWidget, &ViewportWidget::aboutToCloseSlide, owner, [this]() {
+            if (annotationPropertiesPanel != nullptr) {
+                annotationPropertiesPanel->commitPendingEdit();
+            }
+        });
 
         QObject::connect(manageSlideProfilesAction, &QAction::triggered, owner, [this]() {
             const std::string openSlideId = owner->currentSlideId();
@@ -1773,10 +1783,8 @@ MainWindow::~MainWindow()
 
 void MainWindow::openSlide(const std::string& path, const std::string& driverId)
 {
-    // First, ahead of the closeSlide() this leads to: see the Close action.
-    if (m_impl->annotationPropertiesPanel != nullptr) {
-        m_impl->annotationPropertiesPanel->commitPendingEdit();
-    }
+    // A pending properties edit is committed from aboutToCloseSlide, which the
+    // viewport's own openSlide() reaches through closeSlide().
     // Don't clear the scene/aux panels here — the slideOpened handler will
     // rebuild them when (and only when) the file actually changes. Clearing
     // eagerly would flash empty panels for the duration of the load.
@@ -2099,10 +2107,8 @@ void MainWindow::dropEvent(QDropEvent* event)
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    // First: the commit must reach the model before closeSlide() flushes it.
-    if (m_impl->annotationPropertiesPanel != nullptr) {
-        m_impl->annotationPropertiesPanel->commitPendingEdit();
-    }
+    // A pending properties edit is committed from aboutToCloseSlide, which
+    // closeSlide() emits before it flushes.
     // Quitting with a slide open would otherwise lose up to a full autosave
     // debounce of work: ~ViewportWidget does not close the slide, so nothing
     // flushes. closeSlide() flushes before it empties the model, by design.

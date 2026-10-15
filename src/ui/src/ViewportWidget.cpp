@@ -2338,7 +2338,11 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
 
 void ViewportWidget::closeSlide()
 {
-    // Before everything, and specifically before resetAnnotationState() below:
+    // Before the flush below, because a listener's whole job here is to get an
+    // edit into the model while there is still something to flush it with.
+    emit aboutToCloseSlide();
+
+    // Before everything else, and specifically before resetAnnotationState() below:
     // openScene() calls closeSlide() internally, so this is also the flush that
     // runs on a slide switch and on reopenCurrentScene() -- which is what keeps
     // an ICC profile change from destroying the slide's annotations.
@@ -2823,13 +2827,22 @@ void ViewportWidget::pushCreateCommand(const std::string& id)
         *m_impl->annotations, id, std::nullopt, std::move(after), what.toStdString()));
 }
 
-void ViewportWidget::pushDeleteCommand(const std::string& id)
+void ViewportWidget::deleteAnnotation(const std::string& id)
 {
-    if (m_impl->undoStack == nullptr || id.empty()) {
+    if (id.empty()) {
         return;
     }
     const core::Annotation* stored = m_impl->annotations->find(id);
     if (stored == nullptr) {
+        return;
+    }
+    if (m_impl->undoStack == nullptr) {
+        // The removal is what the user asked for; recording it is this
+        // application's bookkeeping. Deciding not to remove because there is
+        // nowhere to record it would make Delete do nothing, with no message
+        // saying why. Copied first: remove() can destroy what `id` names.
+        const std::string targetId = id;
+        m_impl->annotations->remove(targetId);
         return;
     }
     const QString what = tr("Delete %1").arg(shapeName(*stored));
@@ -4217,7 +4230,7 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
         }
         // Captured before the remove: afterwards there is nothing left to copy.
         const std::string doomedId = m_impl->annotations->selectedId();
-        pushDeleteCommand(doomedId);
+        deleteAnnotation(doomedId);
         event->accept();
         update();
         return;

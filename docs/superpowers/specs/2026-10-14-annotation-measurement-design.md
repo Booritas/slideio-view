@@ -298,6 +298,17 @@ Each exists because the first nine would pass while something specific was broke
 | W13 | Drag a closed polygon of a few hundred vertices with the dock open and watch the Area field: it must not change by a single digit. W8 covers whether that path stays *responsive*; nothing else covers whether it stays *correct* |
 | W14 | Drag the self-intersecting trace from W4 and confirm `unavailable (self-intersecting)` persists rather than a number appearing. The cache stores `true` as readily as `false` |
 
+### Added after the user's whole-branch review
+
+Two findings from that review were in widget code no suite can reach, so the
+fixes are verified here rather than by a test. Both are about a path doing
+nothing silently.
+
+| # | Check |
+|---|-------|
+| W15 | Type a label into the properties panel and, **without clicking away or pressing Enter**, switch scenes from the scene panel. Reopen that scene: the typed label must be there. Repeat with a colour-profile change (Set Slide Profile, then Clear) and with changing the annotation workspace folder. Before the fix these five paths kept the text only because clicking the scene thumbnail moved focus first |
+| W16 | Select an annotation, press Delete, and confirm it goes. This is the ordinary path and passes either way; it is listed because the fix changed what the Delete key is gated on, and a regression here is silent — the key would simply do nothing |
+
 **Ordering note for W5:** run it immediately after a calibrated slide in the same
 session, not from a cold start. One `setPixelSize` call clears both the
 calibration and the cache, so only a slide-to-slide transition shows both
