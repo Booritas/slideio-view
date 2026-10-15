@@ -365,7 +365,23 @@ them exposes it, which makes the target hundreds of pixels wide rather than one
 — on this slide a 4350 px square must read `974000 µm²`, not `974399 µm²`.
 Whoever re-runs this should read it that way rather than hunting the boundary.
 
-**Not yet run:** W15.
+**W15 found a defect, fixed in `9ec4ced`; needs a re-run against that build.**
+
+The workspace-folder sub-case lost a typed label. `openPreferences()` is the one
+close path that flushes on its own — it calls `endSlide()` before re-pointing
+the repository, so the open slide's work reaches the *old* root rather than
+being written nowhere. But `endSlide()` also deactivates the service, and
+`markDirty()` early-returns while inactive, so the `aboutToCloseSlide` listener
+— which fires later, from that function's closing `reopenCurrentScene()` —
+committed the field into a model nobody was writing any more. `beginSlide()`
+then replaced it from the new root. The commit now happens ahead of the flush,
+in `openPreferences()` itself.
+
+**Not a defect, same report:** the annotations vanishing from the view when the
+workspace moves to a folder holding none. That is what the setting means, and
+nothing was lost — the old root still held all six files, the open slide's among
+them with its 18 annotations, and nothing had been written to the new root at
+all. Whether the viewer should *say* so is a UX question, not a correctness one.
 
 - **W15** — the only check that distinguishes a committed pending edit from one
   that survived because the click moved focus first. Nothing automated covers
