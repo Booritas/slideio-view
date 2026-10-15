@@ -313,6 +313,11 @@ The dialog cannot be constructed in any test, since no test binary creates a
 | X8 | No slide open: the folder changes with no dialog at all |
 | X9 | **The slide does not visibly reload** during any switch — no tile flicker, no loading overlay. The only evidence the switch stopped going through `closeSlide()` |
 | X10 | A slide with annotations on two scenes: only the open scene's file travels, and the dialog said so |
+| X12 | **Put a deliberately corrupted file for the open slide in the new folder and switch to it.** The refusal dialog appears *and* the three drawing tools go disabled, the properties fields grey out, and the status bar says annotations are read-only. Before the fix the tools stayed enabled and anything drawn afterwards was accepted by the model, never written, and gone at the next close |
+| X13 | **Display an associated image (a label or macro thumbnail), then change the workspace folder.** No dialog, nothing appears over the label, and the tools stay disabled. An associated image answers `isSlideOpen()` with true and carries the file's slide id, so without the guard this loads scene 0's annotations onto it |
+| X14 | **Make both the old and the new folder unwritable, then switch and choose Copy.** A *critical dialog* — not a transient line — says neither folder could be written, and the annotations are still on screen. The old message claimed they were safe in the folder you switched from, which in this case is false |
+| X15 | **Make the old folder unwritable, draw something, switch, and press Cancel.** What is on screen must be exactly what was there before the dialog, including the annotation that never reached disk. Before the fix, Cancel reloaded the stale file over it |
+| X16 | On the X12 dialog (only "Use the new folder's" and Cancel offered), press **Enter**. Nothing destructive happens — Cancel is the default. Without an explicit default the first auto-default button wins, and that is the switch |
 | X11 | Undo is empty after a switch — draw something, switch, and confirm Edit ▸ Undo is disabled. No new code clears it; the clear rides on the `modelReset` that `beginSlide` already emits, so this is the check that the existing listener still fires on a path that no longer goes through `closeSlide()` |
 
 ## Compliance note
