@@ -307,6 +307,7 @@ The dialog cannot be constructed in any test, since no test binary creates a
 | X8 | No slide open: the folder changes with no dialog at all |
 | X9 | **The slide does not visibly reload** during any switch — no tile flicker, no loading overlay. The only evidence the switch stopped going through `closeSlide()` |
 | X10 | A slide with annotations on two scenes: only the open scene's file travels, and the dialog said so |
+| X11 | Undo is empty after a switch — draw something, switch, and confirm Edit ▸ Undo is disabled. No new code clears it; the clear rides on the `modelReset` that `beginSlide` already emits, so this is the check that the existing listener still fires on a path that no longer goes through `closeSlide()` |
 
 ## Compliance note
 
