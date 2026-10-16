@@ -323,7 +323,7 @@ The dialog cannot be constructed in any test, since no test binary creates a
 
 ### Results — run 2026-10-16 against `main` @ `ca90353`
 
-**Passed:** X1, X2, X3, X4, X5, X6, X7, X8, X9, X10, X12.
+**Passed:** X1, X2, X3, X4, X5, X6, X7, X8, X9, X10, X11, X12.
 
 X1-X5 are the five outcome checks: Copy into an empty folder, Merge, Keep what's
 on screen, Use the new folder's, and Cancel. Together they cover every branch of
@@ -362,6 +362,14 @@ was, *and the dialog said so* before the choice was made. A user who assumed
 "copy" meant the whole slide would otherwise find out afterwards, which is the
 wrong time.
 
+X11 is the counterpart to X9, and the two are in tension: X9 wants the switch
+to skip `closeSlide()`, and `closeSlide()` is where the undo stack used to be
+cleared. No new code replaced it. The clear rides on the `modelReset` that
+`AnnotationModel::replaceAll` emits from inside `beginSlide`, and X11 is what
+proves that existing listener still fires on a path that no longer goes through
+`closeSlide()`. Had it not, Ctrl+Z after a switch would have undone an edit
+against annotations the model no longer holds.
+
 X12 is the first of the review findings to be verified, and the worst of them.
 X6 already showed the refusal dialog is right; X12 asks the question X6 cannot
 — what the application lets you do *afterwards*. Before the fix the drawing
@@ -380,9 +388,9 @@ used to call `endSlide()` and never come back, so everything drawn afterwards
 was accepted by the model, never written, and gone at the next close. It
 passing means `beginSlide` is reached on the abandoned path too.
 
-**Not yet run:** X11, and X13-X17. X11 is the undo clear. The other five are
-the remaining checks added after the whole-branch review, each pinning a defect
-that review found; none of those fixes is verified until its check runs.
+**Not yet run:** X13-X17 — the remaining checks added after the whole-branch
+review, each pinning a defect that review found. None of those fixes is
+verified until its check runs, and every check still outstanding is one of them.
 
 ## Compliance note
 
