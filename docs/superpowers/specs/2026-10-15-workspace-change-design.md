@@ -323,7 +323,7 @@ The dialog cannot be constructed in any test, since no test binary creates a
 
 ### Results — run 2026-10-16 against `main` @ `ca90353`
 
-**Passed:** X1, X2, X3, X4, X5, X6, X7.
+**Passed:** X1, X2, X3, X4, X5, X6, X7, X8.
 
 X1-X5 are the five outcome checks: Copy into an empty folder, Merge, Keep what's
 on screen, Use the new folder's, and Cancel. Together they cover every branch of
@@ -340,6 +340,12 @@ cannot be trusted rather than the ones on disk: a slide-id mismatch answered
 ReadOnly leaves `currentWritable` false, and a read-only set is not carried into
 a folder where it would look authoritative.
 
+X8 is the no-dialog row — nothing on screen, nothing to warn about. It is worth
+having run because the feature's whole risk is asking a question nobody needed:
+a user who changes the folder with no slide open must not meet a dialog at all,
+and `workspaceSwitchOptions` returning `ask == false` on `currentCount == 0` is
+what keeps the old silent behaviour exactly where it was already right.
+
 X5 is the one with teeth among them. "A subsequent edit still autosaves" is the
 only check that can catch a service left deactivated on the Cancel path, and a
 deactivated service is exactly what the original defect produced — the switch
@@ -347,7 +353,7 @@ used to call `endSlide()` and never come back, so everything drawn afterwards
 was accepted by the model, never written, and gone at the next close. It
 passing means `beginSlide` is reached on the abandoned path too.
 
-**Not yet run:** X8-X17. What is left is the no-dialog cases (X8, X10), the two
+**Not yet run:** X9-X17. What is left is the scene-scoping check (X10), the two
 checks on what the switch must *not* do (X9 no reload, X11 undo cleared), and
 the six added after the whole-branch review (X12-X17) — each of which pins a
 defect that review found, so none of those fixes is verified until its check
