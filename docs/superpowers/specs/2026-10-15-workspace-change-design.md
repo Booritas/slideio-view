@@ -314,7 +314,7 @@ The dialog cannot be constructed in any test, since no test binary creates a
 | X9 | **The slide does not visibly reload** during any switch — no tile flicker, no loading overlay. The only evidence the switch stopped going through `closeSlide()` |
 | X10 | A slide with annotations on two scenes: only the open scene's file travels, and the dialog said so |
 | X12 | **Put a deliberately corrupted file for the open slide in the new folder and switch to it.** The refusal dialog appears *and* the three drawing tools go disabled, the properties fields grey out, and the status bar says annotations are read-only. Before the fix the tools stayed enabled and anything drawn afterwards was accepted by the model, never written, and gone at the next close |
-| X13 | **Display an associated image (a label or macro thumbnail), then change the workspace folder.** No dialog, nothing appears over the label, and the tools stay disabled. An associated image answers `isSlideOpen()` with true and carries the file's slide id, so without the guard this loads scene 0's annotations onto it |
+| X13 | **Open an associated image (a label or macro thumbnail) from the Associated Images panel, then change the workspace folder.** The dialog appears and behaves exactly as X1, because the preview is a separate `AssociatedImageWindow` and the slide is still what the viewport holds. The preview window is untouched by the switch. **This is not the guard's check** — see the note under Results: the viewport state `isAuxImageShown()` tests cannot currently be reached from the UI at all |
 | X14 | **Make both the old and the new folder unwritable, then switch and choose Copy.** A *critical dialog* — not a transient line — says neither folder could be written, and the annotations are still on screen. The old message claimed they were safe in the folder you switched from, which in this case is false |
 | X15 | **Make the old folder unwritable, draw something, switch, and press Cancel.** What is on screen must be exactly what was there before the dialog, including the annotation that never reached disk. Before the fix, Cancel reloaded the stale file over it |
 | X16 | On the X12 dialog (only "Use the new folder's" and Cancel offered), press **Enter**. Nothing destructive happens — Cancel is the default. Without an explicit default the first auto-default button wins, and that is the switch |
@@ -323,7 +323,8 @@ The dialog cannot be constructed in any test, since no test binary creates a
 
 ### Results — run 2026-10-16 against `main` @ `ca90353`
 
-**Passed:** X1, X2, X3, X4, X5, X6, X7, X8, X9, X10, X11, X12.
+**Passed:** X1, X2, X3, X4, X5, X6, X7, X8, X9, X10, X11, X12, X13 — the last
+one rewritten after the run, for the reason below.
 
 X1-X5 are the five outcome checks: Copy into an empty folder, Merge, Keep what's
 on screen, Use the new folder's, and Cancel. Together they cover every branch of
@@ -388,9 +389,34 @@ used to call `endSlide()` and never come back, so everything drawn afterwards
 was accepted by the model, never written, and gone at the next close. It
 passing means `beginSlide` is reached on the abandoned path too.
 
-**Not yet run:** X13-X17 — the remaining checks added after the whole-branch
+**X13 was asking for a state the UI cannot reach.** Run as written — open a
+thumbnail from the Associated Images panel, then change the folder — the dialog
+appeared, Copy worked, and the annotation stayed on screen. That is correct, and
+the check was wrong to expect silence. The panel's handler calls `loadAuxImage`,
+takes the `QImage` back and pops a separate `AssociatedImageWindow`; the slide
+never leaves the viewport. Commit `1d4fe92` made it so deliberately.
+
+The viewport-level aux state the guard tests comes from
+`ViewportWidget::openAuxImage`, and that is a closed loop:
+`currentAuxImageName` is assigned in exactly one place
+(`ViewportWidget.cpp:2419`, inside `openAuxImage`), and `openAuxImage` has
+exactly one caller — `reopenCurrentScene` at line 2801, inside
+`if (!auxName.empty())`. The only setter runs only when the flag is already
+set, so it can never go from empty to non-empty. **`isAuxImageShown()` is
+always false today, and the guard in `openPreferences` protects nothing.**
+
+The guard stays. `openAuxImage` is still public API and `reopenCurrentScene`
+still branches on it, so the dead end is in the wiring, not in the widget; if
+an aux image is ever shown in the viewport again the reasoning in that comment
+holds exactly as written — it answers `isSlideOpen()` with true and carries the
+file's slide id with scene index 0. What changes is the claim about it: it is
+insurance against a path that is currently unreachable, not a fix for a defect
+anyone can hit. Nothing verifies it, and no manual check can until that path
+has a caller.
+
+**Not yet run:** X14-X17 — the remaining checks added after the whole-branch
 review, each pinning a defect that review found. None of those fixes is
-verified until its check runs, and every check still outstanding is one of them.
+verified until its check runs.
 
 ## Compliance note
 

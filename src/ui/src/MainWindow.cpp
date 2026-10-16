@@ -1539,6 +1539,18 @@ bool MainWindow::Impl::openPreferences()
             // beginSlide() scene 0 and paint the tissue's annotations over a
             // label, which is exactly what the open path refuses to do.
             //
+            // isAuxImageShown() is false today whatever the user does, and this
+            // half of the condition is insurance, not a live guard: the
+            // Associated Images panel previews into a separate window and
+            // leaves the slide in the viewport (see the auxImageSelected
+            // handler above), and ViewportWidget::openAuxImage -- the only
+            // thing that sets currentAuxImageName -- is reached only from
+            // reopenCurrentScene, which calls it only when that name is already
+            // non-empty. Nothing can set it first. Check X13 cannot exercise
+            // this branch and no test reaches it either; it is here for the
+            // wiring coming back, and the reasoning above is what makes it
+            // right when it does.
+            //
             // Nothing to carry over and nothing to ask about. Re-rooted, never
             // rebuilt: the service holds a core::IAnnotationRepository& bound at
             // construction, so destroying the repository out from under it is a
