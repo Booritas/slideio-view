@@ -109,13 +109,21 @@ WorkspaceChangeDialog::WorkspaceChangeDialog(const core::WorkspaceSwitchFacts& f
 
     if (preferred != nullptr) {
         preferred->setDefault(true);
+        preferred->setFocus();
     } else {
         // Nothing constructive is on offer -- the new folder's file could not be
         // parsed, or these annotations are read-only. The remaining choice
-        // switches away from what is on screen, so Enter must not reach for it:
-        // without an explicit default the first auto-default button wins, and
-        // that is the switch, not Cancel.
+        // switches away from what is on screen, so Enter must not reach for it.
+        //
+        // setDefault() alone does not achieve that, which check X16 caught:
+        // QPushButton::autoDefault is on for every button in a dialog, and an
+        // auto-default button takes over as the default while it has focus. No
+        // one had given Cancel focus, so focus went to the first button in the
+        // box -- the switch -- and it became the default regardless of what was
+        // set here. Focus is what decides; setDefault only decides among
+        // unfocused buttons.
         cancel->setDefault(true);
+        cancel->setFocus();
     }
 
     layout->addWidget(buttons);

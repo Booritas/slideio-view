@@ -415,6 +415,19 @@ round trip. Nothing automated could have caught this -- the app test proves the
 restore happens, but only a human can confirm the shape on screen is the one
 that was there before the dialog opened.
 
+**X16 failed on this build and was fixed.** "Use the new folder's" was the
+default button despite `cancel->setDefault(true)`, so Enter on the refusal
+dialog did the destructive thing. `setDefault()` was the wrong instrument:
+`QPushButton::autoDefault` is on for every button in a dialog, and an
+auto-default button **takes over as the default while it has focus**. Nothing
+gave Cancel focus, so focus went to the first button in the box — the switch —
+and it became the default regardless. Focus decides; `setDefault` only decides
+among unfocused buttons. Both branches now set focus along with the default,
+which also removes the constructive branch's unstated dependence on
+`QDialogButtonBox` laying the preferred button out first. No test can reach
+this: the dialog cannot be constructed without a `QApplication`, so X16 re-run
+is the only gate.
+
 **X13 was asking for a state the UI cannot reach.** Run as written — open a
 thumbnail from the Associated Images panel, then change the folder — the dialog
 appeared, Copy worked, and the annotation stayed on screen. That is correct, and
