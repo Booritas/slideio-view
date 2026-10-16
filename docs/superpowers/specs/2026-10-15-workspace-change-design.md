@@ -321,6 +321,28 @@ The dialog cannot be constructed in any test, since no test binary creates a
 | X17 | **Open a slide from a slow source and, while it is still loading, change the workspace folder.** The change is refused with "a slide is still opening", and nothing is written. The hazard is not theoretical: the open completes on a queued connection, which runs inside a modal dialog's event loop, so without the guard the open would swap the model out from under a switch that had already captured the previous slide's key — and that slide's annotations would end up loaded over this one |
 | X11 | Undo is empty after a switch — draw something, switch, and confirm Edit ▸ Undo is disabled. No new code clears it; the clear rides on the `modelReset` that `beginSlide` already emits, so this is the check that the existing listener still fires on a path that no longer goes through `closeSlide()` |
 
+### Results — run 2026-10-16 against `main` @ `ca90353`
+
+**Passed:** X1, X2, X3, X4, X5.
+
+That is the five outcome checks: Copy into an empty folder, Merge, Keep what's
+on screen, Use the new folder's, and Cancel. Together they cover every branch of
+`applyChoice` and both write paths, so the sequence in `app::WorkspaceSwitch` is
+exercised end to end against a real repository rather than against the fake.
+
+X5 is the one with teeth among them. "A subsequent edit still autosaves" is the
+only check that can catch a service left deactivated on the Cancel path, and a
+deactivated service is exactly what the original defect produced — the switch
+used to call `endSlide()` and never come back, so everything drawn afterwards
+was accepted by the model, never written, and gone at the next close. It
+passing means `beginSlide` is reached on the abandoned path too.
+
+**Not yet run:** X6-X17 — the failure conditions. A corrupt file in the target
+folder, an unwritable folder, a read-only slide, an associated image on screen,
+a switch during a load, and the keyboard default on the refusal dialog. The six
+added after the whole-branch review (X12-X17) each pin a defect that review
+found, so none of those fixes is verified until its check runs.
+
 ## Compliance note
 
 Annotations are clinical findings made on patient images, so this feature moves
