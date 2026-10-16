@@ -323,9 +323,9 @@ The dialog cannot be constructed in any test, since no test binary creates a
 
 ### Results — run 2026-10-16 against `main` @ `ca90353`
 
-**Passed:** X1, X2, X3, X4, X5, X6, X7, X8, X9, X10, X11, X12, X13, X14, X15, X16 — X13
-rewritten after the run, and X16 passing only on the second run, both for the
-reasons below.
+**Passed:** X1, X2, X3, X4, X5, X6, X7, X8, X9, X10, X11, X12, X13, X14, X15, X16, X17 —
+all seventeen. X13 was rewritten after its run and X16 and X17 passed only on a
+second run, all for the reasons below.
 
 X1-X5 are the five outcome checks: Copy into an empty folder, Merge, Keep what's
 on screen, Use the new folder's, and Cancel. Together they cover every branch of
@@ -480,9 +480,19 @@ hang itself is a separate defect and is not fixed here** — an open that cannot
 finish and cannot be cancelled is a problem this sub-project neither introduced
 nor addresses.
 
-**X17 is the one check still outstanding.** It needs re-running against a build
-carrying its fix, and no test can cover it: the in-flight guard needs a real
-async open.
+X17 passed on re-run: the modal appears, the folder does not change, and the
+way out is stated. **The hang reproduced again on that run and is still
+unfixed.** It is recorded here because it is how X17 was reachable at all, not
+because this sub-project caused it or resolves it: an open that can neither
+finish nor be cancelled belongs to the open path, and it wants its own
+investigation.
+
+**Group X is complete — all seventeen checks pass.** Three of them only after a
+correction the checks themselves forced, which is the case for keeping the list:
+every defect this feature shipped with was found either by the whole-branch
+review or by running these, and the three the review's own fixes got wrong
+(X13's unreachable guard, X16's ineffective default, X17's unnoticeable report)
+were found only here.
 
 ## Compliance note
 
