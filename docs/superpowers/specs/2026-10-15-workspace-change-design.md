@@ -323,8 +323,8 @@ The dialog cannot be constructed in any test, since no test binary creates a
 
 ### Results — run 2026-10-16 against `main` @ `ca90353`
 
-**Passed:** X1, X2, X3, X4, X5, X6, X7, X8, X9, X10, X11, X12, X13 — the last
-one rewritten after the run, for the reason below.
+**Passed:** X1, X2, X3, X4, X5, X6, X7, X8, X9, X10, X11, X12, X13, X14 — X13
+rewritten after the run, for the reason below.
 
 X1-X5 are the five outcome checks: Copy into an empty folder, Merge, Keep what's
 on screen, Use the new folder's, and Cancel. Together they cover every branch of
@@ -389,6 +389,19 @@ used to call `endSlide()` and never come back, so everything drawn afterwards
 was accepted by the model, never written, and gone at the next close. It
 passing means `beginSlide` is reached on the abandoned path too.
 
+X14 is the one where the fix was to a *message* rather than to behaviour, and
+it is still the finding with the worst consequence of the three the review
+graded Important. With both folders unwritable and Copy chosen, nothing can be
+written anywhere, and the old transient line told the user their annotations
+were safe in the folder they had just switched away from — a false statement
+about where someone's work is, delivered in the one place they would not look
+twice. It now raises a critical dialog saying neither folder could be written,
+and the annotations stay on screen, unsaved and visibly so. Reaching this at
+all takes a deny ACE on each folder; the Windows read-only attribute is ignored
+for directories, and denying only the workspace root is a no-op once its
+`annotations` subfolder exists, since `QDir::mkpath` succeeds on a folder that
+is already there.
+
 **X13 was asking for a state the UI cannot reach.** Run as written — open a
 thumbnail from the Associated Images panel, then change the folder — the dialog
 appeared, Copy worked, and the annotation stayed on screen. That is correct, and
@@ -414,9 +427,9 @@ insurance against a path that is currently unreachable, not a fix for a defect
 anyone can hit. Nothing verifies it, and no manual check can until that path
 has a caller.
 
-**Not yet run:** X14-X17 — the remaining checks added after the whole-branch
-review, each pinning a defect that review found. None of those fixes is
-verified until its check runs.
+**Not yet run:** X15, X16, X17 — the remaining checks added after the
+whole-branch review, each pinning a defect that review found. None of those
+fixes is verified until its check runs.
 
 ## Compliance note
 
