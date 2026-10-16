@@ -453,9 +453,29 @@ insurance against a path that is currently unreachable, not a fix for a defect
 anyone can hit. Nothing verifies it, and no manual check can until that path
 has a caller.
 
-**Not yet run:** X16 and X17 — the keyboard default on the refusal dialog, and
-the switch attempted during a slide load. Each pins a defect the whole-branch
-review found, and neither fix is verified until its check runs.
+**X17 found the guard correct and the report inadequate.** The switch was
+refused — `setWorkspaceDirectory` is never reached on that path, so the folder
+genuinely did not change — but it was reported with `showTransientMessage`, a
+four-second status line, while the loading overlay held the user's attention in
+the middle of the viewport and they had just pressed OK on Preferences. The
+observed result was an action that silently did not happen, which is worse than
+one refused out loud. It now raises a modal box, the same correction X14 made
+for the same reason.
+
+The run also exposed that the guard had no way out. A slide open runs on a
+detached thread with no timeout and no cancel: `loadingFinished` is emitted on
+success (`ViewportWidget.cpp:2623`), on open failure (`:2487`) and from
+`closeSlide()` (`:2356`), but a worker that hangs posts nothing, so
+`slideLoadInFlight` would stay true for the rest of the session and no folder
+change would ever be accepted again. Closing the slide clears it, and the menu
+bar stays live under the overlay, so the message now names that route. **The
+hang itself is a separate defect and is not fixed here** — an open that cannot
+finish and cannot be cancelled is a problem this sub-project neither introduced
+nor addresses.
+
+**Both X16 and X17 need re-running** against a build carrying their fixes.
+Neither can be covered by a test: the dialog needs a `QApplication` no suite
+creates, and the in-flight guard needs a real async open.
 
 ## Compliance note
 

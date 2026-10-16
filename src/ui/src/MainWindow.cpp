@@ -1510,9 +1510,25 @@ bool MainWindow::Impl::openPreferences()
             // them back over a slide they do not belong to. Refusing is enough:
             // a modal dialog is also what stops the user starting an open once
             // the switch is already under way.
-            statusBarManager->showTransientMessage(
-                tr("The annotation folder was not changed: a slide is still opening. "
-                   "Try again once it has finished."));
+            // A modal box, not a transient line, which check X17 caught: the
+            // user has just pressed OK on Preferences, so the change looks
+            // accepted, and the one thing that says otherwise cannot be a
+            // status line four seconds long while the loading overlay holds
+            // their attention in the middle of the viewport. An action that
+            // silently does not happen is worse than one that is refused out
+            // loud. Same reasoning as the both-folders-unwritable report below.
+            // The way out matters as much as the refusal. An open runs on a
+            // detached thread with no timeout, so a load that hangs never
+            // emits loadingFinished and this flag never clears -- without a
+            // stated escape the folder could not be changed again for the rest
+            // of the session. closeSlide() emits loadingFinished, and the menu
+            // bar stays live under the loading overlay, so File > Close Slide
+            // is a real route out and is named here.
+            QMessageBox::information(
+                owner, tr("The annotation folder was not changed"),
+                tr("A slide is still opening. The annotation folder cannot be changed "
+                   "until it has finished loading.\n\nTry again once it has opened, or "
+                   "close the slide first if it is not going to."));
             return annotationSettings->hasUserName();
         }
 
