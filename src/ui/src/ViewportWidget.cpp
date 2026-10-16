@@ -884,9 +884,17 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
                 // the thing worth seeing. One blocked read logs nothing until
                 // it returns, so silence after the line above localises the
                 // stall to a single readTile; a stream of these localises it
-                // to the pass as a whole.
+                // to the pass as a whole -- which is exactly what it did for
+                // the SingleStripe decode this once diagnosed.
+                //
+                // debug, not info: the pass total and the whole-level line above
+                // are what a normal open should say, and those are enough to show
+                // a pass has gone slow. This names which tile, which is only
+                // wanted once it has. Note that the logger flushes on info, so a
+                // kill mid-stall can lose these -- raise it to info while chasing
+                // one rather than leaving it raised.
                 if (tileMs >= 1000) {
-                    spdlog::info("autodetect: slow tile {} took {} ms", tileKey.toString(), tileMs);
+                    spdlog::debug("autodetect: slow tile {} took {} ms", tileKey.toString(), tileMs);
                 }
                 const bool valid = !tileData.isEmpty() && !tileData.isError();
                 if (valid) {
