@@ -207,6 +207,16 @@ struct LevelInfo
     int tileHeight = 0;
     int tilesX = 0;
     int tilesY = 0;
+    /// Whether the slide actually stores this level in tiles.
+    ///
+    /// False means the tile size above is one this application chose, not one
+    /// the file reports: the level is stored as a single image, so a driver
+    /// serving a tile of it decodes the whole level and returns the requested
+    /// corner of it. Reading such a level tile by tile therefore costs one
+    /// whole-level decode per tile. Defaults true because every level of every
+    /// slide that does report a tile size is genuinely tiled; only the
+    /// substitution of a default can make it false.
+    bool nativelyTiled = true;
 };
 
 /// Where a scene's ICC colour profile came from. Mirrors slideio::ColorProfileSource.

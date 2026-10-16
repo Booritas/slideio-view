@@ -13,6 +13,7 @@ add_library(slideio-viewer-core STATIC
     src/AnnotationGeometry.cpp
     src/AnnotationMeasurement.cpp
     src/AnnotationMerge.cpp
+    src/LevelRaster.cpp
     src/WorkspaceSwitchPolicy.cpp
     src/Annotation.cpp
     src/Iso8601.cpp

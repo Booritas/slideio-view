@@ -731,10 +731,16 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
             lvl.tileWidth = tileSize.width;
             lvl.tileHeight = tileSize.height;
 
-            // If tile size is zero or negative, use default
+            // No tile size reported means the level is not stored in tiles, so the
+            // grid below is one this application imposes on it. Recorded rather
+            // than silently substituted: a driver asked for one tile of such a
+            // level decodes the whole level to serve it, which makes reading the
+            // level tile by tile cost one decode per tile. See
+            // LevelInfo::nativelyTiled and core::sliceLevelRaster.
             if (lvl.tileWidth <= 0 || lvl.tileHeight <= 0) {
                 lvl.tileWidth = std::min(kDefaultTileSize, lvl.width);
                 lvl.tileHeight = std::min(kDefaultTileSize, lvl.height);
+                lvl.nativelyTiled = false;
             }
 
             // Compute tile counts
@@ -761,6 +767,9 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
         lvl.magnification = m_slideInfo.magnification;
         lvl.tileWidth = std::min(kDefaultTileSize, m_slideInfo.width);
         lvl.tileHeight = std::min(kDefaultTileSize, m_slideInfo.height);
+        // A synthetic level: the scene reported no levels at all, so nothing says
+        // this one is tiled either.
+        lvl.nativelyTiled = false;
         lvl.tilesX = (lvl.width > 0 && lvl.tileWidth > 0)
             ? (lvl.width + lvl.tileWidth - 1) / lvl.tileWidth
             : 1;
@@ -950,9 +959,12 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
             lvl.tileWidth = tileSize.width;
             lvl.tileHeight = tileSize.height;
 
+            // As in the scene path above: an unreported tile size means the level
+            // is one image, and the grid is ours.
             if (lvl.tileWidth <= 0 || lvl.tileHeight <= 0) {
                 lvl.tileWidth = std::min(kDefaultTileSize, lvl.width);
                 lvl.tileHeight = std::min(kDefaultTileSize, lvl.height);
+                lvl.nativelyTiled = false;
             }
 
             lvl.tilesX = (lvl.width > 0 && lvl.tileWidth > 0)
@@ -978,6 +990,9 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
         lvl.magnification = m_slideInfo.magnification;
         lvl.tileWidth = std::min(kDefaultTileSize, m_slideInfo.width);
         lvl.tileHeight = std::min(kDefaultTileSize, m_slideInfo.height);
+        // A synthetic level: the scene reported no levels at all, so nothing says
+        // this one is tiled either.
+        lvl.nativelyTiled = false;
         lvl.tilesX = (lvl.width > 0 && lvl.tileWidth > 0)
             ? (lvl.width + lvl.tileWidth - 1) / lvl.tileWidth
             : 1;

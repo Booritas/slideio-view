@@ -14,6 +14,7 @@
 #include "slideio/viewer/core/Histogram.h"
 #include "slideio/viewer/core/ISlideSource.h"
 #include "slideio/viewer/core/ITileCache.h"
+#include "slideio/viewer/core/LevelRaster.h"
 #include "slideio/viewer/core/TileData.h"
 #include "slideio/viewer/core/TileKey.h"
 #include "slideio/viewer/core/TilePyramid.h"
@@ -824,13 +825,58 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
                  samplingPlan.strideX, samplingPlan.strideY,
                  core::sampledTileCount(coarseLvl.tilesX, coarseLvl.tilesY, samplingPlan), numZ);
 
+    // A level the slide does not store in tiles is one image: a driver asked for
+    // one tile of it decodes the level entire and returns the requested corner,
+    // so walking the grid costs one whole-level decode per tile. Read it once and
+    // cut it up instead. On this project's worst case -- an NDPI whose 17x8
+    // coarsest level is a single JPEG -- that was 136 decodes of the same 8 Mpx
+    // image, over two minutes of them.
+    //
+    // Restricted to single-Z scenes: one raster is one Z slice, and a stack would
+    // need a read per slice, which is the loop below with extra steps. The byte
+    // cap is what keeps an untiled *fine* level from being pulled into memory
+    // whole -- a 16576x8064 one would be 400MB.
+    constexpr size_t kMaxWholeLevelReadBytes = 256ull * 1024ull * 1024ull;
+    const size_t coarseLevelBytes = static_cast<size_t>(coarseLvl.width)
+                                  * static_cast<size_t>(coarseLvl.height)
+                                  * static_cast<size_t>(std::max(1, numCh))
+                                  * core::dataTypeSize(dt);
+    std::vector<core::LevelRasterTile> wholeLevelTiles;
+    if (!coarseLvl.nativelyTiled && numZ == 1 && coarseLevelBytes <= kMaxWholeLevelReadBytes) {
+        const auto wholeStart = std::chrono::steady_clock::now();
+        core::TileData levelBlock = slideSource.readBlock(0, 0, slideInfo.width, slideInfo.height,
+                                                          coarseLvl.width, coarseLvl.height,
+                                                          preferredZ, preferredT);
+        if (!levelBlock.isEmpty() && !levelBlock.isError()) {
+            wholeLevelTiles = core::sliceLevelRaster(levelBlock.buffer().data(),
+                                                     coarseLvl.width, coarseLvl.height,
+                                                     levelBlock.numChannels(), levelBlock.dataType(),
+                                                     coarseLvl.tileWidth, coarseLvl.tileHeight);
+        }
+        spdlog::info("autodetect: level {} is not natively tiled; read it whole "
+                     "({} bytes) in {} ms -> {} tiles",
+                     coarsestLevel, coarseLevelBytes,
+                     std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now() - wholeStart).count(),
+                     wholeLevelTiles.size());
+        // An empty result is not an error: the per-tile loop below runs exactly as
+        // before, which is slow on such a level but correct.
+    }
+
     const auto passStart = std::chrono::steady_clock::now();
     for (int r = 0; r < coarseLvl.tilesY; r += samplingPlan.strideY) {
         for (int c = 0; c < coarseLvl.tilesX; c += samplingPlan.strideX) {
             for (int z = 0; z < numZ; ++z) {
                 core::TileKey tileKey(coarsestLevel, c, r, z);
                 const auto tileStart = std::chrono::steady_clock::now();
-                auto tileData = slideSource.readTile(tileKey);
+                // sliceLevelRaster returns the complete grid in row-major order,
+                // so the tile for (c, r) is at a computed index -- no search. The
+                // tiles the stride skips are simply not taken, which keeps
+                // coarseTiles in exactly the order every pass below expects.
+                const size_t wholeIndex = static_cast<size_t>(r) * coarseLvl.tilesX + c;
+                auto tileData = wholeIndex < wholeLevelTiles.size()
+                    ? std::move(wholeLevelTiles[wholeIndex].data)
+                    : slideSource.readTile(tileKey);
                 const auto tileMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - tileStart).count();
                 // Only the slow ones, so a healthy open stays quiet: a coarse
