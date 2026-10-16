@@ -323,8 +323,9 @@ The dialog cannot be constructed in any test, since no test binary creates a
 
 ### Results — run 2026-10-16 against `main` @ `ca90353`
 
-**Passed:** X1, X2, X3, X4, X5, X6, X7, X8, X9, X10, X11, X12, X13, X14, X15 — X13
-rewritten after the run, for the reason below.
+**Passed:** X1, X2, X3, X4, X5, X6, X7, X8, X9, X10, X11, X12, X13, X14, X15, X16 — X13
+rewritten after the run, and X16 passing only on the second run, both for the
+reasons below.
 
 X1-X5 are the five outcome checks: Copy into an empty folder, Merge, Keep what's
 on screen, Use the new folder's, and Cancel. Together they cover every branch of
@@ -425,8 +426,14 @@ and it became the default regardless. Focus decides; `setDefault` only decides
 among unfocused buttons. Both branches now set focus along with the default,
 which also removes the constructive branch's unstated dependence on
 `QDialogButtonBox` laying the preferred button out first. No test can reach
-this: the dialog cannot be constructed without a `QApplication`, so X16 re-run
-is the only gate.
+this: the dialog cannot be constructed without a `QApplication`, so the re-run
+was the only gate, and it passed — Enter now cancels.
+
+The sequence is the argument for this list existing. The review found that
+Enter would do the destructive thing; the fix for it was written, reasoned
+about in a comment, and shipped; and it did not work. Nothing between the
+finding and the re-run could have told anyone that, because the only thing
+that knows what Qt's focus chain does at runtime is Qt at runtime.
 
 **X13 was asking for a state the UI cannot reach.** Run as written — open a
 thumbnail from the Associated Images panel, then change the folder — the dialog
@@ -473,9 +480,9 @@ hang itself is a separate defect and is not fixed here** — an open that cannot
 finish and cannot be cancelled is a problem this sub-project neither introduced
 nor addresses.
 
-**Both X16 and X17 need re-running** against a build carrying their fixes.
-Neither can be covered by a test: the dialog needs a `QApplication` no suite
-creates, and the in-flight guard needs a real async open.
+**X17 is the one check still outstanding.** It needs re-running against a build
+carrying its fix, and no test can cover it: the in-flight guard needs a real
+async open.
 
 ## Compliance note
 
