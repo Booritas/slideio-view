@@ -323,7 +323,7 @@ The dialog cannot be constructed in any test, since no test binary creates a
 
 ### Results — run 2026-10-16 against `main` @ `ca90353`
 
-**Passed:** X1, X2, X3, X4, X5, X6, X7, X8, X9.
+**Passed:** X1, X2, X3, X4, X5, X6, X7, X8, X9, X10.
 
 X1-X5 are the five outcome checks: Copy into an empty folder, Merge, Keep what's
 on screen, Use the new folder's, and Cancel. Together they cover every branch of
@@ -355,6 +355,13 @@ tests make and merely wrong in the viewport. It passing means the annotation
 layer is now swapped underneath a slide that stays loaded, which is what makes
 a folder change feel like changing a folder rather than reopening the case.
 
+X10 confirms the scope the user chose: annotation files are keyed by (slide id,
+scene index), the switch holds one key, and so exactly one file travels. The
+check has two halves and both matter — the other scene's file stays where it
+was, *and the dialog said so* before the choice was made. A user who assumed
+"copy" meant the whole slide would otherwise find out afterwards, which is the
+wrong time.
+
 X5 is the one with teeth among them. "A subsequent edit still autosaves" is the
 only check that can catch a service left deactivated on the Cancel path, and a
 deactivated service is exactly what the original defect produced — the switch
@@ -362,10 +369,9 @@ used to call `endSlide()` and never come back, so everything drawn afterwards
 was accepted by the model, never written, and gone at the next close. It
 passing means `beginSlide` is reached on the abandoned path too.
 
-**Not yet run:** X10-X17. What is left is the scene-scoping check (X10), the
-undo clear (X11), and the six added after the whole-branch review (X12-X17) —
-each of which pins a defect that review found, so none of those fixes is
-verified until its check runs.
+**Not yet run:** X11-X17 — the undo clear (X11), and the six added after the
+whole-branch review (X12-X17), each of which pins a defect that review found.
+None of those fixes is verified until its check runs.
 
 ## Compliance note
 
