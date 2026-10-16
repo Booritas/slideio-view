@@ -323,7 +323,7 @@ The dialog cannot be constructed in any test, since no test binary creates a
 
 ### Results — run 2026-10-16 against `main` @ `ca90353`
 
-**Passed:** X1, X2, X3, X4, X5, X6, X7, X8, X9, X10, X11, X12, X13, X14 — X13
+**Passed:** X1, X2, X3, X4, X5, X6, X7, X8, X9, X10, X11, X12, X13, X14, X15 — X13
 rewritten after the run, for the reason below.
 
 X1-X5 are the five outcome checks: Copy into an empty folder, Merge, Keep what's
@@ -402,6 +402,19 @@ for directories, and denying only the workspace root is a no-op once its
 `annotations` subfolder exists, since `QDir::mkpath` succeeds on a folder that
 is already there.
 
+X15 is the one that was losing work rather than describing it wrongly. Cancel
+has to put back what the dialog interrupted, and after a failed flush the file
+on disk is *older* than the screen — so reloading it, which is what Cancel used
+to do, overwrote the annotation that had never reached disk with the version
+that predated it. The user's own gesture destroyed their work, which is the
+worst shape a defect can take: refusing a change is supposed to be the safe
+answer. The fix restores from the captured in-memory set instead
+(`m_model.replaceAll(current)` plus `markDirty()` when `facts.flushFailed`),
+and X15 passing means the annotation that existed only on screen survived the
+round trip. Nothing automated could have caught this -- the app test proves the
+restore happens, but only a human can confirm the shape on screen is the one
+that was there before the dialog opened.
+
 **X13 was asking for a state the UI cannot reach.** Run as written — open a
 thumbnail from the Associated Images panel, then change the folder — the dialog
 appeared, Copy worked, and the annotation stayed on screen. That is correct, and
@@ -427,9 +440,9 @@ insurance against a path that is currently unreachable, not a fix for a defect
 anyone can hit. Nothing verifies it, and no manual check can until that path
 has a caller.
 
-**Not yet run:** X15, X16, X17 — the remaining checks added after the
-whole-branch review, each pinning a defect that review found. None of those
-fixes is verified until its check runs.
+**Not yet run:** X16 and X17 — the keyboard default on the refusal dialog, and
+the switch attempted during a slide load. Each pins a defect the whole-branch
+review found, and neither fix is verified until its check runs.
 
 ## Compliance note
 
