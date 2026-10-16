@@ -43,7 +43,7 @@ Application (Services) →  AnnotationModel, AnnotationPersistenceService,
 Domain (Core Logic)    →  Annotation, AnnotationSerialization, AutosavePolicy,
                           Iso8601, Viewport, TilePyramid, CoordinateSystem,
                           AnnotationMeasurement, AnnotationMerge,
-                          WorkspaceSwitchPolicy                                (19 .cpp)
+                          WorkspaceSwitchPolicy, LevelRaster                   (20 .cpp)
 Infrastructure         →  SlideIOAdapter, LruTileCache, TileLoadScheduler,
                           JsonAnnotationRepository,
                           QSettingsColorProfileOverrideStore, _RemoteClient_    (6 .cpp)
