@@ -786,6 +786,17 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
                  m_slideInfo.width, m_slideInfo.height, m_slideInfo.numChannels,
                  static_cast<int>(m_levels.size()),
                  m_slideInfo.numZSlices, m_slideInfo.numTFrames);
+
+    // Per-level geometry, at info so it survives a kill: the level count alone
+    // cannot say how much work the coarse-scan pass on open is about to do, and
+    // a slide whose open stalls is exactly the slide whose level table nobody
+    // can see. Cheap -- a handful of lines once per open.
+    for (size_t i = 0; i < m_levels.size(); ++i) {
+        const auto& lvl = m_levels[i];
+        spdlog::info("SlideIOAdapter:   level {}: {}x{} px, {}x{} tiles of {}x{}, scale={:.6f}",
+                     i, lvl.width, lvl.height, lvl.tilesX, lvl.tilesY,
+                     lvl.tileWidth, lvl.tileHeight, lvl.scale);
+    }
 }
 
 SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& auxImageName,

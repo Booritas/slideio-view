@@ -45,6 +45,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -810,11 +811,37 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
     // in the readBlock thumbnail call. If a future T-series slide has an empty
     // T=0, autodetect min/max may be wrong unless the block fallback succeeds.
 
+    // Announced before the first read, at info so it survives a kill. The
+    // existing report below only fires once the whole pass is done, and the
+    // geometry line above only when the plan had to thin the scan -- so the
+    // complete-scan path, the one that reads every tile, was the only path
+    // with no trace at all. A slide whose open stalls here used to leave
+    // "LruTileCache: created" as the last thing in the log.
+    spdlog::info("autodetect: coarse-tile pass starting: level {}, {}x{} tiles of {}x{}, "
+                 "stride {}x{}, {} tiles planned, numZ={}",
+                 coarsestLevel, coarseLvl.tilesX, coarseLvl.tilesY,
+                 coarseLvl.tileWidth, coarseLvl.tileHeight,
+                 samplingPlan.strideX, samplingPlan.strideY,
+                 core::sampledTileCount(coarseLvl.tilesX, coarseLvl.tilesY, samplingPlan), numZ);
+
+    const auto passStart = std::chrono::steady_clock::now();
     for (int r = 0; r < coarseLvl.tilesY; r += samplingPlan.strideY) {
         for (int c = 0; c < coarseLvl.tilesX; c += samplingPlan.strideX) {
             for (int z = 0; z < numZ; ++z) {
                 core::TileKey tileKey(coarsestLevel, c, r, z);
+                const auto tileStart = std::chrono::steady_clock::now();
                 auto tileData = slideSource.readTile(tileKey);
+                const auto tileMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - tileStart).count();
+                // Only the slow ones, so a healthy open stays quiet: a coarse
+                // tile is tens of milliseconds, and anything past a second is
+                // the thing worth seeing. One blocked read logs nothing until
+                // it returns, so silence after the line above localises the
+                // stall to a single readTile; a stream of these localises it
+                // to the pass as a whole.
+                if (tileMs >= 1000) {
+                    spdlog::info("autodetect: slow tile {} took {} ms", tileKey.toString(), tileMs);
+                }
                 const bool valid = !tileData.isEmpty() && !tileData.isError();
                 if (valid) {
                     size_t pixelCount = static_cast<size_t>(tileData.width())
@@ -839,6 +866,9 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
         }
     }
 
+    spdlog::info("autodetect: coarse-tile pass finished in {} ms",
+                 std::chrono::duration_cast<std::chrono::milliseconds>(
+                     std::chrono::steady_clock::now() - passStart).count());
     spdlog::info("autodetect: coarse-tile pass: numZ={} numTiles={} valid={} dt={} globalMin={} globalMax={}",
                  numZ, coarseTiles.size(),
                  std::count_if(coarseTiles.begin(), coarseTiles.end(),
