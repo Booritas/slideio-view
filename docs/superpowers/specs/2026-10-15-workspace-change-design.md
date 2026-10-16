@@ -323,7 +323,7 @@ The dialog cannot be constructed in any test, since no test binary creates a
 
 ### Results — run 2026-10-16 against `main` @ `ca90353`
 
-**Passed:** X1, X2, X3, X4, X5, X6, X7, X8.
+**Passed:** X1, X2, X3, X4, X5, X6, X7, X8, X9.
 
 X1-X5 are the five outcome checks: Copy into an empty folder, Merge, Keep what's
 on screen, Use the new folder's, and Cancel. Together they cover every branch of
@@ -346,6 +346,15 @@ a user who changes the folder with no slide open must not meet a dialog at all,
 and `workspaceSwitchOptions` returning `ask == false` on `currentCount == 0` is
 what keeps the old silent behaviour exactly where it was already right.
 
+X9 is the one check that tests the design rather than the feature. "No tile
+flicker, no loading overlay" is the only externally visible evidence that the
+switch stopped routing through `closeSlide()` and `reopenCurrentScene()` — see
+*Why this does not reopen the scene* above. Nothing in any suite can see this:
+the reopen it replaced would have been correct in every assertion the automated
+tests make and merely wrong in the viewport. It passing means the annotation
+layer is now swapped underneath a slide that stays loaded, which is what makes
+a folder change feel like changing a folder rather than reopening the case.
+
 X5 is the one with teeth among them. "A subsequent edit still autosaves" is the
 only check that can catch a service left deactivated on the Cancel path, and a
 deactivated service is exactly what the original defect produced — the switch
@@ -353,11 +362,10 @@ used to call `endSlide()` and never come back, so everything drawn afterwards
 was accepted by the model, never written, and gone at the next close. It
 passing means `beginSlide` is reached on the abandoned path too.
 
-**Not yet run:** X9-X17. What is left is the scene-scoping check (X10), the two
-checks on what the switch must *not* do (X9 no reload, X11 undo cleared), and
-the six added after the whole-branch review (X12-X17) — each of which pins a
-defect that review found, so none of those fixes is verified until its check
-runs.
+**Not yet run:** X10-X17. What is left is the scene-scoping check (X10), the
+undo clear (X11), and the six added after the whole-branch review (X12-X17) —
+each of which pins a defect that review found, so none of those fixes is
+verified until its check runs.
 
 ## Compliance note
 
