@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <variant>
 
 namespace slideio::viewer::core
 {
@@ -43,6 +44,78 @@ std::optional<BoxHandle> nearestBoxHandle(const RectF& box, PointF point,
         }
     }
     return best;
+}
+
+namespace
+{
+
+std::optional<AnnotationGeometry> replaceBox(const RectangleGeometry&, const RectF& box)
+{
+    return RectangleGeometry{PointF{box.x, box.y},
+                             PointF{box.x + box.width, box.y + box.height}};
+}
+
+std::optional<AnnotationGeometry> replaceBox(const EllipseGeometry&, const RectF& box)
+{
+    return EllipseGeometry{PointF{box.x, box.y},
+                           PointF{box.x + box.width, box.y + box.height}};
+}
+
+// A traced shape is not defined by a box. Scaling its vertices is a different
+// feature with different arithmetic -- design spec 8.
+std::optional<AnnotationGeometry> replaceBox(const PolygonGeometry&, const RectF&)
+{
+    return std::nullopt;
+}
+
+} // namespace
+
+RectF withBoxHandleAt(const RectF& box, BoxHandle handle, PointF position)
+{
+    double left = box.x;
+    double right = box.x + box.width;
+    double top = box.y;
+    double bottom = box.y + box.height;
+
+    switch (handle) {
+    case BoxHandle::TopLeft:
+        left = position.x;
+        top = position.y;
+        break;
+    case BoxHandle::Top:
+        top = position.y;
+        break;
+    case BoxHandle::TopRight:
+        right = position.x;
+        top = position.y;
+        break;
+    case BoxHandle::Right:
+        right = position.x;
+        break;
+    case BoxHandle::BottomRight:
+        right = position.x;
+        bottom = position.y;
+        break;
+    case BoxHandle::Bottom:
+        bottom = position.y;
+        break;
+    case BoxHandle::BottomLeft:
+        left = position.x;
+        bottom = position.y;
+        break;
+    case BoxHandle::Left:
+        left = position.x;
+        break;
+    }
+
+    // Extents may come out negative. See the header: that is the flip, not a
+    // bug, and normalising here would stop the shape flipping at all.
+    return RectF{left, top, right - left, bottom - top};
+}
+
+std::optional<AnnotationGeometry> withBoxReplaced(const AnnotationGeometry& geom, const RectF& box)
+{
+    return std::visit([&](const auto& shape) { return replaceBox(shape, box); }, geom);
 }
 
 } // namespace slideio::viewer::core

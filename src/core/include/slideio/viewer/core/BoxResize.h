@@ -41,4 +41,26 @@ enum class BoxHandle
 [[nodiscard]] std::optional<BoxHandle> nearestBoxHandle(const RectF& box, PointF point,
                                                         double toleranceSlideUnits);
 
+/// `box` with `handle` moved to `position`. A corner moves two edges, an edge
+/// midpoint moves one, and the opposite edges never move.
+///
+/// The result may carry a NEGATIVE extent, and deliberately is not clamped:
+/// dragging a handle past its opposite edge flips the box and the resize
+/// continues, which is the same freedom a creation drag has. The geometry
+/// built from it is an inverted pair, and core::boundingBox normalises that.
+/// Clamping or taking an absolute value here would make the shape stick
+/// instead of flipping. Design spec 6.4.
+[[nodiscard]] RectF withBoxHandleAt(const RectF& box, BoxHandle handle, PointF position);
+
+/// `geom` rebuilt around `box`, preserving its type; absent for a shape that
+/// is not box-defined.
+///
+/// Dispatches with std::visit onto an overload set, NOT a std::get_if chain.
+/// A get_if chain would let a future box-shaped type fall silently through to
+/// "not resizable" -- the shape of the readGeometry trap CLAUDE.md warns
+/// about. With std::visit the compiler names the site until every shape
+/// answers. This is the only place this work touches the variant.
+[[nodiscard]] std::optional<AnnotationGeometry> withBoxReplaced(const AnnotationGeometry& geom,
+                                                                const RectF& box);
+
 } // namespace slideio::viewer::core

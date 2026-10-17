@@ -121,3 +121,170 @@ TEST_CASE("a degenerate box still answers", "[core][BoxResize]")
     // All eight coincide; the tie goes to the earliest enumerator.
     REQUIRE(*onPoint == BoxHandle::TopLeft);
 }
+
+TEST_CASE("a corner handle moves two edges and leaves the opposite two",
+          "[core][BoxResize]")
+{
+    const RectF moved = withBoxHandleAt(box(), BoxHandle::TopLeft, PointF{0.0, 0.0});
+    REQUIRE(moved.x == 0.0);
+    REQUIRE(moved.y == 0.0);
+    // Right stayed at 110, bottom at 60.
+    REQUIRE(moved.x + moved.width == 110.0);
+    REQUIRE(moved.y + moved.height == 60.0);
+}
+
+TEST_CASE("every corner handle moves its own two edges", "[core][BoxResize]")
+{
+    const RectF topRight = withBoxHandleAt(box(), BoxHandle::TopRight, PointF{200.0, 0.0});
+    REQUIRE(topRight.x == 10.0);
+    REQUIRE(topRight.x + topRight.width == 200.0);
+    REQUIRE(topRight.y == 0.0);
+    REQUIRE(topRight.y + topRight.height == 60.0);
+
+    const RectF bottomRight =
+        withBoxHandleAt(box(), BoxHandle::BottomRight, PointF{200.0, 200.0});
+    REQUIRE(bottomRight.x == 10.0);
+    REQUIRE(bottomRight.y == 20.0);
+    REQUIRE(bottomRight.x + bottomRight.width == 200.0);
+    REQUIRE(bottomRight.y + bottomRight.height == 200.0);
+
+    const RectF bottomLeft = withBoxHandleAt(box(), BoxHandle::BottomLeft, PointF{0.0, 200.0});
+    REQUIRE(bottomLeft.x == 0.0);
+    REQUIRE(bottomLeft.y == 20.0);
+    REQUIRE(bottomLeft.x + bottomLeft.width == 110.0);
+    REQUIRE(bottomLeft.y + bottomLeft.height == 200.0);
+}
+
+TEST_CASE("an edge handle moves one edge and leaves the other three",
+          "[core][BoxResize]")
+{
+    const RectF top = withBoxHandleAt(box(), BoxHandle::Top, PointF{999.0, 0.0});
+    // The x of the press is ignored: a top handle owns the top edge only.
+    REQUIRE(top.x == 10.0);
+    REQUIRE(top.x + top.width == 110.0);
+    REQUIRE(top.y == 0.0);
+    REQUIRE(top.y + top.height == 60.0);
+
+    const RectF right = withBoxHandleAt(box(), BoxHandle::Right, PointF{200.0, 999.0});
+    REQUIRE(right.y == 20.0);
+    REQUIRE(right.y + right.height == 60.0);
+    REQUIRE(right.x == 10.0);
+    REQUIRE(right.x + right.width == 200.0);
+
+    const RectF bottom = withBoxHandleAt(box(), BoxHandle::Bottom, PointF{999.0, 200.0});
+    REQUIRE(bottom.y == 20.0);
+    REQUIRE(bottom.y + bottom.height == 200.0);
+
+    const RectF left = withBoxHandleAt(box(), BoxHandle::Left, PointF{0.0, 999.0});
+    REQUIRE(left.x == 0.0);
+    REQUIRE(left.x + left.width == 110.0);
+}
+
+// Review Focus 3, and spec 6.4. Dragging past the opposite edge is allowed and
+// the intermediate RectF carries a NEGATIVE extent. It must not be clamped or
+// absolute-valued here: the geometry built from it is an inverted pair, which
+// core::boundingBox normalises.
+TEST_CASE("a handle dragged past its opposite edge gives a negative extent",
+          "[core][BoxResize]")
+{
+    const RectF flipped = withBoxHandleAt(box(), BoxHandle::Left, PointF{200.0, 0.0});
+    REQUIRE(flipped.x == 200.0);
+    REQUIRE(flipped.width == -90.0);
+    // The right edge did not move.
+    REQUIRE(flipped.x + flipped.width == 110.0);
+}
+
+TEST_CASE("withBoxReplaced keeps a rectangle a rectangle", "[core][BoxResize]")
+{
+    const AnnotationGeometry original =
+        RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}};
+    const auto replaced = withBoxReplaced(original, RectF{10.0, 20.0, 100.0, 40.0});
+
+    REQUIRE(replaced.has_value());
+    const auto* rectangle = std::get_if<RectangleGeometry>(&*replaced);
+    REQUIRE(rectangle != nullptr);
+    REQUIRE(rectangle->topLeft.x == 10.0);
+    REQUIRE(rectangle->topLeft.y == 20.0);
+    REQUIRE(rectangle->bottomRight.x == 110.0);
+    REQUIRE(rectangle->bottomRight.y == 60.0);
+}
+
+TEST_CASE("withBoxReplaced keeps an ellipse an ellipse", "[core][BoxResize]")
+{
+    const AnnotationGeometry original = EllipseGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}};
+    const auto replaced = withBoxReplaced(original, RectF{10.0, 20.0, 100.0, 40.0});
+
+    REQUIRE(replaced.has_value());
+    REQUIRE(std::get_if<EllipseGeometry>(&*replaced) != nullptr);
+    REQUIRE(typeOf(*replaced) == AnnotationType::Ellipse);
+}
+
+// Review Focus 5. A traced shape is not box-defined, and scaling 400 vertices
+// by a box drag is a different feature (spec 8).
+TEST_CASE("withBoxReplaced refuses a polygon", "[core][BoxResize]")
+{
+    const AnnotationGeometry polygon = PolygonGeometry{
+        {PointF{0.0, 0.0}, PointF{10.0, 0.0}, PointF{5.0, 10.0}}, true};
+    REQUIRE_FALSE(withBoxReplaced(polygon, RectF{0.0, 0.0, 1.0, 1.0}).has_value());
+}
+
+// Review Focus 3, the other half: the negative extent must survive into the
+// stored geometry as an inverted pair, and boundingBox must normalise it back.
+TEST_CASE("a flipped box becomes an inverted pair that boundingBox normalises",
+          "[core][BoxResize]")
+{
+    const AnnotationGeometry original =
+        RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}};
+    const RectF flipped = withBoxHandleAt(box(), BoxHandle::Left, PointF{200.0, 0.0});
+    const auto replaced = withBoxReplaced(original, flipped);
+
+    REQUIRE(replaced.has_value());
+    const auto* rectangle = std::get_if<RectangleGeometry>(&*replaced);
+    REQUIRE(rectangle != nullptr);
+    REQUIRE(rectangle->topLeft.x == 200.0);
+    REQUIRE(rectangle->bottomRight.x == 110.0);
+
+    const RectF normalised = boundingBox(*replaced);
+    REQUIRE(normalised.x == 110.0);
+    REQUIRE(normalised.width == 90.0);
+}
+
+// Spec 7.1: "A resized rectangle and a resized ellipse each round-trip through
+// the serializer unchanged." The resize can only build shapes the format
+// accepts, and this is what holds it to that. Both types, because they are
+// separate branches of withBoxReplaced and a wrong one would silently change
+// an ellipse into a rectangle on disk.
+TEST_CASE("a resized rectangle and ellipse round-trip through the serializer",
+          "[core][BoxResize]")
+{
+    const RectF resized = withBoxHandleAt(box(), BoxHandle::BottomRight, PointF{200.0, 200.0});
+
+    const std::vector<AnnotationGeometry> starts{
+        RectangleGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}},
+        EllipseGeometry{PointF{0.0, 0.0}, PointF{1.0, 1.0}},
+    };
+
+    for (const AnnotationGeometry& start : starts) {
+        const auto replaced = withBoxReplaced(start, resized);
+        REQUIRE(replaced.has_value());
+
+        AnnotationDocument document;
+        document.slideId = "a3f8c2e1b4d50697";
+        document.sceneIndex = 0;
+        document.annotations.emplace_back("b1", *replaced);
+
+        const ParseResult parsed = parseAnnotationDocument(serializeAnnotationDocument(document));
+        REQUIRE(parsed.error == ParseError::None);
+        REQUIRE(parsed.document.annotations.size() == 1);
+
+        const AnnotationGeometry& readBack = parsed.document.annotations.front().geometry();
+        REQUIRE(typeOf(readBack) == typeOf(*replaced));
+
+        const RectF before = boundingBox(*replaced);
+        const RectF after = boundingBox(readBack);
+        REQUIRE(before.x == after.x);
+        REQUIRE(before.y == after.y);
+        REQUIRE(before.width == after.width);
+        REQUIRE(before.height == after.height);
+    }
+}
