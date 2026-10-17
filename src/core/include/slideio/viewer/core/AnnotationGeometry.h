@@ -118,6 +118,14 @@ struct Outline
 /// polygon into a rectangle the first time a user dragged it.
 [[nodiscard]] AnnotationGeometry translated(const AnnotationGeometry& geom, double dx, double dy);
 
+/// The point on segment `ab` nearest `point`, clamped to the segment rather
+/// than its infinite line. A zero-length segment yields its own endpoint.
+///
+/// Public because core::nearestEdge needs the projection itself, not just the
+/// distance to it, and duplicating the maths in two translation units is how
+/// the two come to disagree.
+[[nodiscard]] PointF closestPointOnSegment(PointF a, PointF b, PointF point);
+
 /// True when this shape TYPE always has a well-defined area, whatever its
 /// values -- a property of the type, not of the instance.
 ///

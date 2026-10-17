@@ -107,15 +107,8 @@ bool pointInPolygon(const std::vector<PointF>& vertices, PointF point)
 /// treated as the point a rather than divided by.
 double distanceToSegment(PointF a, PointF b, PointF point)
 {
-    const double dx = b.x - a.x;
-    const double dy = b.y - a.y;
-    const double lengthSq = dx * dx + dy * dy;
-    if (lengthSq <= 0.0) {
-        return std::hypot(point.x - a.x, point.y - a.y);
-    }
-    double t = ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSq;
-    t = std::max(0.0, std::min(1.0, t));
-    return std::hypot(point.x - (a.x + t * dx), point.y - (a.y + t * dy));
+    const PointF nearest = closestPointOnSegment(a, b, point);
+    return std::hypot(point.x - nearest.x, point.y - nearest.y);
 }
 
 bool hitTestShape(const PolygonGeometry& poly, PointF point, double tolerance)
@@ -253,6 +246,19 @@ bool wellDefinedArea(const PolygonGeometry&)
 }
 
 } // namespace
+
+PointF closestPointOnSegment(PointF a, PointF b, PointF point)
+{
+    const double dx = b.x - a.x;
+    const double dy = b.y - a.y;
+    const double lengthSq = dx * dx + dy * dy;
+    if (lengthSq <= 0.0) {
+        return a;
+    }
+    double t = ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSq;
+    t = std::max(0.0, std::min(1.0, t));
+    return PointF{a.x + t * dx, a.y + t * dy};
+}
 
 RectF boundingBox(const AnnotationGeometry& geom)
 {
