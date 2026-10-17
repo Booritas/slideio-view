@@ -369,6 +369,10 @@ no-op that still exits 0.
 | Z1 | passed |
 | Z2 | passed |
 | Z3 | passed |
+| Z9 | passed |
+| Z19 | passed |
+| Z24 | passed |
+| Z25 | passed |
 
 **Z1–Z3.** The mode opens on a double-click, the handles appear, and a dragged
 handle moves its own vertex and no other. **Z2 is the one worth naming**: a
@@ -376,6 +380,26 @@ double-click while a trace is still unfinished closes the shape as it always
 did and does not enter the mode. That is §2.2's claim — that `pending.active`
 separates the two uses of one gesture cleanly enough that no precedence rule is
 needed — and it was an argument until this run.
+
+**Z9, Z19, Z24, Z25 — the undo-integrity set, and the most important result
+here.** Three independent reviews of this change each found an edit reaching the
+model with **no undo step**, twice in code that had already been "fixed" for
+exactly that. The cause is structural: §6 commits the moved geometry to the
+model on every mouse-move, so every route out of a drag is a place the record
+can be lost, and fixing one route taught nothing about the others. These four
+checks walk four different routes — focus loss (Z19), a tool shortcut taken
+mid-drag (Z25), an undo taken mid-drag (Z24), and Escape (Z9).
+
+All four pass. For Z19 and Z25 the decisive observation is the *second* Ctrl+Z
+rather than the first: the first undid the vertex edit and the second undid the
+operation before it, so the stack is intact rather than merely appearing to
+respond. Z9 confirms the complement — a cancelled drag leaves **no** step
+behind, so Ctrl+Z after an Escape reaches the edit that preceded it.
+
+None of these four could be covered by a test: all of them live in widget
+handlers and no suite in this repository creates a `QApplication`. This run is
+the whole of their verification, which is why they were run second, before
+anything cosmetic.
 
 ---
 
