@@ -9,6 +9,7 @@
 #include "slideio/viewer/app/AnnotationPersistenceService.h"
 #include "slideio/viewer/app/UndoRedoStack.h"
 #include "slideio/viewer/core/Annotation.h"
+#include "slideio/viewer/core/AnnotationDecoration.h"
 #include "slideio/viewer/core/AnnotationGeometry.h"
 #include "slideio/viewer/core/BoxResize.h"
 #include "slideio/viewer/core/VertexEditing.h"
@@ -3055,6 +3056,57 @@ void ViewportWidget::setUndoStack(app::UndoRedoStack* stack)
 
 bool ViewportWidget::commitDrawDrag()
 {
+    // With no controller the scale is 0, which is what stops a focus loss
+    // before the first frame from inventing a shape: every minimum below
+    // refuses at a non-positive scale.
+    const double toolScale = m_impl->controller ? m_impl->controller->viewport().scale() : 0.0;
+
+    // The Point tool is the exact inverse of every other: a click with no
+    // movement is the whole gesture, and there is no size that could be
+    // insufficient, so dragExceedsMinimumSize is never consulted.
+    //
+    // Created on the RELEASE, at the PRESS position. Both halves matter and
+    // they are not the same choice. On the release, because every other tool
+    // commits there and because a press that turns into something else --
+    // held space taking over to pan -- must not have already left a marker
+    // behind. At the press, because a hand twitching during a click must not
+    // shift the mark, and because the press is the point the user aimed at.
+    if (m_impl->activeTool == AnnotationTool::Point) {
+        if (!m_impl->annotationsEditable()) {
+            emit annotationEditBlocked(readOnlyEditMessage());
+            return false;
+        }
+        const std::string id =
+            m_impl->annotations->add(core::PointGeometry{m_impl->drawAnchorSlide});
+        pushCreateCommand(id);
+        m_impl->annotations->setSelected(id);
+        return true;
+    }
+
+    if (m_impl->activeTool == AnnotationTool::Arrow) {
+        // The hypotenuse, not a box dimension: a deliberate 10-pixel diagonal
+        // drag presents a 7x7 box and dragExceedsMinimumSize would refuse it.
+        // Below the minimum this is a misclick and is discarded in silence,
+        // exactly as an undersized rectangle drag is, and the release handler
+        // then treats the press as a selection click.
+        if (!arrowExceedsMinimumLength(m_impl->drawAnchorSlide, m_impl->drawCurrentSlide,
+                                       toolScale, kHitToleranceScreenPixels)) {
+            return false;
+        }
+        if (!m_impl->annotationsEditable()) {
+            emit annotationEditBlocked(readOnlyEditMessage());
+            return false;
+        }
+        // Press to release, in that order, and never normalised: the order is
+        // the direction, and swapping it would reverse every arrow drawn
+        // right-to-left.
+        const std::string id = m_impl->annotations->add(
+            core::ArrowGeometry{m_impl->drawAnchorSlide, m_impl->drawCurrentSlide});
+        pushCreateCommand(id);
+        m_impl->annotations->setSelected(id);
+        return true;
+    }
+
     // Two boxes, deliberately. The misclick test asks whether the user's
     // GESTURE was big enough to mean something, so it reads the raw drag --
     // Alt doubles the constrained box, which would otherwise halve the
@@ -3066,11 +3118,20 @@ bool ViewportWidget::commitDrawDrag()
     // A drag smaller than the click target is a misclick, not a shape. The
     // test is screen-space on purpose: at high zoom a couple of pixels of
     // jitter is many slide pixels. A rejected drag falls through to the
-    // selection block in mouseReleaseEvent. With no controller the scale is 0
-    // and this refuses, which is what stops a focus loss before the first
-    // frame from inventing a shape.
-    const double scale = m_impl->controller ? m_impl->controller->viewport().scale() : 0.0;
-    if (!dragExceedsMinimumSize(gestureBox, scale, kHitToleranceScreenPixels)) {
+    // selection block in mouseReleaseEvent.
+    if (!dragExceedsMinimumSize(gestureBox, toolScale, kHitToleranceScreenPixels)) {
+        return false;
+    }
+
+    // A valid shape refused for editability is "you cannot do this here",
+    // unlike the silent misclick above, so the user is told. commitPendingShape
+    // has had this gate since persistence landed; this path never did. It is
+    // normally unreachable because a read-only slide disables the drawing tool
+    // ACTIONS -- but the active tool is deliberately not reset when a slide
+    // opens, so picking a tool on an editable slide and then opening a
+    // read-only one leaves it live, and the shape was being created.
+    if (!m_impl->annotationsEditable()) {
+        emit annotationEditBlocked(readOnlyEditMessage());
         return false;
     }
 
@@ -3078,7 +3139,7 @@ bool ViewportWidget::commitDrawDrag()
     // mouse deltas are integers. That axis is widened to one screen pixel
     // rather than the gesture being discarded -- the user dragged deliberately
     // and must get something back.
-    const core::RectF box = withMinimumExtent(shapeBox, screenToleranceToSlide(1.0, scale));
+    const core::RectF box = withMinimumExtent(shapeBox, screenToleranceToSlide(1.0, toolScale));
     const core::PointF topLeft{box.x, box.y};
     const core::PointF bottomRight{box.x + box.width, box.y + box.height};
     const core::AnnotationGeometry geometry =
@@ -3319,6 +3380,56 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         return path;
     };
 
+    // One glyph of the kind core::screenDecoration asked for. The painter stays
+    // shape-blind: it is told a kind, an anchor and a size in pixels, and never
+    // which geometry type produced them.
+    //
+    // The arrowhead's direction comes from the two screen points of the shaft,
+    // which is correct because the viewport only pans and zooms and so
+    // preserves direction -- so core never needs screen coordinates, only
+    // screen sizes.
+    const auto paintDecoration = [&painter, &toScreen](const core::ScreenDecoration& glyph,
+                                                       const core::Outline& shape,
+                                                       const QColor& color) {
+        const QPointF anchor = toScreen(glyph.anchor);
+        if (glyph.kind == core::ScreenDecoration::Kind::Disc) {
+            // Black outline under a fill in the annotation's own colour, the
+            // same two-tone treatment the vertex and resize handles use:
+            // brightfield H&E glass and tissue are near-white and paintGL
+            // clears the slide rect to white, so a pale marker alone would
+            // vanish on the commonest slide type.
+            painter.setPen(QPen(QColor(0x00, 0x00, 0x00), 1.0));
+            painter.setBrush(QBrush(color));
+            painter.drawEllipse(anchor, glyph.sizePixels, glyph.sizePixels);
+            return;
+        }
+        // A head needs a shaft to point along, and a size to be drawn at. A
+        // zero-length arrow from disk has neither and is left as its
+        // (invisible) shaft rather than being given an arbitrary direction.
+        if (shape.points.size() < 2 || glyph.sizePixels <= 0.0) {
+            return;
+        }
+        const QPointF tail = toScreen(shape.points.front());
+        const double dx = anchor.x() - tail.x();
+        const double dy = anchor.y() - tail.y();
+        const double length = std::hypot(dx, dy);
+        if (length <= 0.0) {
+            return;
+        }
+        const double ux = dx / length;
+        const double uy = dy / length;
+        // sizePixels is the head's length ALONG the shaft; the barbs are half
+        // that to either side, giving a head as wide as it is long.
+        const QPointF base(anchor.x() - ux * glyph.sizePixels,
+                           anchor.y() - uy * glyph.sizePixels);
+        const QPointF barb(-uy * glyph.sizePixels * 0.5, ux * glyph.sizePixels * 0.5);
+        QPolygonF head;
+        head << anchor << (base + barb) << (base - barb);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QBrush(color));
+        painter.drawPolygon(head);
+    };
+
     painter.setRenderHint(QPainter::Antialiasing, true);
 
     const std::string& selectedId = m_impl->annotations->selectedId();
@@ -3360,6 +3471,14 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         // inventing a segment the user never drew.
         painter.setBrush(shape.closed ? QBrush(fill) : QBrush(Qt::NoBrush));
         painter.drawPath(screenPath(shape));
+
+        // The same radius the hit test uses, so the marker you see is the
+        // target you click -- by construction, rather than by two numbers that
+        // happen to agree. Painted after the outline, the way handles are.
+        if (const std::optional<core::ScreenDecoration> glyph = core::screenDecoration(
+                annotation.geometry(), vp.scale(), kHitToleranceScreenPixels)) {
+            paintDecoration(*glyph, shape, stroke);
+        }
     }
 
     // Only the selection outline is redrawn here, last, so a later annotation
@@ -3390,6 +3509,25 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
             overlay.setCapStyle(Qt::RoundCap);
             painter.setPen(overlay);
             painter.drawPath(path);
+
+            // A point's outline is one vertex, so `path` holds a moveTo and
+            // nothing else: the two strokes above paint nothing and the
+            // selection would be invisible. Ring the disc instead, in the same
+            // two tones and just outside it, so the user can see what Delete
+            // would remove. An arrow needs none of this -- its shaft is a real
+            // open path and takes the ordinary treatment.
+            if (const std::optional<core::ScreenDecoration> glyph = core::screenDecoration(
+                    selected->geometry(), vp.scale(), kHitToleranceScreenPixels)) {
+                if (glyph->kind == core::ScreenDecoration::Kind::Disc) {
+                    const QPointF centre = toScreen(glyph->anchor);
+                    const double radius = glyph->sizePixels + 3.0;
+                    painter.setBrush(Qt::NoBrush);
+                    painter.setPen(QPen(QColor(0x00, 0x00, 0x00), 3.0));
+                    painter.drawEllipse(centre, radius, radius);
+                    painter.setPen(QPen(QColor(0xFF, 0xFF, 0xFF), 1.0, Qt::DashLine));
+                    painter.drawEllipse(centre, radius, radius);
+                }
+            }
         }
     }
 
@@ -3454,8 +3592,23 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         }
     }
 
-    // The rectangle or ellipse being dragged right now is not in the model yet.
-    if (m_impl->drawing) {
+    // The rectangle, ellipse or arrow being dragged right now is not in the
+    // model yet. The Point tool has no drag and so no preview: the marker
+    // appears on the release, and the degenerate box the generic path would
+    // compute paints a dashed artefact under the cursor instead.
+    if (m_impl->drawing && m_impl->activeTool == AnnotationTool::Arrow) {
+        // Tail to cursor, with no head. The head's size is derived from the
+        // shaft's length, so a head that grew through the drag would read as a
+        // bug; the committed arrow gets one.
+        //
+        // applyDragConstraints is deliberately not consulted: Shift squares a
+        // box about an anchor and Alt doubles it from a centre, and neither
+        // means anything for a tail-to-head drag (design spec 4.3).
+        painter.setPen(QPen(QColor(0xE6, 0x7E, 0x22), 2.0, Qt::DashLine));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawLine(toScreen(m_impl->drawAnchorSlide),
+                         toScreen(m_impl->drawCurrentSlide));
+    } else if (m_impl->drawing && m_impl->activeTool != AnnotationTool::Point) {
         const core::RectF box = m_impl->pendingDragBox();
         const core::PointF topLeft{box.x, box.y};
         const core::PointF bottomRight{box.x + box.width, box.y + box.height};
