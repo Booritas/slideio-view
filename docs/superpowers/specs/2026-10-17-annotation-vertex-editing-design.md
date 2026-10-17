@@ -369,9 +369,22 @@ no-op that still exits 0.
 | Z1 | passed |
 | Z2 | passed |
 | Z3 | passed |
+| Z4 | passed |
+| Z5 | passed |
+| Z6 | passed |
+| Z7 | passed |
+| Z8 | passed |
 | Z9 | passed |
-| Z19 | passed |
+| Z10 | passed |
+| Z11 | passed |
+| Z12 | passed |
+| Z13 | passed |
+| Z14 | passed |
+| Z15 | passed |
+| Z16 | passed |
+| Z17 | **not run** |
 | Z18 | passed |
+| Z19 | passed |
 | Z20 | passed |
 | Z21 | passed |
 | Z22 | passed |
@@ -420,6 +433,23 @@ selection moves — including from the annotation list panel, which changes the
 selection with no viewport press at all and is the case that proved the plan's
 ruling wrong. Z18 confirms held space still pans inside the mode, Z23 that
 nothing grabbable goes unpainted, and Z26 the cursor.
+
+**Z4–Z8, Z10–Z16 — ordinary behaviour.** All passed: the drag commits and
+undoes in one step, insert-and-drag places a vertex on the outline, Ctrl+click
+removes one, the floor refuses with a message naming the minimum at **both**
+thresholds (three closed, two open — run as a pair, because a floor correct for
+one and wrong for the other would pass half of it), Escape and a press away
+both end the mode, a dense trace grabs its nearest vertex, an edit survives
+save/close/reopen, whole-shape move still works afterwards, and the mode
+declines silently on a rectangle, an ellipse and a read-only slide.
+
+**Z17 is not run.** It is the only end-to-end guard on the property this whole
+design is arranged around — that `outline()` drops consecutive duplicates while
+stored vertices keep them, so UI code using an outline index addresses the
+wrong point. The core side is pinned by a test proved able to fail (an
+outline-based `nearestVertex` returned 2 where the stored index is 3), but the
+painting and press paths are reachable from no suite, and a polygon saved
+before 2026-10-17 is the only input that distinguishes them.
 
 ---
 
