@@ -29,9 +29,27 @@ enum class DragOwner
     MoveAnnotation,
 };
 
+/// What a press does while the viewport is in vertex-editing mode. Separate
+/// from DragOwner: that routes drags in the ordinary viewport, and widening it
+/// would make one set of rules serve two unrelated situations.
+enum class VertexEditAction
+{
+    None,
+    DragVertex,
+    InsertAndDrag,
+    RemoveVertex,
+    Exit,
+};
+
 /// Screen-space radius within which a click counts as hitting an annotation.
 /// Screen-space so the target stays the same physical size at 1x and at 40x.
 constexpr double kHitToleranceScreenPixels = 6.0;
+
+/// Side length of a vertex handle, in screen pixels, so handles stay the same
+/// size to grab at 1x and at 40x. Smaller than the grab diameter on purpose:
+/// the target is easier to hit than to see precisely, which suits a gesture
+/// aimed with a mouse.
+constexpr double kVertexHandleScreenPixels = 8.0;
 
 /// Minimum screen-pixel gap between consecutive points of a trailed trace.
 /// Screen-space, like every other tolerance here, so a trace has the same
@@ -67,6 +85,19 @@ constexpr double kTrailMinScreenPixels = 2.0;
 /// mousePressEvent, which places a vertex at a cursor that has usually not
 /// moved since the last trailed point.
 [[nodiscard]] bool shouldPlaceClickVertex(core::PointF lastSlide, core::PointF cursorSlide);
+
+/// What a press means while vertex editing, given what it landed on.
+///
+/// `hitVertex` and `hitEdge` come from core::nearestVertex and core::nearestEdge
+/// against the annotation being edited. Both can be true at once -- a press on
+/// a handle is in range of the two segments meeting there -- and the vertex
+/// wins, because the user aimed at something they can see.
+///
+/// Pure, like every other routing predicate here, so the rules are covered
+/// without a QApplication.
+[[nodiscard]] VertexEditAction resolveVertexEditPress(Qt::MouseButton button,
+                                                      Qt::KeyboardModifiers modifiers,
+                                                      bool hitVertex, bool hitEdge);
 
 /// True when a click at `cursorSlide` lands on the shape's first vertex and so
 /// closes it. Reuses the click-target radius rather than introducing a second

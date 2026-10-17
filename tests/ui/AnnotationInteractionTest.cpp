@@ -523,3 +523,65 @@ TEST_CASE("a click just off the previous vertex still places one",
     REQUIRE(shouldPlaceClickVertex(core::PointF{10.0, 20.0}, core::PointF{10.5, 20.0}));
     REQUIRE(shouldPlaceClickVertex(core::PointF{10.0, 20.0}, core::PointF{-10.0, -20.0}));
 }
+
+TEST_CASE("a left press on a handle drags that vertex", "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveVertexEditPress(Qt::LeftButton, Qt::NoModifier, true, false)
+            == VertexEditAction::DragVertex);
+}
+
+// Design spec 3.4: a press on a handle is in range of the vertex AND of the
+// two segments meeting there. The vertex wins, or pressing a handle would
+// insert a new vertex on top of the one the user meant to grab.
+TEST_CASE("a vertex hit beats an edge hit", "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveVertexEditPress(Qt::LeftButton, Qt::NoModifier, true, true)
+            == VertexEditAction::DragVertex);
+}
+
+TEST_CASE("ctrl and a handle removes that vertex", "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveVertexEditPress(Qt::LeftButton, Qt::ControlModifier, true, false)
+            == VertexEditAction::RemoveVertex);
+    REQUIRE(resolveVertexEditPress(Qt::LeftButton, Qt::ControlModifier, true, true)
+            == VertexEditAction::RemoveVertex);
+}
+
+TEST_CASE("a left press on the outline inserts and drags",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveVertexEditPress(Qt::LeftButton, Qt::NoModifier, false, true)
+            == VertexEditAction::InsertAndDrag);
+    // Ctrl means "remove" only on a handle; on an edge there is nothing to
+    // remove, so it does not suppress the insert.
+    REQUIRE(resolveVertexEditPress(Qt::LeftButton, Qt::ControlModifier, false, true)
+            == VertexEditAction::InsertAndDrag);
+}
+
+TEST_CASE("a left press on neither leaves the mode", "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveVertexEditPress(Qt::LeftButton, Qt::NoModifier, false, false)
+            == VertexEditAction::Exit);
+}
+
+// A middle or right press must not exit the mode: the middle button pans, and
+// right is reserved for a future context menu.
+TEST_CASE("a non-left press does nothing while editing",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveVertexEditPress(Qt::MiddleButton, Qt::NoModifier, true, false)
+            == VertexEditAction::None);
+    REQUIRE(resolveVertexEditPress(Qt::RightButton, Qt::NoModifier, false, false)
+            == VertexEditAction::None);
+}
+
+// Shift and Alt have meanings while drawing; neither means anything here and
+// neither may divert the gesture.
+TEST_CASE("unrelated modifiers do not change the action",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveVertexEditPress(Qt::LeftButton, Qt::ShiftModifier, true, false)
+            == VertexEditAction::DragVertex);
+    REQUIRE(resolveVertexEditPress(Qt::LeftButton, Qt::AltModifier, false, true)
+            == VertexEditAction::InsertAndDrag);
+}

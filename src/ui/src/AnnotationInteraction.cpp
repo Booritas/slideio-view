@@ -60,6 +60,24 @@ core::RectF withMinimumExtent(const core::RectF& box, double minExtentSlideUnits
     return result;
 }
 
+VertexEditAction resolveVertexEditPress(Qt::MouseButton button, Qt::KeyboardModifiers modifiers,
+                                        bool hitVertex, bool hitEdge)
+{
+    // Middle still pans and right is reserved for a context menu; neither may
+    // end the mode by accident.
+    if (button != Qt::LeftButton) {
+        return VertexEditAction::None;
+    }
+    if (hitVertex) {
+        return modifiers.testFlag(Qt::ControlModifier) ? VertexEditAction::RemoveVertex
+                                                       : VertexEditAction::DragVertex;
+    }
+    if (hitEdge) {
+        return VertexEditAction::InsertAndDrag;
+    }
+    return VertexEditAction::Exit;
+}
+
 core::RectF applyDragConstraints(core::RectF box, core::PointF anchor,
                                  Qt::KeyboardModifiers mods)
 {
