@@ -387,8 +387,22 @@ in screen pixels.
 No test binary creates a `QApplication`, so placement, painting and every
 routing decision in `ViewportWidget` are unreachable from any suite.
 
-**Not yet run.** Results are recorded here afterwards, as groups U through AA
-were.
+**Not yet run.** The build to run them against is the installed binary at
+`build/install/release/bin/slideio-viewer.exe`, sha256
+`1351e7ef3c54635000393a1f39b4dbb34714c4e0ddacc2cc4da798379817773e`, commit
+`805f979`. The hash was compared against `build/build/Release/slideio-viewer.exe`
+and matched — a running viewer turns `cmake --install` into a silent no-op that
+still exits 0, so the artifact is what was checked, not the exit code. Results
+are recorded here afterwards, as groups U through AA were — what was observed,
+not what was intended.
+
+AB19 needs a slide whose annotations are not editable, and the tool has to be
+picked first: the drawing tool actions are disabled on such a slide, so select
+the Point tool on an editable slide and then open the read-only one — the
+active tool is deliberately not reset across an open. The cheapest way to
+produce a read-only slide is the one group AA used: point the stored `slideId`
+in the annotation file at a value matching no slide, and resolve the mismatch
+dialog as Open Read-Only.
 
 | | Check |
 |---|---|
