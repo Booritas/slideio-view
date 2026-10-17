@@ -185,6 +185,8 @@ struct MainWindow::Impl
     QAction* ellipseToolAction = nullptr;
     QAction* polygonToolAction = nullptr;
     QAction* freehandToolAction = nullptr;
+    QAction* pointToolAction = nullptr;
+    QAction* arrowToolAction = nullptr;
     QAction* preferencesAction = nullptr;
     QAction* openAnnotationsFolderAction = nullptr;
     QAction* aboutAction = nullptr;
@@ -375,6 +377,21 @@ struct MainWindow::Impl
         freehandToolAction->setShortcut(QKeySequence("F"));
         freehandToolAction->setStatusTip("Draw an open freehand line");
 
+        // "M" for marker: "P" belongs to Polygon, whose own mnemonic is the
+        // "o". These carry the same WidgetWithChildrenShortcut scope as the
+        // five above, for the same reason -- at window scope "m" and "a" would
+        // be stolen from every text field in the window.
+        pointToolAction = new QAction("&Point Marker", owner);
+        pointToolAction->setCheckable(true);
+        pointToolAction->setShortcut(QKeySequence("M"));
+        pointToolAction->setStatusTip(
+            "Place a point marker with a single click; the tool stays active for the next one");
+
+        arrowToolAction = new QAction("&Arrow", owner);
+        arrowToolAction->setCheckable(true);
+        arrowToolAction->setShortcut(QKeySequence("A"));
+        arrowToolAction->setStatusTip("Draw an arrow by dragging from its tail to its head");
+
         // These are the only bare-letter shortcuts in the application; every
         // other one here is modifier-qualified. Qt matches shortcuts before the
         // key reaches the focus widget, so at the default window scope "v" and
@@ -388,6 +405,8 @@ struct MainWindow::Impl
         ellipseToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         polygonToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         freehandToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        pointToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        arrowToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
 
         auto* toolGroup = new QActionGroup(owner);
         toolGroup->setExclusive(true);
@@ -396,6 +415,8 @@ struct MainWindow::Impl
         toolGroup->addAction(ellipseToolAction);
         toolGroup->addAction(polygonToolAction);
         toolGroup->addAction(freehandToolAction);
+        toolGroup->addAction(pointToolAction);
+        toolGroup->addAction(arrowToolAction);
         // Spec §6: no drawing tools without a slide. Enabled and disabled from
         // ViewportWidget::annotationsAvailableChanged, which says more than
         // "a slide is open": an associated image and a slide whose annotation
@@ -404,6 +425,8 @@ struct MainWindow::Impl
         ellipseToolAction->setEnabled(false);
         polygonToolAction->setEnabled(false);
         freehandToolAction->setEnabled(false);
+        pointToolAction->setEnabled(false);
+        arrowToolAction->setEnabled(false);
 
         openAnnotationsFolderAction = new QAction("Open &Annotations Folder", owner);
         openAnnotationsFolderAction->setStatusTip(
@@ -494,6 +517,8 @@ struct MainWindow::Impl
         toolsMenu->addAction(ellipseToolAction);
         toolsMenu->addAction(polygonToolAction);
         toolsMenu->addAction(freehandToolAction);
+        toolsMenu->addAction(pointToolAction);
+        toolsMenu->addAction(arrowToolAction);
         // There is no Edit menu, so Preferences lives here. setMenuRole() moves
         // it to the application menu on macOS regardless.
         toolsMenu->addSeparator();
@@ -603,6 +628,8 @@ struct MainWindow::Impl
         viewportWidget->addAction(ellipseToolAction);
         viewportWidget->addAction(polygonToolAction);
         viewportWidget->addAction(freehandToolAction);
+        viewportWidget->addAction(pointToolAction);
+        viewportWidget->addAction(arrowToolAction);
 
         QObject::connect(panToolAction, &QAction::triggered, owner, [this]() {
             viewportWidget->setActiveTool(AnnotationTool::Pan);
@@ -637,6 +664,15 @@ struct MainWindow::Impl
         QObject::connect(freehandToolAction, &QAction::triggered, owner, [selectDrawingTool]() {
             selectDrawingTool(AnnotationTool::Freehand);
         });
+        // Through selectDrawingTool, not setActiveTool: these create
+        // annotations like any other tool, so FR-USER-01's identity gate
+        // stands in front of them too.
+        QObject::connect(pointToolAction, &QAction::triggered, owner, [selectDrawingTool]() {
+            selectDrawingTool(AnnotationTool::Point);
+        });
+        QObject::connect(arrowToolAction, &QAction::triggered, owner, [selectDrawingTool]() {
+            selectDrawingTool(AnnotationTool::Arrow);
+        });
 
         QObject::connect(preferencesAction, &QAction::triggered, owner, [this]() {
             openPreferences();
@@ -664,6 +700,8 @@ struct MainWindow::Impl
                              ellipseToolAction->setChecked(tool == AnnotationTool::Ellipse);
                              polygonToolAction->setChecked(tool == AnnotationTool::Polygon);
                              freehandToolAction->setChecked(tool == AnnotationTool::Freehand);
+                             pointToolAction->setChecked(tool == AnnotationTool::Point);
+                             arrowToolAction->setChecked(tool == AnnotationTool::Arrow);
                              if (isNPointTool(tool)) {
                                  // A user who clicks once and does not know how
                                  // to finish has no affordance at all otherwise.
@@ -948,6 +986,8 @@ struct MainWindow::Impl
             ellipseToolAction->setEnabled(false);
             polygonToolAction->setEnabled(false);
             freehandToolAction->setEnabled(false);
+            pointToolAction->setEnabled(false);
+            arrowToolAction->setEnabled(false);
             closeAction->setEnabled(false);
             minimapWidget->clearThumbnail();
             statusBarManager->updateCursorPosition(0.0, 0.0);
@@ -1679,6 +1719,8 @@ void MainWindow::Impl::applyAnnotationAvailability(bool available, const QString
     ellipseToolAction->setEnabled(available);
     polygonToolAction->setEnabled(available);
     freehandToolAction->setEnabled(available);
+    pointToolAction->setEnabled(available);
+    arrowToolAction->setEnabled(available);
     // Same gate for the properties editor's fields. A read-only slide still
     // shows its annotations and still lets them be selected; what it refuses is
     // changing them, and a field that cannot be used should not look as though
