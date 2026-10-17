@@ -10,6 +10,7 @@
 #include "slideio/viewer/app/UndoRedoStack.h"
 #include "slideio/viewer/core/Annotation.h"
 #include "slideio/viewer/core/AnnotationGeometry.h"
+#include "slideio/viewer/core/BoxResize.h"
 #include "slideio/viewer/core/VertexEditing.h"
 #include "slideio/viewer/core/CoordinateSystem.h"
 #include "slideio/viewer/core/Histogram.h"
@@ -1565,6 +1566,37 @@ struct ViewportWidget::Impl
             return nullptr;
         }
         return std::get_if<core::PolygonGeometry>(&annotation->geometry());
+    }
+
+    /// The normalised bounding box of the selected annotation when it is
+    /// box-shaped, or absent when nothing is selected, the selection is a
+    /// traced shape, or no model is attached.
+    ///
+    /// Normalised deliberately: a stored box may be inverted -- from a file or
+    /// from a mid-drag flip -- and handles computed from an inverted box would
+    /// each sit on the wrong side. core::boundingBox is the one place that
+    /// normalisation lives.
+    std::optional<core::RectF> selectedBoxGeometry() const
+    {
+        if (annotations == nullptr) {
+            return std::nullopt;
+        }
+        const std::string& id = annotations->selectedId();
+        if (id.empty()) {
+            return std::nullopt;
+        }
+        const core::Annotation* annotation = annotations->find(id);
+        if (annotation == nullptr) {
+            return std::nullopt;
+        }
+        const core::RectF box = core::boundingBox(annotation->geometry());
+        // withBoxReplaced is the authority on which shapes are box-defined;
+        // asking it keeps that judgement in one place rather than repeating a
+        // type test here, which a future box-shaped type would then miss.
+        if (!core::withBoxReplaced(annotation->geometry(), box).has_value()) {
+            return std::nullopt;
+        }
+        return box;
     }
 
     core::PointF drawAnchorSlide;
@@ -3318,6 +3350,35 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
             }
             // Two-tone for the same reason the selection outline is:
             // brightfield H&E glass and tissue are near-white, and paintGL
+            // clears the slide rect to white, so a white handle alone would
+            // vanish on the commonest slide type.
+            painter.drawRect(QRectF(centre.x() - half, centre.y() - half,
+                                    kVertexHandleScreenPixels, kVertexHandleScreenPixels));
+        }
+    }
+
+    // Resize handles for a selected box-shaped annotation. Live on selection,
+    // with no mode: eight handles cannot bury a shape the way 400 vertex
+    // handles could, which is the whole reason traced shapes need a mode and
+    // these do not. Design spec 2.
+    if (const std::optional<core::RectF> selectedBox = m_impl->selectedBoxGeometry()) {
+        const double half = kVertexHandleScreenPixels * 0.5;
+        // Grown by the grab radius and the handle's half-width, so every
+        // handle a press could reach is painted -- culling to the bare
+        // viewport left one grabbable but invisible, which review graded a
+        // real defect on the vertex handles.
+        const double margin = kHitToleranceScreenPixels + half;
+        const QRectF viewportRect(-margin, -margin, static_cast<double>(width()) + 2.0 * margin,
+                                  static_cast<double>(height()) + 2.0 * margin);
+        painter.setPen(QPen(QColor(0x00, 0x00, 0x00), 1.0));
+        painter.setBrush(QBrush(QColor(0xFF, 0xFF, 0xFF)));
+        for (const core::PointF& handle : core::boxHandlePositions(*selectedBox)) {
+            const QPointF centre = toScreen(handle);
+            if (!viewportRect.contains(centre)) {
+                continue;
+            }
+            // Two-tone, as the vertex handles and the selection outline are:
+            // brightfield H&E glass and tissue are near-white and paintGL
             // clears the slide rect to white, so a white handle alone would
             // vanish on the commonest slide type.
             painter.drawRect(QRectF(centre.x() - half, centre.y() - half,
