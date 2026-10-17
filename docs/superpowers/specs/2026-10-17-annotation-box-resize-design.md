@@ -284,6 +284,10 @@ build; results are recorded here afterwards, as groups U through Z were.
 | AA17 | Resize, save, close the slide, reopen: the new size is there. |
 | AA18 | Resize an ellipse and check the properties panel: area and perimeter follow the new size. |
 | AA19 | During a resize the cursor shows `Qt::SizeAllCursor` — the same cursor a whole-shape move and a vertex drag use — not a crosshair or arrow. Per-handle directional cursors are out of scope (§8). |
+| AA20 | Grab a handle, drag, press **Ctrl+Z** while still holding the button, then release WITHOUT moving the mouse. What the undo restored must stand, and the next Ctrl+Z must reach the operation before it — not a fabricated "Resize" step. |
+| AA21 | With the **Rectangle** tool active and a rectangle already selected, draw a second shape starting near one of the first shape's handles. A new shape must be created; the first must not resize. |
+| AA22 | Press a handle and release without moving. Nothing is recorded (AA9) AND the slide must not become dirty — no autosave should follow. |
+| AA23 | On a read-only slide, press on a handle spot and drag: the viewport must pan (and the status bar explain), not sit dead. |
 
 ---
 

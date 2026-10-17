@@ -1561,6 +1561,29 @@ struct ViewportWidget::Impl
     // case -- and the drag stops rather than resizing from a stale box.
     core::RectF boxResizeLastApplied;
 
+    /// True when the annotation being resized is still exactly where this drag
+    /// last left it.
+    ///
+    /// False means something else rewrote the geometry mid-drag. Ctrl+Z is the
+    /// reachable case: it is a window-scoped QAction shortcut, so it fires
+    /// with the mouse button held. The state in the model is then not this
+    /// gesture's work, and recording it would fabricate a step whose undo
+    /// re-applies whatever the user just cancelled.
+    bool boxResizeUntouched() const
+    {
+        if (!boxResizeOriginal.has_value() || annotations == nullptr) {
+            return false;
+        }
+        const core::Annotation* now = annotations->find(boxResizeOriginal->id());
+        if (now == nullptr) {
+            return false;
+        }
+        const core::RectF box = core::boundingBox(now->geometry());
+        return box.x == boxResizeLastApplied.x && box.y == boxResizeLastApplied.y
+               && box.width == boxResizeLastApplied.width
+               && box.height == boxResizeLastApplied.height;
+    }
+
     /// The polygon being vertex-edited, or null when the mode is off, the
     /// annotation is gone, or it is not a traced shape.
     ///
@@ -1580,17 +1603,27 @@ struct ViewportWidget::Impl
         return std::get_if<core::PolygonGeometry>(&annotation->geometry());
     }
 
-    /// The normalised bounding box of the selected annotation when it is
-    /// box-shaped, or absent when nothing is selected, the selection is a
-    /// traced shape, or no model is attached.
+    /// The normalised bounding box of the selected annotation when the user
+    /// can resize it right now; absent otherwise.
+    ///
+    /// Named for what it answers, because it is more than a geometry query: it
+    /// also gates on the active tool. Resize is reachable only under the Pan
+    /// tool, exactly as the whole-shape move and vertex editing are. Without
+    /// that gate the press router -- which runs before resolveDragOwner --
+    /// would intercept a drawing tool's presses: a newly drawn shape is
+    /// auto-selected and the tool does not revert, so drawing a second
+    /// rectangle beside the first, starting near any of its eight handles,
+    /// would silently resize the first and autosave it. Vertex editing gates
+    /// on Pan for this reason; having no mode makes the conflict permanent
+    /// rather than transient, so it matters more here.
     ///
     /// Normalised deliberately: a stored box may be inverted -- from a file or
     /// from a mid-drag flip -- and handles computed from an inverted box would
     /// each sit on the wrong side. core::boundingBox is the one place that
     /// normalisation lives.
-    std::optional<core::RectF> selectedBoxGeometry() const
+    std::optional<core::RectF> resizableBoxGeometry() const
     {
-        if (annotations == nullptr) {
+        if (annotations == nullptr || activeTool != AnnotationTool::Pan) {
             return std::nullopt;
         }
         const std::string& id = annotations->selectedId();
@@ -3074,7 +3107,13 @@ void ViewportWidget::pushGeometryCommand(const std::string& id, const core::Anno
 
 void ViewportWidget::recordBoxResize()
 {
-    if (m_impl->boxResizeOriginal.has_value()) {
+    // The guard belongs HERE, not only in mouseMoveEvent: Ctrl+Z is a
+    // window-scoped shortcut and fires with the button held, so if the next
+    // event is the release -- or a focus loss, or a tool change -- rather than
+    // a move, the move handler's check is never consulted. Recording then
+    // compares a stale original against a state the undo produced and pushes a
+    // "Resize" step whose undo re-applies what the user just cancelled.
+    if (m_impl->boxResizeOriginal.has_value() && m_impl->boxResizeUntouched()) {
         const std::string id = m_impl->boxResizeOriginal->id();
         const core::Annotation* now = m_impl->annotations->find(id);
         // moveEdit, not core::sameVertices: it compares bounding boxes, which
@@ -3390,7 +3429,7 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
     // with no mode: eight handles cannot bury a shape the way 400 vertex
     // handles could, which is the whole reason traced shapes need a mode and
     // these do not. Design spec 2.
-    if (const std::optional<core::RectF> selectedBox = m_impl->selectedBoxGeometry()) {
+    if (const std::optional<core::RectF> selectedBox = m_impl->resizableBoxGeometry()) {
         const double half = kVertexHandleScreenPixels * 0.5;
         // Grown by the grab radius and the handle's half-width, so every
         // handle a press could reach is painted -- culling to the bare
@@ -4394,7 +4433,7 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
     }
 
     if (const std::optional<core::RectF> selectedBox =
-            m_impl->controller == nullptr ? std::nullopt : m_impl->selectedBoxGeometry()) {
+            m_impl->controller == nullptr ? std::nullopt : m_impl->resizableBoxGeometry()) {
         const double tolerance = screenToleranceToSlide(kHitToleranceScreenPixels,
                                                         m_impl->controller->viewport().scale());
         const std::optional<core::BoxHandle> handle =
@@ -4407,6 +4446,13 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
             // handles stay painted -- hiding them would make a read-only slide
             // look like a different application. Design spec 4.1.
             if (!m_impl->annotationsEditable()) {
+                // Tell the user, then let the press fall through to the
+                // ordinary routing so it still pans or selects -- exactly what
+                // the move refusal below does by converting to DragOwner::Pan.
+                // Swallowing it would leave eight dead spots around every
+                // selected shape on a read-only slide, and an ellipse's corner
+                // handles sit over empty tissue where a pan is the only
+                // sensible reading.
                 emit annotationEditBlocked(readOnlyEditMessage());
             } else {
                 m_impl->dragOwner = DragOwner::ResizeBox;
@@ -4418,9 +4464,9 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
                 m_impl->boxResizeOriginal =
                     *m_impl->annotations->find(m_impl->annotations->selectedId());
                 updateCursor();
+                event->accept();
+                return;
             }
-            event->accept();
-            return;
         }
     }
 
@@ -4548,14 +4594,35 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
         // A collapsed axis is widened to one screen pixel, exactly as a newly
         // drawn shape's is, so a shape dragged to nothing comes back visible
         // rather than becoming an invisible line. Design spec 6.4.
-        if (m_impl->boxResizeOriginal.has_value() && m_impl->controller) {
+        //
+        // Skipped entirely when something rewrote the geometry mid-drag: the
+        // shape on screen is then the undo's, not this gesture's, and widening
+        // it would write over what the user just restored.
+        if (m_impl->controller && m_impl->boxResizeUntouched()) {
             const std::string id = m_impl->boxResizeOriginal->id();
             if (const core::Annotation* current = m_impl->annotations->find(id)) {
                 const double scale = m_impl->controller->viewport().scale();
-                const core::RectF widened = withMinimumExtent(
-                    core::boundingBox(current->geometry()), screenToleranceToSlide(1.0, scale));
-                if (const auto geometry = core::withBoxReplaced(current->geometry(), widened)) {
-                    m_impl->annotations->setGeometry(id, *geometry);
+                const core::RectF currentBox = core::boundingBox(current->geometry());
+                const core::RectF widened =
+                    withMinimumExtent(currentBox, screenToleranceToSlide(1.0, scale));
+                // Only when it actually widens. setGeometry restamps
+                // modifiedAt unconditionally, so writing an identical box
+                // would rewrite the file for a gesture that changed nothing --
+                // the same objection 6.3 raises against setGeometry on Escape.
+                // It also matters for a stored INVERTED box, whose rebuilt
+                // pair is the normalised one: a silent on-disk change with no
+                // undo step behind it.
+                if (widened.x != currentBox.x || widened.y != currentBox.y
+                    || widened.width != currentBox.width
+                    || widened.height != currentBox.height) {
+                    if (const auto geometry =
+                            core::withBoxReplaced(current->geometry(), widened)) {
+                        m_impl->annotations->setGeometry(id, *geometry);
+                        // Keep the drag's record of where it left the shape in
+                        // step, or recordBoxResize below would see the widening
+                        // as an external rewrite and decline to record.
+                        m_impl->boxResizeLastApplied = core::boundingBox(*geometry);
+                    }
                 }
             }
         }
