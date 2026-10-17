@@ -461,3 +461,42 @@ TEST_CASE("a genuinely crossed polygon is still self-intersecting",
     REQUIRE(metrics.selfIntersecting);
     REQUIRE_FALSE(metrics.area.has_value());
 }
+
+// Spec 2.3: measure() is driven by outline(), so a new geometry type needs no
+// overload here. These tests are what make that a checked claim rather than an
+// assumption.
+TEST_CASE("a point measures length zero with no area",
+          "[core][AnnotationMeasurement]")
+{
+    const core::ShapeMetrics metrics =
+        core::measure(core::PointGeometry{core::PointF{50.0, 50.0}}, core::PixelSize{});
+    REQUIRE(metrics.outlineLength == 0.0);
+    REQUIRE_FALSE(metrics.area.has_value());
+    REQUIRE_FALSE(metrics.closed);
+    REQUIRE_FALSE(metrics.selfIntersecting);
+}
+
+// closed == false is what makes the properties panel caption this "Length"
+// rather than "Perimeter".
+TEST_CASE("an arrow measures its tail-to-head distance with no area",
+          "[core][AnnotationMeasurement]")
+{
+    const core::ShapeMetrics metrics = core::measure(
+        core::ArrowGeometry{core::PointF{0.0, 0.0}, core::PointF{30.0, 40.0}},
+        core::PixelSize{});
+    REQUIRE(metrics.outlineLength == 50.0);
+    REQUIRE_FALSE(metrics.area.has_value());
+    REQUIRE_FALSE(metrics.closed);
+}
+
+// Review Focus 1: accepted from disk, and it must measure rather than produce
+// a NaN.
+TEST_CASE("a zero-length arrow measures length zero",
+          "[core][AnnotationMeasurement]")
+{
+    const core::ShapeMetrics metrics = core::measure(
+        core::ArrowGeometry{core::PointF{12.0, 34.0}, core::PointF{12.0, 34.0}},
+        core::PixelSize{});
+    REQUIRE(metrics.outlineLength == 0.0);
+    REQUIRE_FALSE(metrics.area.has_value());
+}

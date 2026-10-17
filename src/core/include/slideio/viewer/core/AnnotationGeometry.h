@@ -28,6 +28,35 @@ struct EllipseGeometry
     PointF bottomRight;
 };
 
+/// A single marked position (FR-ANN-05). Not a zero-extent rectangle: a box
+/// promises two corners that could differ, and normalisation, withBoxReplaced,
+/// withMinimumExtent and the resize handles would all apply to it, each
+/// meaninglessly. A position is what a marker is.
+///
+/// It has no slide-space extent at all, so what the user sees is sized in
+/// screen pixels by core::screenDecoration rather than by outline().
+struct PointGeometry
+{
+    PointF position;
+};
+
+/// A directed arrow from `tail` to `head` (FR-ANN-06).
+///
+/// Not a two-vertex PolygonGeometry: AnnotationType is derived from the
+/// geometry and never stored beside it, so typeOf() must be able to tell an
+/// arrow from a two-point freehand line by its geometry alone, and those two
+/// would be indistinguishable.
+///
+/// The pair is ORDERED, and the order is the meaning -- the head is the end
+/// that carries the glyph. Never normalise it the way a rectangle's corners
+/// are normalised: that silently reverses arrows. boundingBox() normalises the
+/// BOX it derives, which is a different thing and is fine.
+struct ArrowGeometry
+{
+    PointF tail;
+    PointF head;
+};
+
 /// Named kind of a shape. Derived from the geometry rather than stored
 /// alongside it, so the two cannot disagree -- see typeOf() below.
 enum class AnnotationType
@@ -36,6 +65,8 @@ enum class AnnotationType
     Ellipse,
     Polygon,
     Polyline,
+    Point,
+    Arrow,
 };
 
 /// A sequence of vertices, closed into a polygon (FR-ANN-03) or left open as a
@@ -73,7 +104,11 @@ constexpr std::size_t kMinPolylineVertices = 2;
 /// spec 3.2 before changing it -- both numbers move with it.
 constexpr std::size_t kEllipseOutlineVertices = 512;
 
-using AnnotationGeometry = std::variant<RectangleGeometry, PolygonGeometry, EllipseGeometry>;
+// Appended, never inserted: the variant default-constructs to its FIRST
+// alternative, and AnnotationSerialization.cpp relies on that when it builds a
+// placeholder Annotation to parse into.
+using AnnotationGeometry = std::variant<RectangleGeometry, PolygonGeometry, EllipseGeometry,
+                                        PointGeometry, ArrowGeometry>;
 
 /// Always positive-extent: a shape built from an inverted drag is normalised.
 [[nodiscard]] RectF boundingBox(const AnnotationGeometry& geom);

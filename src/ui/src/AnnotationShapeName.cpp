@@ -30,6 +30,16 @@ QString freehandLineName()
     return QCoreApplication::translate("AnnotationShapeName", "Freehand Line");
 }
 
+QString pointName()
+{
+    return QCoreApplication::translate("AnnotationShapeName", "Point");
+}
+
+QString arrowName()
+{
+    return QCoreApplication::translate("AnnotationShapeName", "Arrow");
+}
+
 struct ShapeNameVisitor
 {
     QString operator()(const core::RectangleGeometry&) const
@@ -47,6 +57,16 @@ struct ShapeNameVisitor
         // One geometry, two shapes: the flag is the only difference, and the
         // user's word for them is not the same.
         return polygon.closed ? polygonName() : freehandLineName();
+    }
+
+    QString operator()(const core::PointGeometry&) const
+    {
+        return pointName();
+    }
+
+    QString operator()(const core::ArrowGeometry&) const
+    {
+        return arrowName();
     }
 };
 
@@ -68,6 +88,10 @@ QString shapeTypeName(core::AnnotationType type)
         return polygonName();
     case core::AnnotationType::Polyline:
         return freehandLineName();
+    case core::AnnotationType::Point:
+        return pointName();
+    case core::AnnotationType::Arrow:
+        return arrowName();
     }
     return QString();
 }

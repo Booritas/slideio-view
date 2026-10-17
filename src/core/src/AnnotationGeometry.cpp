@@ -245,6 +245,85 @@ bool wellDefinedArea(const PolygonGeometry&)
     return false;
 }
 
+RectF normalized(const PointGeometry& marker)
+{
+    return RectF{marker.position.x, marker.position.y, 0.0, 0.0};
+}
+
+RectF normalized(const ArrowGeometry& arrow)
+{
+    const double x0 = std::min(arrow.tail.x, arrow.head.x);
+    const double y0 = std::min(arrow.tail.y, arrow.head.y);
+    const double x1 = std::max(arrow.tail.x, arrow.head.x);
+    const double y1 = std::max(arrow.tail.y, arrow.head.y);
+    return RectF{x0, y0, x1 - x0, y1 - y0};
+}
+
+bool hitTestShape(const PointGeometry& marker, PointF point, double tolerance)
+{
+    return std::hypot(point.x - marker.position.x, point.y - marker.position.y) <= tolerance;
+}
+
+// The shaft, and only the shaft. The head is decoration: it sits at the
+// shaft's end and is therefore already within tolerance of it, so hit-testing
+// it separately would duplicate an answer this already gives.
+//
+// distanceToSegment clamps to the segment rather than its infinite line, and
+// treats a zero-length segment as its own endpoint -- which is what makes a
+// degenerate arrow from disk hit at its point instead of dividing by zero.
+bool hitTestShape(const ArrowGeometry& arrow, PointF point, double tolerance)
+{
+    return distanceToSegment(arrow.tail, arrow.head, point) <= tolerance;
+}
+
+AnnotationType typeOfShape(const PointGeometry&)
+{
+    return AnnotationType::Point;
+}
+
+AnnotationType typeOfShape(const ArrowGeometry&)
+{
+    return AnnotationType::Arrow;
+}
+
+// One point, open. measure() reads this and reports length 0 with no area,
+// which is the truth about a marker and needs no code of its own.
+Outline outlineShape(const PointGeometry& marker)
+{
+    return Outline{{marker.position}, false};
+}
+
+// Tail first, head second: the painter derives the head's direction from these
+// two points once it has converted them to screen space, so their order is
+// load-bearing.
+Outline outlineShape(const ArrowGeometry& arrow)
+{
+    return Outline{{arrow.tail, arrow.head}, false};
+}
+
+AnnotationGeometry translatedShape(const PointGeometry& marker, double dx, double dy)
+{
+    return PointGeometry{PointF{marker.position.x + dx, marker.position.y + dy}};
+}
+
+AnnotationGeometry translatedShape(const ArrowGeometry& arrow, double dx, double dy)
+{
+    return ArrowGeometry{PointF{arrow.tail.x + dx, arrow.tail.y + dy},
+                         PointF{arrow.head.x + dx, arrow.head.y + dy}};
+}
+
+// Neither has an area at all. The predicate promises that a TYPE always has a
+// well-defined area, and "none" is not a value measure() can stand behind.
+bool wellDefinedArea(const PointGeometry&)
+{
+    return false;
+}
+
+bool wellDefinedArea(const ArrowGeometry&)
+{
+    return false;
+}
+
 } // namespace
 
 PointF closestPointOnSegment(PointF a, PointF b, PointF point)

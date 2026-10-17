@@ -33,6 +33,8 @@ constexpr const char* kRectangleTypeName = "rectangle";
 constexpr const char* kEllipseTypeName = "ellipse";
 constexpr const char* kPolygonTypeName = "polygon";
 constexpr const char* kPolylineTypeName = "polyline";
+constexpr const char* kPointTypeName = "point";
+constexpr const char* kArrowTypeName = "arrow";
 
 bool isFinitePoint(const PointF& point)
 {
@@ -50,6 +52,20 @@ bool isRepresentableShape(const RectangleGeometry& rectangle)
 bool isRepresentableShape(const EllipseGeometry& ellipse)
 {
     return isFinitePoint(ellipse.topLeft) && isFinitePoint(ellipse.bottomRight);
+}
+
+// Finite coordinates and nothing more. There is no minimum extent to enforce:
+// any finite position is a valid marker, and any finite pair is a valid arrow
+// -- including a zero-length one, which readArrow accepts, and the two sides
+// must agree or this application writes a file it cannot open.
+bool isRepresentableShape(const PointGeometry& marker)
+{
+    return isFinitePoint(marker.position);
+}
+
+bool isRepresentableShape(const ArrowGeometry& arrow)
+{
+    return isFinitePoint(arrow.tail) && isFinitePoint(arrow.head);
 }
 
 bool isRepresentableShape(const PolygonGeometry& poly)
@@ -126,6 +142,25 @@ json shapeToJson(const EllipseGeometry& ellipse)
     };
 }
 
+json shapeToJson(const PointGeometry& marker)
+{
+    return json{
+        {"type", kPointTypeName},
+        {"position", pointToJson(marker.position)},
+    };
+}
+
+// tail and head, not topLeft and bottomRight: the names say the pair is
+// ordered, so a human reading the file can see which end carries the head.
+json shapeToJson(const ArrowGeometry& arrow)
+{
+    return json{
+        {"type", kArrowTypeName},
+        {"tail", pointToJson(arrow.tail)},
+        {"head", pointToJson(arrow.head)},
+    };
+}
+
 /// The geometry "type" string for a polygon-shaped path. Shared by the geometry
 /// object and the annotation-level field, so the closed/open choice is made once.
 const char* polygonTypeName(const PolygonGeometry& poly)
@@ -163,6 +198,10 @@ const char* geometryTypeName(const AnnotationGeometry& geometry)
             return kEllipseTypeName;
         } else if constexpr (std::is_same_v<Shape, PolygonGeometry>) {
             return polygonTypeName(shape);
+        } else if constexpr (std::is_same_v<Shape, PointGeometry>) {
+            return kPointTypeName;
+        } else if constexpr (std::is_same_v<Shape, ArrowGeometry>) {
+            return kArrowTypeName;
         } else {
             static_assert(sizeof(Shape) == 0, "A new geometry alternative needs its own type name here.");
         }
@@ -368,6 +407,36 @@ bool readEllipse(const json& value, AnnotationGeometry& out, std::string& proble
     return true;
 }
 
+bool readPoint(const json& value, AnnotationGeometry& out, std::string& problem)
+{
+    PointGeometry marker;
+    if (!value.contains("position") || !readPoint(value.at("position"), marker.position)) {
+        problem = "geometry.position is not a finite point";
+        return false;
+    }
+    out = marker;
+    return true;
+}
+
+bool readArrow(const json& value, AnnotationGeometry& out, std::string& problem)
+{
+    ArrowGeometry arrow;
+    if (!value.contains("tail") || !readPoint(value.at("tail"), arrow.tail)) {
+        problem = "geometry.tail is not a finite point";
+        return false;
+    }
+    if (!value.contains("head") || !readPoint(value.at("head"), arrow.head)) {
+        problem = "geometry.head is not a finite point";
+        return false;
+    }
+    // A zero-length arrow is accepted, exactly as a degenerate ellipse is:
+    // refusing it would make the whole document unloadable, and by the
+    // governing rule never again writable, over one shape the user can see and
+    // delete. The endpoints are NOT normalised -- the order is the direction.
+    out = arrow;
+    return true;
+}
+
 bool readPolygon(const json& value, bool closed, AnnotationGeometry& out, std::string& problem)
 {
     if (!value.contains("vertices") || !value.at("vertices").is_array()) {
@@ -420,6 +489,12 @@ bool readGeometry(const json& value, AnnotationGeometry& out, std::string& probl
     }
     if (type == kPolylineTypeName) {
         return readPolygon(value, false, out, problem);
+    }
+    if (type == kPointTypeName) {
+        return readPoint(value, out, problem);
+    }
+    if (type == kArrowTypeName) {
+        return readArrow(value, out, problem);
     }
 
     // Naming the version is the whole value of this message: schemaVersion

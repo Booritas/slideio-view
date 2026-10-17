@@ -22,6 +22,16 @@ AnnotationGeometry ellipseGeom(double x0, double y0, double x1, double y1)
     return EllipseGeometry{PointF{x0, y0}, PointF{x1, y1}};
 }
 
+AnnotationGeometry pointGeom(double x, double y)
+{
+    return PointGeometry{PointF{x, y}};
+}
+
+AnnotationGeometry arrowGeom(double tailX, double tailY, double headX, double headY)
+{
+    return ArrowGeometry{PointF{tailX, tailY}, PointF{headX, headY}};
+}
+
 } // namespace
 
 TEST_CASE("boundingBox returns the rectangle itself", "[core][AnnotationGeometry]")
@@ -454,4 +464,117 @@ TEST_CASE("a degenerate shape still has a well-defined area",
 {
     REQUIRE(hasWellDefinedArea(ellipseGeom(0.0, 25.0, 100.0, 25.0)));
     REQUIRE(hasWellDefinedArea(rect(0.0, 25.0, 100.0, 25.0)));
+}
+
+TEST_CASE("a point's bounding box has zero extent at its position",
+          "[core][AnnotationGeometry]")
+{
+    const RectF box = boundingBox(pointGeom(120.0, 340.0));
+    REQUIRE(box.x == 120.0);
+    REQUIRE(box.y == 340.0);
+    REQUIRE(box.width == 0.0);
+    REQUIRE(box.height == 0.0);
+}
+
+// The pair is ORDERED -- head and tail are not corners -- but the bounding box
+// is a box, so it normalises like any other.
+TEST_CASE("an arrow's bounding box normalises its endpoints",
+          "[core][AnnotationGeometry]")
+{
+    const RectF box = boundingBox(arrowGeom(110.0, 70.0, 10.0, 20.0));
+    REQUIRE(box.x == 10.0);
+    REQUIRE(box.y == 20.0);
+    REQUIRE(box.width == 100.0);
+    REQUIRE(box.height == 50.0);
+}
+
+TEST_CASE("a point is hit within the tolerance of its position and not beyond",
+          "[core][AnnotationGeometry]")
+{
+    const AnnotationGeometry marker = pointGeom(100.0, 100.0);
+    REQUIRE(hitTest(marker, PointF{100.0, 100.0}, 0.0));
+    REQUIRE(hitTest(marker, PointF{103.0, 104.0}, 5.0));
+    REQUIRE_FALSE(hitTest(marker, PointF{103.0, 104.0}, 4.9));
+}
+
+TEST_CASE("an arrow is hit along its shaft and not off it",
+          "[core][AnnotationGeometry]")
+{
+    const AnnotationGeometry arrow = arrowGeom(0.0, 0.0, 100.0, 0.0);
+    REQUIRE(hitTest(arrow, PointF{50.0, 0.0}, 0.0));
+    REQUIRE(hitTest(arrow, PointF{50.0, 2.0}, 2.0));
+    REQUIRE_FALSE(hitTest(arrow, PointF{50.0, 10.0}, 2.0));
+    // Past the head, not on the infinite line through it.
+    REQUIRE_FALSE(hitTest(arrow, PointF{140.0, 0.0}, 2.0));
+}
+
+// Review Focus 1: the tool refuses to create this, but the parser accepts it
+// from disk, so every dispatch has to answer for it.
+TEST_CASE("a zero-length arrow is hit at its own point",
+          "[core][AnnotationGeometry]")
+{
+    const AnnotationGeometry arrow = arrowGeom(40.0, 40.0, 40.0, 40.0);
+    REQUIRE(hitTest(arrow, PointF{40.0, 40.0}, 0.0));
+    REQUIRE_FALSE(hitTest(arrow, PointF{60.0, 40.0}, 1.0));
+}
+
+TEST_CASE("typeOf names the two new shapes", "[core][AnnotationGeometry]")
+{
+    REQUIRE(typeOf(pointGeom(1.0, 2.0)) == AnnotationType::Point);
+    REQUIRE(typeOf(arrowGeom(1.0, 2.0, 3.0, 4.0)) == AnnotationType::Arrow);
+}
+
+TEST_CASE("a point's outline is one open point", "[core][AnnotationGeometry]")
+{
+    const Outline shape = outline(pointGeom(7.0, 9.0));
+    REQUIRE(shape.points.size() == 1);
+    REQUIRE(shape.points[0].x == 7.0);
+    REQUIRE(shape.points[0].y == 9.0);
+    REQUIRE_FALSE(shape.closed);
+}
+
+// Tail first, head second, in the stored order. The painter reads the shaft
+// direction from these two points, so reversing them would reverse the head.
+TEST_CASE("an arrow's outline is tail then head, open",
+          "[core][AnnotationGeometry]")
+{
+    const Outline shape = outline(arrowGeom(10.0, 20.0, 90.0, 60.0));
+    REQUIRE(shape.points.size() == 2);
+    REQUIRE(shape.points[0].x == 10.0);
+    REQUIRE(shape.points[0].y == 20.0);
+    REQUIRE(shape.points[1].x == 90.0);
+    REQUIRE(shape.points[1].y == 60.0);
+    REQUIRE_FALSE(shape.closed);
+}
+
+TEST_CASE("translating a point moves its position", "[core][AnnotationGeometry]")
+{
+    const AnnotationGeometry moved = translated(pointGeom(10.0, 20.0), 5.0, -3.0);
+    REQUIRE(typeOf(moved) == AnnotationType::Point);
+    const PointGeometry& marker = std::get<PointGeometry>(moved);
+    REQUIRE(marker.position.x == 15.0);
+    REQUIRE(marker.position.y == 17.0);
+}
+
+// Both endpoints move by the same delta, and the ORDER survives: a translated
+// arrow that came back reversed would point the wrong way after every drag.
+TEST_CASE("translating an arrow moves both endpoints and keeps their order",
+          "[core][AnnotationGeometry]")
+{
+    const AnnotationGeometry moved = translated(arrowGeom(10.0, 20.0, 90.0, 60.0), 5.0, -3.0);
+    REQUIRE(typeOf(moved) == AnnotationType::Arrow);
+    const ArrowGeometry& arrow = std::get<ArrowGeometry>(moved);
+    REQUIRE(arrow.tail.x == 15.0);
+    REQUIRE(arrow.tail.y == 17.0);
+    REQUIRE(arrow.head.x == 95.0);
+    REQUIRE(arrow.head.y == 57.0);
+}
+
+// Neither has an area at all, so neither type can promise one. The predicate
+// is about the TYPE, not the instance -- see the header.
+TEST_CASE("neither a point nor an arrow has a well-defined area",
+          "[core][AnnotationGeometry]")
+{
+    REQUIRE_FALSE(hasWellDefinedArea(pointGeom(1.0, 2.0)));
+    REQUIRE_FALSE(hasWellDefinedArea(arrowGeom(1.0, 2.0, 3.0, 4.0)));
 }

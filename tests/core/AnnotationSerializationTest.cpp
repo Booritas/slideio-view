@@ -968,3 +968,139 @@ TEST_CASE("a degenerate ellipse loads rather than failing the document",
     REQUIRE(result.error == ParseError::None);
     REQUIRE(result.document.annotations.size() == 1);
 }
+
+// Spec 2.6: readGeometry is a string chain with no compile-time link to the
+// variant. Nothing in the compiler forces its point branch to exist -- this
+// test is what forces it. Without the branch the application writes files it
+// then refuses to open.
+TEST_CASE("a point round-trips through JSON", "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document = makeDocument();
+    document.annotations.clear();
+    document.annotations.emplace_back("p1", PointGeometry{PointF{1200.5, 800.25}});
+
+    const std::string text = serializeAnnotationDocument(document);
+    REQUIRE_FALSE(text.empty());
+    REQUIRE(text.find("\"point\"") != std::string::npos);
+
+    const ParseResult result = parseAnnotationDocument(text);
+    REQUIRE(result.error == ParseError::None);
+    REQUIRE(result.document.annotations.size() == 1);
+
+    const AnnotationGeometry& geometry = result.document.annotations.front().geometry();
+    REQUIRE(std::holds_alternative<PointGeometry>(geometry));
+    REQUIRE(std::get<PointGeometry>(geometry).position.x == 1200.5);
+    REQUIRE(std::get<PointGeometry>(geometry).position.y == 800.25);
+    REQUIRE(result.document.annotations.front().type() == AnnotationType::Point);
+}
+
+// Same reasoning as the point above, and with one thing more to prove: the
+// pair is ordered, so a round-trip that came back reversed would silently turn
+// every arrow in a file around.
+TEST_CASE("an arrow round-trips with its direction intact",
+          "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document = makeDocument();
+    document.annotations.clear();
+    document.annotations.emplace_back(
+        "a1", ArrowGeometry{PointF{90.0, 60.0}, PointF{10.0, 20.0}});
+
+    const std::string text = serializeAnnotationDocument(document);
+    REQUIRE_FALSE(text.empty());
+    REQUIRE(text.find("\"arrow\"") != std::string::npos);
+
+    const ParseResult result = parseAnnotationDocument(text);
+    REQUIRE(result.error == ParseError::None);
+
+    const AnnotationGeometry& geometry = result.document.annotations.front().geometry();
+    REQUIRE(std::holds_alternative<ArrowGeometry>(geometry));
+    const ArrowGeometry& arrow = std::get<ArrowGeometry>(geometry);
+    // Tail right-of and below head: an arrow drawn right-to-left and
+    // bottom-to-top. Normalising anywhere in the round trip would swap these.
+    REQUIRE(arrow.tail.x == 90.0);
+    REQUIRE(arrow.tail.y == 60.0);
+    REQUIRE(arrow.head.x == 10.0);
+    REQUIRE(arrow.head.y == 20.0);
+    REQUIRE(result.document.annotations.front().type() == AnnotationType::Arrow);
+}
+
+// Accepted from disk even though the tool refuses to create one: refusing it
+// would make the whole document unloadable, and by the governing rule never
+// again writable, over one shape the user can see and delete.
+TEST_CASE("a zero-length arrow round-trips", "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document = makeDocument();
+    document.annotations.clear();
+    document.annotations.emplace_back(
+        "a1", ArrowGeometry{PointF{40.0, 40.0}, PointF{40.0, 40.0}});
+
+    const ParseResult result = parseAnnotationDocument(serializeAnnotationDocument(document));
+    REQUIRE(result.error == ParseError::None);
+    REQUIRE(std::holds_alternative<ArrowGeometry>(
+        result.document.annotations.front().geometry()));
+}
+
+// Review Focus 2: never write a file we cannot read back. A non-finite
+// coordinate has no JSON form the parser would accept, so the write is refused
+// outright rather than producing `null` or `NaN` in the file.
+TEST_CASE("a non-finite point or arrow refuses to serialize",
+          "[core][AnnotationSerialization]")
+{
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const double infinity = std::numeric_limits<double>::infinity();
+
+    AnnotationDocument withPoint = makeDocument();
+    withPoint.annotations.clear();
+    withPoint.annotations.emplace_back("p1", PointGeometry{PointF{nan, 0.0}});
+    REQUIRE(serializeAnnotationDocument(withPoint).empty());
+
+    AnnotationDocument withArrow = makeDocument();
+    withArrow.annotations.clear();
+    withArrow.annotations.emplace_back(
+        "a1", ArrowGeometry{PointF{0.0, 0.0}, PointF{infinity, 0.0}});
+    REQUIRE(serializeAnnotationDocument(withArrow).empty());
+}
+
+// Review Focus 3: a missing endpoint must be named, not defaulted. Silently
+// reading an absent head as the origin would move someone's arrow to the
+// corner of the slide and then autosave it there.
+TEST_CASE("an arrow missing an endpoint is refused by name",
+          "[core][AnnotationSerialization]")
+{
+    const ParseResult missingHead = parseAnnotationDocument(
+        documentWithGeometry(R"({"type": "arrow", "tail": {"x": 1, "y": 2}})"));
+    REQUIRE(missingHead.error == ParseError::InvalidField);
+    REQUIRE(missingHead.message.find("head") != std::string::npos);
+
+    const ParseResult missingTail = parseAnnotationDocument(
+        documentWithGeometry(R"({"type": "arrow", "head": {"x": 1, "y": 2}})"));
+    REQUIRE(missingTail.error == ParseError::InvalidField);
+    REQUIRE(missingTail.message.find("tail") != std::string::npos);
+}
+
+TEST_CASE("a point missing its position is refused by name",
+          "[core][AnnotationSerialization]")
+{
+    const ParseResult result =
+        parseAnnotationDocument(documentWithGeometry(R"({"type": "point"})"));
+    REQUIRE(result.error == ParseError::InvalidField);
+    REQUIRE(result.message.find("position") != std::string::npos);
+}
+
+// schemaVersion does not move when a geometry type is added. Bumping it would
+// make every shipped build refuse rectangle-only files during a staggered
+// rollout; not bumping makes an old build fail on the new shape alone and
+// leave the file intact.
+TEST_CASE("adding the point and arrow types does not bump schemaVersion",
+          "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document = makeDocument();
+    document.annotations.clear();
+    document.annotations.emplace_back("p1", PointGeometry{PointF{5.0, 6.0}});
+    document.annotations.emplace_back(
+        "a1", ArrowGeometry{PointF{0.0, 0.0}, PointF{10.0, 10.0}});
+
+    const ParseResult result = parseAnnotationDocument(serializeAnnotationDocument(document));
+    REQUIRE(result.error == ParseError::None);
+    REQUIRE(result.document.schemaVersion == 1);
+}

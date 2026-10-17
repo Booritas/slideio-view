@@ -68,6 +68,20 @@ std::optional<AnnotationGeometry> replaceBox(const PolygonGeometry&, const RectF
     return std::nullopt;
 }
 
+// Neither is defined by a box, so neither is resizable by one. Reached through
+// std::visit rather than a get_if chain precisely so these two had to be
+// written -- a chain would have let both fall silently through to "not
+// resizable", which is the right answer by accident rather than on purpose.
+std::optional<AnnotationGeometry> replaceBox(const PointGeometry&, const RectF&)
+{
+    return std::nullopt;
+}
+
+std::optional<AnnotationGeometry> replaceBox(const ArrowGeometry&, const RectF&)
+{
+    return std::nullopt;
+}
+
 } // namespace
 
 RectF withBoxHandleAt(const RectF& box, BoxHandle handle, PointF position)
