@@ -354,6 +354,8 @@ without leaving what they are doing. Checked by Z18.
 | Z22 | While editing polygon A, select polygon B **in the annotation list panel**: A's handles must disappear. Repeat by holding space and clicking B in the viewport. |
 | Z23 | Pan so a vertex sits just outside the viewport edge, then press near it: either a handle is visible there, or nothing is grabbed — never an invisible grab. |
 | Z24 | While holding a vertex drag, press **Ctrl+Z**. The drag must stop rather than continue moving a vertex; whatever the undo restored must stand. |
+| Z25 | While holding a vertex drag, press a tool shortcut (V, R, E, P or F). The edit must survive AND Ctrl+Z must undo it in one step. |
+| Z26 | During a vertex drag the cursor must show the move cursor, not a crosshair or arrow. |
 
 ---
 
@@ -373,6 +375,22 @@ without leaving what they are doing. Checked by Z18.
 ---
 
 ## 9. Risks and accepted trade-offs
+
+**A vertex drag has no movement threshold, deliberately (decided 2026-10-17).**
+`DragOwner::MoveAnnotation` carries `moveExceedsDragThreshold` so that a click
+meant only to select a shape does not creep it. A vertex handle has no such
+second meaning: pressing one can only mean dragging it, so there is no gesture
+a threshold would protect. A threshold would also contradict check Z20, which
+requires one pixel of pointer travel to move the vertex one pixel — and being
+able to nudge a single point by a single pixel is the whole reason this feature
+exists.
+
+What remains is that a press carrying a pixel or two of hand tremor records a
+small edit. Three things bound it: a press with no mouse-move at all writes
+nothing, because `mouseMoveEvent` never fires and `sameVertices` then reports no
+change; the drag applies a delta rather than snapping, so the edit is exactly
+as large as the tremor; and it is one undo step away. Accepted on that basis
+rather than by omission.
 
 | Risk | Disposition |
 |---|---|

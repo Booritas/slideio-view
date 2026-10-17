@@ -3028,10 +3028,40 @@ void ViewportWidget::pushGeometryCommand(const std::string& id, const core::Anno
         *m_impl->annotations, id, before, *after, description.toStdString()));
 }
 
+void ViewportWidget::recordVertexDrag()
+{
+    if (m_impl->vertexDragOriginal.has_value()) {
+        const auto* was =
+            std::get_if<core::PolygonGeometry>(&m_impl->vertexDragOriginal->geometry());
+        const core::PolygonGeometry* now = m_impl->vertexEditPolygon();
+        // sameVertices, not ui::moveEdit: that compares bounding boxes, which
+        // an interior vertex can move without changing. A gesture that changed
+        // nothing records nothing, so an accidental press leaves no step for
+        // the user to press Ctrl+Z through.
+        if (was != nullptr && now != nullptr && !core::sameVertices(*was, *now)) {
+            pushGeometryCommand(m_impl->vertexEditId, *m_impl->vertexDragOriginal,
+                                tr("Edit Points"));
+        }
+    }
+    m_impl->draggingVertex.reset();
+    m_impl->vertexDragOriginal.reset();
+}
+
 void ViewportWidget::endVertexEditing()
 {
     if (m_impl->vertexEditId.empty()) {
         return;
+    }
+    // A drag can still be live here: setActiveTool leaves the mode, and
+    // endToolDrag() ahead of it returns early for MoveVertex, so without this
+    // a tool shortcut pressed mid-drag would clear the mode and leave the
+    // moved geometry in the model with no undo step. Recorded before
+    // vertexEditId is cleared, because recordVertexDrag reads the polygon
+    // through it.
+    if (m_impl->dragOwner == DragOwner::MoveVertex) {
+        recordVertexDrag();
+        m_impl->dragOwner = DragOwner::None;
+        m_impl->dragButton = Qt::NoButton;
     }
     m_impl->vertexEditId.clear();
     update();
@@ -3514,6 +3544,13 @@ void ViewportWidget::updateCursor()
         setCursor(Qt::ClosedHandCursor);
         return;
     case DragOwner::MoveAnnotation:
+        setCursor(Qt::SizeAllCursor);
+        return;
+    case DragOwner::MoveVertex:
+        // Same as moving a whole shape: the gesture is a drag, and the only
+        // difference is how much of the annotation comes with it. Without a
+        // case here the switch falls through to the tool fallback and the one
+        // drag in the application with no cursor feedback is the newest one.
         setCursor(Qt::SizeAllCursor);
         return;
     case DragOwner::Tool:
@@ -4168,8 +4205,16 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
     // the viewport is in. That is the one gesture the user has for getting
     // around without leaving what they are doing, and resolveDragOwner has
     // promised it since before this mode existed.
+    // The controller test is not redundant with the block above: movePressSlide
+    // is only refreshed inside that guard, so without it a null controller
+    // would mean both a dereference below and a press position left over from
+    // an earlier slide. It is unreachable today only because closeSlide()
+    // happens to reset the annotation state before the controller, which
+    // nothing enforces.
     if (const core::PolygonGeometry* editing =
-            m_impl->spaceHeld ? nullptr : m_impl->vertexEditPolygon()) {
+            (m_impl->spaceHeld || m_impl->controller == nullptr)
+                ? nullptr
+                : m_impl->vertexEditPolygon()) {
         const core::PointF cursor = m_impl->movePressSlide;
         const double tolerance = screenToleranceToSlide(kHitToleranceScreenPixels,
                                                         m_impl->controller->viewport().scale());
@@ -4362,24 +4407,9 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
     }
 
     if (m_impl->dragOwner == DragOwner::MoveVertex) {
-        // A gesture that changed nothing records nothing: touching the model
-        // would mark the slide dirty and restamp modifiedAt for an edit that
-        // did not happen, and the autosave would then write exactly that.
-        if (m_impl->vertexDragOriginal.has_value()) {
-            const auto* was =
-                std::get_if<core::PolygonGeometry>(&m_impl->vertexDragOriginal->geometry());
-            const core::PolygonGeometry* now = m_impl->vertexEditPolygon();
-            // sameVertices, not ui::moveEdit: that compares bounding boxes,
-            // which an interior vertex can move without changing.
-            if (was != nullptr && now != nullptr && !core::sameVertices(*was, *now)) {
-                pushGeometryCommand(m_impl->vertexEditId, *m_impl->vertexDragOriginal,
-                                    tr("Edit Points"));
-            }
-        }
+        recordVertexDrag();
         m_impl->dragOwner = DragOwner::None;
         m_impl->dragButton = Qt::NoButton;
-        m_impl->draggingVertex.reset();
-        m_impl->vertexDragOriginal.reset();
         updateCursor();
         event->accept();
         update();
@@ -4885,14 +4915,8 @@ void ViewportWidget::focusOutEvent(QFocusEvent* event)
     // early return. Without this the vertex stays where the drag left it with
     // no undo step, and Ctrl+Z silently undoes an unrelated earlier operation
     // -- the same harm the MoveAnnotation case above exists to prevent.
-    if (m_impl->dragOwner == DragOwner::MoveVertex && m_impl->vertexDragOriginal.has_value()) {
-        const auto* was =
-            std::get_if<core::PolygonGeometry>(&m_impl->vertexDragOriginal->geometry());
-        const core::PolygonGeometry* now = m_impl->vertexEditPolygon();
-        if (was != nullptr && now != nullptr && !core::sameVertices(*was, *now)) {
-            pushGeometryCommand(m_impl->vertexEditId, *m_impl->vertexDragOriginal,
-                                tr("Edit Points"));
-        }
+    if (m_impl->dragOwner == DragOwner::MoveVertex) {
+        recordVertexDrag();
     }
     m_impl->draggingVertex.reset();
     m_impl->vertexDragOriginal.reset();

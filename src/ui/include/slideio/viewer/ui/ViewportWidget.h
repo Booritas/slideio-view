@@ -249,9 +249,6 @@ private:
     /// Shared by Backspace and by Ctrl+Z during a live trace.
     void removeLastPendingVertex();
 
-    /// Record a completed operation on the undo stack. No-ops when no stack is
-    /// set or the annotation is not in the model. Called after the mutation has
-    /// already gone through AnnotationModel's own API.
     /// Turns the in-flight single-drag shape into an annotation, selects it and
     /// records the undo step. False when the drag was too small to be anything
     /// but a misclick, in which case nothing is created.
@@ -263,7 +260,20 @@ private:
     bool commitDrawDrag();
 
     /// Leaves vertex-editing mode and repaints. Safe to call when not editing.
+    /// Records a live vertex drag first — see recordVertexDrag.
     void endVertexEditing();
+
+    /// Pushes the undo step for a live vertex drag, if it changed anything,
+    /// and clears the drag state. Safe to call with no drag live.
+    ///
+    /// Every route out of a vertex drag goes through this: the ordinary
+    /// release, focus loss, and leaving the mode. Each one leaves the moved
+    /// geometry already committed to the model by the per-frame update, so a
+    /// route that forgets to record produces an edit that is saved with no
+    /// undo step — and the user's next Ctrl+Z then undoes something unrelated.
+    /// Reads the edited polygon through vertexEditId, so callers that clear
+    /// that must call this BEFORE they do.
+    void recordVertexDrag();
 
     /// Records one completed geometry edit: the annotation as it was, against
     /// what it is now. One per gesture, never one per mouse-move -- a single
@@ -277,6 +287,9 @@ private:
     void pushGeometryCommand(const std::string& id, const core::Annotation& before,
                              const QString& description);
 
+    /// Record a completed operation on the undo stack. No-ops when no stack is
+    /// set or the annotation is not in the model. Called after the mutation has
+    /// already gone through AnnotationModel's own API.
     void pushCreateCommand(const std::string& id);
     /// Removes `id` and records the removal. Unlike the push* functions around
     /// it, this one performs the mutation as well, which is why it must not be
