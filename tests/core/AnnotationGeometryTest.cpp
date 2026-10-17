@@ -436,11 +436,22 @@ TEST_CASE("a degenerate ellipse is still hit along its line", "[core][Annotation
     REQUIRE(hitTest(flat, PointF{50.0, 25.0}, 0.5));
 }
 
-TEST_CASE("convexity by construction is known per shape", "[core][AnnotationGeometry]")
+TEST_CASE("a well-defined area is known per shape type", "[core][AnnotationGeometry]")
 {
-    REQUIRE(isConvexByConstruction(ellipseGeom(0.0, 0.0, 100.0, 50.0)));
-    REQUIRE(isConvexByConstruction(rect(0.0, 0.0, 100.0, 50.0)));
-    // A polygon's vertices are the user's; nothing can promise they are convex.
-    REQUIRE_FALSE(isConvexByConstruction(
+    REQUIRE(hasWellDefinedArea(ellipseGeom(0.0, 0.0, 100.0, 50.0)));
+    REQUIRE(hasWellDefinedArea(rect(0.0, 0.0, 100.0, 50.0)));
+    // A polygon's vertices are the user's; a trace that crosses itself has no
+    // area anyone can stand behind, and nothing can promise it does not.
+    REQUIRE_FALSE(hasWellDefinedArea(
         PolygonGeometry{{PointF{0.0, 0.0}, PointF{10.0, 0.0}, PointF{10.0, 10.0}}, true}));
+}
+
+// The degenerate cases are the whole reason this is not called "convex" or
+// "cannot self-intersect": both would be FALSE here, while the area -- zero --
+// is perfectly well defined. The parser accepts these from disk on purpose.
+TEST_CASE("a degenerate shape still has a well-defined area",
+          "[core][AnnotationGeometry]")
+{
+    REQUIRE(hasWellDefinedArea(ellipseGeom(0.0, 25.0, 100.0, 25.0)));
+    REQUIRE(hasWellDefinedArea(rect(0.0, 25.0, 100.0, 25.0)));
 }

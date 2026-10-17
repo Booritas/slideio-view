@@ -202,17 +202,17 @@ AnnotationGeometry translatedShape(const EllipseGeometry& ellipse, double dx, do
                            PointF{ellipse.bottomRight.x + dx, ellipse.bottomRight.y + dy}};
 }
 
-bool convexShape(const RectangleGeometry&)
+bool wellDefinedArea(const RectangleGeometry&)
 {
     return true;
 }
 
-bool convexShape(const EllipseGeometry&)
+bool wellDefinedArea(const EllipseGeometry&)
 {
     return true;
 }
 
-bool convexShape(const PolygonGeometry&)
+bool wellDefinedArea(const PolygonGeometry&)
 {
     return false;
 }
@@ -246,9 +246,9 @@ AnnotationGeometry translated(const AnnotationGeometry& geom, double dx, double 
     return std::visit([&](const auto& shape) { return translatedShape(shape, dx, dy); }, geom);
 }
 
-bool isConvexByConstruction(const AnnotationGeometry& geom)
+bool hasWellDefinedArea(const AnnotationGeometry& geom)
 {
-    return std::visit([](const auto& shape) { return convexShape(shape); }, geom);
+    return std::visit([](const auto& shape) { return wellDefinedArea(shape); }, geom);
 }
 
 } // namespace slideio::viewer::core

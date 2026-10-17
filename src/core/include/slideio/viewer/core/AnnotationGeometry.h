@@ -118,13 +118,23 @@ struct Outline
 /// polygon into a rectangle the first time a user dragged it.
 [[nodiscard]] AnnotationGeometry translated(const AnnotationGeometry& geom, double dx, double dy);
 
-/// True when the shape cannot self-intersect whatever its values -- a property
-/// of the TYPE, not of the instance.
+/// True when this shape TYPE always has a well-defined area, whatever its
+/// values -- a property of the type, not of the instance.
 ///
 /// core::measure() uses it to skip the O(n^2) self-intersection test, which at
-/// kEllipseOutlineVertices costs about 131000 segment-pair comparisons to
-/// answer a question that is structurally always false. A polygon's vertices
-/// are the user's, so nothing can promise anything about them.
-[[nodiscard]] bool isConvexByConstruction(const AnnotationGeometry& geom);
+/// kEllipseOutlineVertices costs about 131000 segment-pair comparisons. A
+/// polygon's vertices are the user's, so nothing can promise anything about
+/// them; a shape generated from a box encloses one region by construction.
+///
+/// **Not a claim of convexity, and not a claim that the outline cannot
+/// self-intersect.** Two earlier names said each of those and both were false
+/// for the same inputs: a degenerate ellipse or a zero-extent rectangle --
+/// which the parser accepts from disk on purpose (design spec 2.2) -- is
+/// collinear rather than convex, and its generated vertices DO overlap by
+/// isSelfIntersecting's collinear rule. Its area is nonetheless perfectly well
+/// defined: zero. That is the only property promised here, and the only one
+/// the caller needs. A future use that needs real convexity must not reach for
+/// this.
+[[nodiscard]] bool hasWellDefinedArea(const AnnotationGeometry& geom);
 
 } // namespace slideio::viewer::core

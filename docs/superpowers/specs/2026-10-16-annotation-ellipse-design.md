@@ -34,7 +34,7 @@ model without changing it.
 
 **In:** `EllipseGeometry` and its five dispatch overloads; the `ellipse` JSON
 type; `AnnotationTool::Ellipse` and its toolbar action; the Shift and Alt
-modifiers, applied to the rectangle tool as well; the convexity short-circuit
+modifiers, applied to the rectangle tool as well; the well-defined-area short-circuit
 in `measure()`.
 
 **Out:** rotation; resize and vertex handles (FR-ANN-17, its own sub-project);
@@ -171,7 +171,7 @@ to write a shape we would refuse to read" guard, which needed a
 finite-corners-only overload matching the rectangle's — and `ShapeNameVisitor`
 in `src/ui/src/AnnotationShapeName.cpp`, which produces the user-facing shape
 name in the annotation list and properties panel and has a `switch` over
-`AnnotationType` beside it. The sixth core overload set, `convexShape`, is
+`AnnotationType` beside it. The sixth core overload set, `wellDefinedArea`, is
 added by §4.1. The lesson for the next shape is that the count in a spec is
 not to be trusted — let the compiler enumerate the sites.
 
@@ -188,17 +188,30 @@ An ellipse inherits area and perimeter from `core::measure()` with no new code
 — it is a closed shape, and the shoelace formula over its outline is exactly
 what the properties panel already shows for a polygon.
 
-### 4.1 The convexity short-circuit
+### 4.1 The well-defined-area short-circuit
 
 `measure()` currently calls `isSelfIntersecting()`, which is **O(n²)**. At 512
-vertices that is roughly 131 000 segment-pair tests, to answer a question whose
-answer is structurally always *no*: **an ellipse is convex and cannot
-self-intersect.**
+vertices that is roughly 131 000 segment-pair tests, to answer a question that
+decides something already known for this shape type: whether the area can be
+reported.
 
-`measure()` therefore gains a cheap predicate — a geometry that is convex by
-construction skips the test and calls `measureKnown(geometry, pixelSize,
-false)` directly. `measureKnown` already exists for precisely this purpose: a
-caller that can prove the answer supplies it rather than paying for it.
+`measure()` therefore gains a cheap predicate — `core::hasWellDefinedArea`. A
+shape type whose area is always well defined skips the test and calls
+`measureKnown(geometry, pixelSize, false)` directly. `measureKnown` already
+exists for precisely this purpose: a caller that can prove the answer supplies
+it rather than paying for it.
+
+**Corrected during implementation, 2026-10-17.** This section originally argued
+the predicate from convexity — "an ellipse is convex and cannot
+self-intersect" — and the function was first called `isConvexByConstruction`.
+Review found that claim false for exactly the inputs §2.2 admits on purpose: a
+degenerate ellipse or zero-extent rectangle is collinear, not convex, and its
+generated vertices *do* overlap under `isSelfIntersecting`'s collinear rule. A
+proposed rename to `cannotSelfIntersect` carried the same error. What actually
+survives every accepted input is the area claim — zero is well defined — so
+that is what the predicate is named and documented for. The short-circuit is
+therefore **more correct** than the test it replaces for degenerate shapes, not
+merely faster.
 
 Without this, selecting an ellipse would run six figures of arithmetic to
 produce a constant. This is the one place where choosing the polygonal
