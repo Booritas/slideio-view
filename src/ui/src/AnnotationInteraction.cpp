@@ -47,6 +47,17 @@ bool dragExceedsMinimumSize(const core::RectF& boxSlideUnits,
     return widthScreen >= minimumScreenPixels || heightScreen >= minimumScreenPixels;
 }
 
+bool arrowExceedsMinimumLength(core::PointF tailSlide, core::PointF headSlide,
+                               double viewportScale, double minimumScreenPixels)
+{
+    if (viewportScale <= 0.0) {
+        return false;
+    }
+    const double dxScreen = (headSlide.x - tailSlide.x) * viewportScale;
+    const double dyScreen = (headSlide.y - tailSlide.y) * viewportScale;
+    return std::hypot(dxScreen, dyScreen) >= minimumScreenPixels;
+}
+
 core::RectF withMinimumExtent(const core::RectF& box, double minExtentSlideUnits)
 {
     const double minimum = std::max(0.0, minExtentSlideUnits);

@@ -19,6 +19,8 @@ enum class AnnotationTool
     Ellipse,
     Polygon,
     Freehand,
+    Point,
+    Arrow,
 };
 
 enum class DragOwner
@@ -174,6 +176,20 @@ constexpr double kTrailMinScreenPixels = 2.0;
 [[nodiscard]] bool dragExceedsMinimumSize(const core::RectF& boxSlideUnits,
                                           double viewportScale,
                                           double minimumScreenPixels);
+
+/// True when a tail-to-head drag is long enough on screen to be a deliberate
+/// arrow rather than a misclick.
+///
+/// Not dragExceedsMinimumSize, and the difference is the whole reason this
+/// exists: that one tests either DIMENSION of a bounding box, so a diagonal
+/// drag of exactly 10 screen pixels presents a 7.07 x 7.07 box and is
+/// rejected. An arrow's gesture is a length, so the test is the hypotenuse,
+/// and the answer is then the same in every direction.
+///
+/// False for a non-positive scale, like every other predicate here: with no
+/// usable transform there is no screen distance to compare.
+[[nodiscard]] bool arrowExceedsMinimumLength(core::PointF tailSlide, core::PointF headSlide,
+                                             double viewportScale, double minimumScreenPixels);
 
 /// `box` with any zero-extent dimension widened to `minExtentSlideUnits`.
 ///

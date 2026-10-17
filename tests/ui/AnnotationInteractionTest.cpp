@@ -614,3 +614,88 @@ TEST_CASE("a non-left press is not ours", "[ui][AnnotationInteraction]")
     REQUIRE(resolveBoxResizePress(Qt::RightButton, false, true) == BoxResizeAction::None);
     REQUIRE(resolveBoxResizePress(Qt::MiddleButton, true, false) == BoxResizeAction::None);
 }
+
+// A box minimum is the wrong test for an arrow. dragExceedsMinimumSize asks
+// whether EITHER dimension of a bounding box reaches the threshold, so a
+// diagonal drag of exactly 10 screen pixels presents a 7.07 x 7.07 box and is
+// rejected -- a gesture the user plainly made.
+TEST_CASE("a diagonal drag at the threshold is accepted as an arrow",
+          "[ui][AnnotationInteraction]")
+{
+    // 3-4-5 at scale 2 is a 10-pixel shaft, in a 6 x 8 box.
+    REQUIRE(arrowExceedsMinimumLength(core::PointF{0.0, 0.0}, core::PointF{3.0, 4.0},
+                                      2.0, 10.0));
+    // The box test, for contrast: neither dimension reaches 10.
+    REQUIRE_FALSE(dragExceedsMinimumSize(
+        core::boundingBox(core::RectangleGeometry{core::PointF{0.0, 0.0},
+                                                  core::PointF{3.0, 4.0}}),
+        2.0, 10.0));
+}
+
+TEST_CASE("an arrow shorter than the minimum is refused",
+          "[ui][AnnotationInteraction]")
+{
+    // 3-4-5 at scale 1 is a 5-pixel shaft.
+    REQUIRE_FALSE(arrowExceedsMinimumLength(core::PointF{0.0, 0.0}, core::PointF{3.0, 4.0},
+                                            1.0, 10.0));
+}
+
+TEST_CASE("an arrow is measured the same in every direction",
+          "[ui][AnnotationInteraction]")
+{
+    const double scale = 1.0;
+    const double minimum = 10.0;
+    // Right, left, down, up and a diagonal, each 20 slide units long or
+    // longer, so direction cannot change the answer.
+    REQUIRE(arrowExceedsMinimumLength(core::PointF{0.0, 0.0}, core::PointF{20.0, 0.0},
+                                      scale, minimum));
+    REQUIRE(arrowExceedsMinimumLength(core::PointF{0.0, 0.0}, core::PointF{-20.0, 0.0},
+                                      scale, minimum));
+    REQUIRE(arrowExceedsMinimumLength(core::PointF{0.0, 0.0}, core::PointF{0.0, 20.0},
+                                      scale, minimum));
+    REQUIRE(arrowExceedsMinimumLength(core::PointF{0.0, 0.0}, core::PointF{0.0, -20.0},
+                                      scale, minimum));
+    REQUIRE(arrowExceedsMinimumLength(core::PointF{0.0, 0.0}, core::PointF{-20.0, -20.0},
+                                      scale, minimum));
+}
+
+TEST_CASE("a zero-length arrow is refused", "[ui][AnnotationInteraction]")
+{
+    REQUIRE_FALSE(arrowExceedsMinimumLength(core::PointF{40.0, 40.0},
+                                            core::PointF{40.0, 40.0}, 1.0, 10.0));
+}
+
+// Review Focus 4: with no usable transform there is no screen distance to
+// compare, and inventing one would let a focus loss before the first frame
+// commit an arrow out of nothing. False, like every other predicate here.
+TEST_CASE("a non-positive scale refuses an arrow", "[ui][AnnotationInteraction]")
+{
+    REQUIRE_FALSE(arrowExceedsMinimumLength(core::PointF{0.0, 0.0},
+                                            core::PointF{1000.0, 1000.0}, 0.0, 10.0));
+    REQUIRE_FALSE(arrowExceedsMinimumLength(core::PointF{0.0, 0.0},
+                                            core::PointF{1000.0, 1000.0}, -2.0, 10.0));
+}
+
+// The two new tools are single-gesture tools, not multi-click ones: they
+// commit on the release of the press that started them, so no pending-shape
+// state outlives a drag.
+TEST_CASE("the point and arrow tools are not n-point tools",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE_FALSE(isNPointTool(AnnotationTool::Point));
+    REQUIRE_FALSE(isNPointTool(AnnotationTool::Arrow));
+}
+
+// Both are drawing tools, so a left press belongs to the tool and never to a
+// move -- exactly as it does for the rectangle.
+TEST_CASE("a left press under the point or arrow tool belongs to the tool",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveDragOwner(Qt::LeftButton, Qt::NoModifier, false,
+                             AnnotationTool::Point, true) == DragOwner::Tool);
+    REQUIRE(resolveDragOwner(Qt::LeftButton, Qt::NoModifier, false,
+                             AnnotationTool::Arrow, false) == DragOwner::Tool);
+    // Held space still pans, whatever the tool.
+    REQUIRE(resolveDragOwner(Qt::LeftButton, Qt::NoModifier, true,
+                             AnnotationTool::Point, false) == DragOwner::Pan);
+}
