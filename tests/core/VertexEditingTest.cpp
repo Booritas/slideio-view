@@ -1,8 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "slideio/viewer/core/AnnotationSerialization.h"
 #include "slideio/viewer/core/VertexEditing.h"
 
 #include <cmath>
+#include <variant>
 #include <vector>
 
 using namespace slideio::viewer::core;
@@ -301,4 +303,39 @@ TEST_CASE("sameVertices distinguishes count, order and closedness",
     PolygonGeometry open = square();
     open.closed = false;
     REQUIRE_FALSE(sameVertices(square(), open));
+}
+
+// Spec 7.1: "Each operation's result round-trips through the serializer
+// unchanged." The operations can only build shapes the format accepts -- the
+// removal floor is the serializer's own minimum -- and this is what holds them
+// to it. Without it the tool could learn to produce a shape the application
+// then refuses to reopen, which is the invariant the whole annotation
+// subsystem is arranged around.
+TEST_CASE("every vertex operation's result round-trips through the serializer",
+          "[core][VertexEditing]")
+{
+    const PolygonGeometry start = square();
+
+    const std::vector<PolygonGeometry> results{
+        withVertexMoved(start, 1, PointF{99.0, 98.0}),
+        withVertexInserted(start, 0, PointF{5.0, 0.0}),
+        withVertexInserted(start, 3, PointF{0.0, 5.0}),
+        withVertexRemoved(start, 0).value(),
+    };
+
+    for (const PolygonGeometry& result : results) {
+        AnnotationDocument document;
+        document.slideId = "a3f8c2e1b4d50697";
+        document.sceneIndex = 0;
+        document.annotations.emplace_back("v1", result);
+
+        const ParseResult parsed = parseAnnotationDocument(serializeAnnotationDocument(document));
+        REQUIRE(parsed.error == ParseError::None);
+        REQUIRE(parsed.document.annotations.size() == 1);
+
+        const auto* readBack =
+            std::get_if<PolygonGeometry>(&parsed.document.annotations.front().geometry());
+        REQUIRE(readBack != nullptr);
+        REQUIRE(sameVertices(result, *readBack));
+    }
 }

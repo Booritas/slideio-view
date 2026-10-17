@@ -1541,6 +1541,12 @@ struct ViewportWidget::Impl
     // separately rather than read back out of vertexDragOriginal because an
     // insert-and-drag addresses a vertex that original does not yet contain.
     core::PointF vertexDragAnchor;
+    // The position this drag last wrote. Checked on the next mouse-move: if
+    // the vertex is not where we left it, something else rewrote the geometry
+    // mid-drag -- a Ctrl+Z is the reachable case -- and draggingVertex may now
+    // address a different point entirely. The drag stops rather than moving a
+    // vertex the user never grabbed.
+    core::PointF vertexDragLastApplied;
 
     /// The polygon being vertex-edited, or null when the mode is off, the
     /// annotation is gone, or it is not a traced shape.
@@ -4182,6 +4188,7 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
             m_impl->pressPos = event->pos();
             m_impl->draggingVertex = vertex;
             m_impl->vertexDragAnchor = editing->vertices[*vertex];
+            m_impl->vertexDragLastApplied = m_impl->vertexDragAnchor;
             m_impl->vertexDragOriginal = *m_impl->annotations->find(m_impl->vertexEditId);
             updateCursor();
             event->accept();
@@ -4199,6 +4206,7 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
             // from the press is zero until the cursor moves.
             m_impl->draggingVertex = edge->afterIndex + 1;
             m_impl->vertexDragAnchor = edge->position;
+            m_impl->vertexDragLastApplied = m_impl->vertexDragAnchor;
             updateCursor();
             event->accept();
             update();
@@ -4529,12 +4537,31 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event)
             // pristine anchor rather than the previous frame's output, which is
             // the rule §5.2 of the geometry-widening spec sets for the move
             // drag.
+            // Something else rewrote the geometry since the last frame -- an
+            // undo during a held drag is the reachable case, and it shifts
+            // every index after the one it changed. Carrying on would drag a
+            // vertex the user never grabbed and record that as their edit.
+            const std::size_t index = *m_impl->draggingVertex;
+            if (index >= editing->vertices.size()
+                || editing->vertices[index].x != m_impl->vertexDragLastApplied.x
+                || editing->vertices[index].y != m_impl->vertexDragLastApplied.y) {
+                m_impl->dragOwner = DragOwner::None;
+                m_impl->dragButton = Qt::NoButton;
+                m_impl->draggingVertex.reset();
+                m_impl->vertexDragOriginal.reset();
+                updateCursor();
+                event->accept();
+                update();
+                return;
+            }
+
             const core::PointF anchor = m_impl->vertexDragAnchor;
             const core::PointF moved{anchor.x + (slideX - m_impl->movePressSlide.x),
                                      anchor.y + (slideY - m_impl->movePressSlide.y)};
             m_impl->annotations->setGeometry(
                 m_impl->vertexEditId,
-                core::withVertexMoved(*editing, *m_impl->draggingVertex, moved));
+                core::withVertexMoved(*editing, index, moved));
+            m_impl->vertexDragLastApplied = moved;
             event->accept();
             update();
         }

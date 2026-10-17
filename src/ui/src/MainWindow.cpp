@@ -343,7 +343,13 @@ struct MainWindow::Impl
         panToolAction->setCheckable(true);
         panToolAction->setChecked(true);
         panToolAction->setShortcut(QKeySequence("V"));
-        panToolAction->setStatusTip("Pan and select with the left mouse button");
+        // Names the vertex-editing gestures, which is the mitigation the
+        // design spec records for Ctrl+click being undiscoverable: nothing on
+        // screen would otherwise tell a user the mode exists or how to remove
+        // a point.
+        panToolAction->setStatusTip(
+            "Pan and select; double-click a polygon or freehand line to edit its points "
+            "(drag a handle to move, click the outline to add, Ctrl+click a handle to remove)");
 
         rectangleToolAction = new QAction("&Rectangle", owner);
         rectangleToolAction->setCheckable(true);

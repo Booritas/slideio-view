@@ -353,6 +353,7 @@ without leaving what they are doing. Checked by Z18.
 | Z21 | With the Rectangle or Ellipse tool active, double-click an existing polygon: the mode must NOT be entered, and drawing must still work near that polygon. |
 | Z22 | While editing polygon A, select polygon B **in the annotation list panel**: A's handles must disappear. Repeat by holding space and clicking B in the viewport. |
 | Z23 | Pan so a vertex sits just outside the viewport edge, then press near it: either a handle is visible there, or nothing is grabbed — never an invisible grab. |
+| Z24 | While holding a vertex drag, press **Ctrl+Z**. The drag must stop rather than continue moving a vertex; whatever the undo restored must stand. |
 
 ---
 
