@@ -166,6 +166,15 @@ ShapeMetrics measureKnown(const AnnotationGeometry& geometry, PixelSize pixelSiz
 
     const std::size_t n = scaled.points.size();
     if (n < 2) {
+        // A closed outline that collapsed to a single point encloses nothing,
+        // which is a well-defined zero rather than an unknown -- the same
+        // reasoning as the zero-perimeter branch below. outlineShape drops
+        // consecutive duplicates, so a polygon of coincident vertices now
+        // arrives here as one point where it used to arrive as several.
+        // An empty outline is not a shape at all and keeps no area.
+        if (scaled.closed && n == 1) {
+            metrics.area = 0.0;
+        }
         return metrics;
     }
 

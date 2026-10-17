@@ -499,3 +499,27 @@ TEST_CASE("a left drag with the ellipse tool belongs to the tool",
     REQUIRE(resolveDragOwner(Qt::MiddleButton, Qt::NoModifier, false, AnnotationTool::Ellipse,
                              false) == DragOwner::Pan);
 }
+
+// Closing a trace by double-click sends the first click to mousePressEvent,
+// which places a vertex at the cursor. If the cursor has not moved since the
+// last trailed point -- which is most of the time, because the user stops to
+// double-click -- that vertex lands exactly on the previous one. The resulting
+// zero-length segment makes its neighbours share an endpoint and the polygon
+// reads as self-intersecting, which withholds its area. Observed on a real
+// 160-vertex trace, 2026-10-17.
+TEST_CASE("a click does not place a vertex on top of the previous one",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE_FALSE(shouldPlaceClickVertex(core::PointF{10.0, 20.0}, core::PointF{10.0, 20.0}));
+}
+
+// Exact equality only. A deliberate click a fraction of a slide pixel away is
+// a real point the user asked for, and the short segment it makes confuses
+// nothing -- unlike the trail rule, this is not a density control.
+TEST_CASE("a click just off the previous vertex still places one",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE(shouldPlaceClickVertex(core::PointF{10.0, 20.0}, core::PointF{10.0, 20.5}));
+    REQUIRE(shouldPlaceClickVertex(core::PointF{10.0, 20.0}, core::PointF{10.5, 20.0}));
+    REQUIRE(shouldPlaceClickVertex(core::PointF{10.0, 20.0}, core::PointF{-10.0, -20.0}));
+}

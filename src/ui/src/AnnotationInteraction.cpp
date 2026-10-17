@@ -86,6 +86,11 @@ core::RectF applyDragConstraints(core::RectF box, core::PointF anchor,
     return box;
 }
 
+bool shouldPlaceClickVertex(core::PointF lastSlide, core::PointF cursorSlide)
+{
+    return lastSlide.x != cursorSlide.x || lastSlide.y != cursorSlide.y;
+}
+
 bool isNPointTool(AnnotationTool tool)
 {
     return tool == AnnotationTool::Polygon || tool == AnnotationTool::Freehand;

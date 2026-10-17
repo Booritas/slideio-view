@@ -51,6 +51,23 @@ constexpr double kTrailMinScreenPixels = 2.0;
 [[nodiscard]] bool shouldAppendTrailPoint(core::PointF lastSlide, core::PointF cursorSlide,
                                           double viewportScale);
 
+/// True when a click-placed vertex is a distinct point from the previous one.
+///
+/// Exact inequality, and deliberately not the trail rule: `shouldAppendTrailPoint`
+/// is a density control with a screen-space minimum, while a click is something
+/// the user asked for explicitly and must not be thinned. The one vertex that
+/// must be refused is the one that coincides exactly, because it describes a
+/// zero-length segment -- which paints nothing and measures nothing, but makes
+/// the segments on either side of it share an endpoint, and
+/// core::isSelfIntersecting only excludes segments adjacent by index. A
+/// hand-traced polygon then reads as self-intersecting and its area is
+/// withheld.
+///
+/// Reached by closing a trace with a double-click: Qt sends the first click to
+/// mousePressEvent, which places a vertex at a cursor that has usually not
+/// moved since the last trailed point.
+[[nodiscard]] bool shouldPlaceClickVertex(core::PointF lastSlide, core::PointF cursorSlide);
+
 /// True when a click at `cursorSlide` lands on the shape's first vertex and so
 /// closes it. Reuses the click-target radius rather than introducing a second
 /// screen-space constant for the same kind of question.

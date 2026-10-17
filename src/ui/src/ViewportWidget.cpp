@@ -4114,7 +4114,15 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
                 m_impl->pending.vertices.clear();
                 emit liveTraceChanged(true);
             }
-            m_impl->pending.vertices.push_back(cursor);
+            // A click on top of the previous vertex places nothing: it would
+            // describe a zero-length segment, which makes its neighbours share
+            // an endpoint and the finished polygon read as self-intersecting,
+            // withholding its area. The cursorSlide update below still happens,
+            // so the preview is unaffected.
+            if (m_impl->pending.vertices.empty()
+                || shouldPlaceClickVertex(m_impl->pending.vertices.back(), cursor)) {
+                m_impl->pending.vertices.push_back(cursor);
+            }
             m_impl->pending.cursorSlide = cursor;
             updateCursor();
             event->accept();

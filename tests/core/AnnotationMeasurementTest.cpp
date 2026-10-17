@@ -407,3 +407,57 @@ TEST_CASE("a circle measures pi r squared within the documented tolerance",
     const double trueArea = 3.14159265358979323846 * r * r;
     REQUIRE(std::abs(*metrics.area - trueArea) / trueArea < 0.0001);
 }
+
+// Observed 2026-10-17 on a real 160-vertex trace of Philips-1.tiff: closing a
+// polygon by double-click appends a vertex identical to the last trailed one,
+// which makes segment n-3 END where the closing segment BEGINS. They share a
+// point, the adjacency rule only skips segments adjacent by INDEX, and the
+// shape was reported self-intersecting -- withholding an area that is plainly
+// 100. The shape is fine; the duplicate is invisible and means nothing.
+TEST_CASE("a polygon whose close duplicated its last vertex is not self-intersecting",
+          "[core][AnnotationMeasurement]")
+{
+    const core::AnnotationGeometry square = core::PolygonGeometry{
+        {core::PointF{0.0, 0.0}, core::PointF{10.0, 0.0}, core::PointF{10.0, 10.0},
+         core::PointF{0.0, 10.0}, core::PointF{0.0, 10.0}},
+        true};
+
+    const core::ShapeMetrics metrics = core::measure(square, core::PixelSize{});
+
+    REQUIRE_FALSE(metrics.selfIntersecting);
+    REQUIRE(metrics.area.has_value());
+    REQUIRE(*metrics.area == 100.0);
+}
+
+// The same degeneracy by the other route: a trace that ends exactly where it
+// started makes the CLOSING segment zero-length.
+TEST_CASE("a closed polygon whose last vertex repeats its first is not self-intersecting",
+          "[core][AnnotationMeasurement]")
+{
+    const core::AnnotationGeometry square = core::PolygonGeometry{
+        {core::PointF{0.0, 0.0}, core::PointF{10.0, 0.0}, core::PointF{10.0, 10.0},
+         core::PointF{0.0, 10.0}, core::PointF{0.0, 0.0}},
+        true};
+
+    const core::ShapeMetrics metrics = core::measure(square, core::PixelSize{});
+
+    REQUIRE_FALSE(metrics.selfIntersecting);
+    REQUIRE(metrics.area.has_value());
+    REQUIRE(*metrics.area == 100.0);
+}
+
+// A real crossing must still be caught -- the fix removes degenerate segments,
+// not the detector.
+TEST_CASE("a genuinely crossed polygon is still self-intersecting",
+          "[core][AnnotationMeasurement]")
+{
+    const core::AnnotationGeometry bowtie = core::PolygonGeometry{
+        {core::PointF{0.0, 0.0}, core::PointF{10.0, 10.0}, core::PointF{10.0, 0.0},
+         core::PointF{0.0, 10.0}},
+        true};
+
+    const core::ShapeMetrics metrics = core::measure(bowtie, core::PixelSize{});
+
+    REQUIRE(metrics.selfIntersecting);
+    REQUIRE_FALSE(metrics.area.has_value());
+}

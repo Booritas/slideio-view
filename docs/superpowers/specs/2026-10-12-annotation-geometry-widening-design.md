@@ -539,6 +539,48 @@ and being covered by nobody.
 
 ---
 
+### 6.11 Defect found and fixed, 2026-10-17
+
+Closing a trace by double-click placed a vertex **on top of** the previous one.
+Qt sends the first click of the pair to `mousePressEvent`, which appended the
+cursor position unconditionally — the trail append is guarded by
+`shouldAppendTrailPoint`'s two-screen-pixel minimum, that one never was. The
+cursor has usually not moved since the last trailed point, because the user
+stops in order to double-click, so the vertex coincided exactly.
+
+The resulting zero-length segment is invisible: it paints nothing, contributes
+nothing to the shoelace area, and changes no hit test. But it makes the
+segments on either side of it **share an endpoint**, and `isSelfIntersecting`
+excludes only segments adjacent *by index* (`j == i + 1`, plus the closing
+wrap). The shape was therefore reported self-intersecting, which by §3.3 of the
+measurement design withholds the area entirely.
+
+Observed on a real 160-vertex trace of `Philips-1.tiff`: exactly one pair fired
+— segment 157 against segment 159 — and it was this, not a crossing. The user
+reported it at roughly one polygon in two, which matches: it depends only on
+whether the mouse drifted two pixels between the last trail point and the click.
+
+Two guards, deliberately both:
+
+- `ui::shouldPlaceClickVertex` refuses a click-placed vertex that exactly equals
+  the previous one. Exact equality, not a distance threshold — a click is
+  explicit and must not be thinned the way the trail is.
+- `core::outline()` drops consecutive duplicate vertices, and a trailing vertex
+  equal to the first on a closed shape. It is the one place painting,
+  hit-testing and measurement all read, so this repairs annotations **already on
+  disk** without rewriting a file.
+
+One consequence worth naming: a closed outline that collapses to a single point
+now reports an area of **zero** rather than none, since the duplicates that used
+to pad it out are gone. That is the same reasoning the zero-perimeter branch in
+`measureKnown` already applied — a shape with no extent encloses nothing,
+unambiguously.
+
+A trace that returns to exactly a previous vertex — a genuine pinch rather than
+a duplicate — still counts as self-intersecting. That was kept deliberately.
+
+---
+
 ## 7. Wiring
 
 Two `QAction`s beside `rectangleToolAction` (`MainWindow.cpp:259`), in the same

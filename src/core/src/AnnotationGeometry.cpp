@@ -148,9 +148,44 @@ AnnotationType typeOfShape(const PolygonGeometry& poly)
     return poly.closed ? AnnotationType::Polygon : AnnotationType::Polyline;
 }
 
+/// Exact equality, deliberately. A zero-length segment is the degeneracy that
+/// matters here; two points merely close together make a short real segment
+/// that nothing is confused by.
+bool samePoint(PointF a, PointF b)
+{
+    return a.x == b.x && a.y == b.y;
+}
+
 Outline outlineShape(const PolygonGeometry& poly)
 {
-    return Outline{poly.vertices, poly.closed};
+    // Consecutive duplicates are dropped. They describe a zero-length segment,
+    // which paints nothing, encloses nothing and adds nothing to the shoelace
+    // area -- but it makes the segments on either side of it share an endpoint,
+    // and isSelfIntersecting only excludes segments adjacent by INDEX. The
+    // result was a hand-traced polygon reported as self-intersecting, which
+    // withholds its area. Observed on a real trace, 2026-10-17: closing by
+    // double-click appends a vertex on top of the last trailed one whenever the
+    // cursor has not moved since, which is about half the time.
+    //
+    // Done here rather than on the stored vertices because this is the one
+    // place painting, hit-testing and measurement all read, so it repairs
+    // annotations already on disk without rewriting a single file.
+    Outline result;
+    result.closed = poly.closed;
+    result.points.reserve(poly.vertices.size());
+    for (const PointF& vertex : poly.vertices) {
+        if (!result.points.empty() && samePoint(result.points.back(), vertex)) {
+            continue;
+        }
+        result.points.push_back(vertex);
+    }
+    // On a closed shape the last point joins back to the first, so a final
+    // point equal to the first is the same degeneracy by the other route.
+    if (result.closed && result.points.size() > 1
+        && samePoint(result.points.front(), result.points.back())) {
+        result.points.pop_back();
+    }
+    return result;
 }
 
 AnnotationGeometry translatedShape(const PolygonGeometry& poly, double dx, double dy)
