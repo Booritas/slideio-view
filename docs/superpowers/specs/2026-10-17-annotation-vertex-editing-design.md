@@ -348,6 +348,11 @@ without leaving what they are doing. Checked by Z18.
 | Z16 | On a read-only slide, double-click a polygon: the mode is not entered. |
 | Z17 | Enter the mode on a polygon saved **before** 2026-10-17 — one that still carries a duplicate final vertex — and drag the last few handles. The vertex that moves must be the one grabbed (§3.2). |
 | Z18 | In the mode, hold **space** and drag from over a handle. The viewport must pan; the vertex must not move. Release space and the same drag must move the vertex. |
+| Z19 | Start a vertex drag and **Alt-tab away without releasing**. The edit must survive AND Ctrl+Z must undo it in one step — not undo some earlier, unrelated operation. |
+| Z20 | Press a handle slightly off-centre (a few pixels) and move the mouse one pixel. The vertex must move one pixel, not jump to the cursor. At low zoom especially. |
+| Z21 | With the Rectangle or Ellipse tool active, double-click an existing polygon: the mode must NOT be entered, and drawing must still work near that polygon. |
+| Z22 | While editing polygon A, select polygon B **in the annotation list panel**: A's handles must disappear. Repeat by holding space and clicking B in the viewport. |
+| Z23 | Pan so a vertex sits just outside the viewport edge, then press near it: either a handle is visible there, or nothing is grabbed — never an invisible grab. |
 
 ---
 

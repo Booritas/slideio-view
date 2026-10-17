@@ -1535,6 +1535,12 @@ struct ViewportWidget::Impl
     // the move drag uses.
     std::optional<std::size_t> draggingVertex;
     std::optional<core::Annotation> vertexDragOriginal;
+    // Where the dragged vertex sat when it was picked up. The drag applies the
+    // press-to-cursor delta to THIS, so the grab offset is preserved and the
+    // vertex does not jump to the cursor on the first mouse-move. Held
+    // separately rather than read back out of vertexDragOriginal because an
+    // insert-and-drag addresses a vertex that original does not yet contain.
+    core::PointF vertexDragAnchor;
 
     /// The polygon being vertex-edited, or null when the mode is off, the
     /// annotation is gone, or it is not a traced shape.
@@ -2101,6 +2107,19 @@ ViewportWidget::ViewportWidget(app::AnnotationModel& model, QWidget* parent)
             repaintOnModelChange);
     connect(m_impl->annotations, &app::AnnotationModel::selectionChanged, this,
             repaintOnModelChange);
+    // Spec §2 lists "selecting a different annotation" as an exit, and this is
+    // the only place that catches every route to it. The press router's Exit
+    // action covers a click on empty tissue, but not the annotation list panel
+    // -- which changes the selection with no viewport press at all -- and not
+    // a space-held click, which skips the router entirely. Left unhandled, one
+    // shape would keep its handles and keep taking handle presses while a
+    // different one carried the selection and answered Delete.
+    connect(m_impl->annotations, &app::AnnotationModel::selectionChanged, this,
+            [this](const std::string& id) {
+                if (!m_impl->vertexEditId.empty() && id != m_impl->vertexEditId) {
+                    endVertexEditing();
+                }
+            });
     connect(m_impl->annotations, &app::AnnotationModel::cleared, this,
             repaintOnModelChange);
     connect(m_impl->annotations, &app::AnnotationModel::modelReset, this,
@@ -3243,8 +3262,15 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
     // does not address the vertex a press will move. Design spec 3.2.
     if (const core::PolygonGeometry* editing = m_impl->vertexEditPolygon()) {
         const double half = kVertexHandleScreenPixels * 0.5;
-        const QRectF viewportRect(0.0, 0.0, static_cast<double>(width()),
-                                  static_cast<double>(height()));
+        // Grown by the grab radius and the handle's own half-width, so every
+        // vertex a press could reach is painted. Culling to the bare viewport
+        // left a vertex just outside the edge grabbable but invisible, which
+        // breaks the rule that the painted and the interactive agree -- and a
+        // press at the edge would have dragged something the user could not
+        // see.
+        const double margin = kHitToleranceScreenPixels + kVertexHandleScreenPixels * 0.5;
+        const QRectF viewportRect(-margin, -margin, static_cast<double>(width()) + 2.0 * margin,
+                                  static_cast<double>(height()) + 2.0 * margin);
         painter.setPen(QPen(QColor(0x00, 0x00, 0x00), 1.0));
         painter.setBrush(QBrush(QColor(0xFF, 0xFF, 0xFF)));
         for (const core::PointF& vertex : editing->vertices) {
@@ -3384,6 +3410,11 @@ void ViewportWidget::resetAnnotationState()
     // Cleared directly rather than through endVertexEditing(), which repaints:
     // this runs mid-teardown where the other resets deliberately do not.
     m_impl->vertexEditId.clear();
+    // Same hazard as moveOriginal below, and for the same reason: this holds a
+    // whole annotation from the slide being left, which an Escape would
+    // restore onto the next one.
+    m_impl->draggingVertex.reset();
+    m_impl->vertexDragOriginal.reset();
     // The annotation this held belongs to the slide being left. Kept, it would
     // be restored onto a different slide by an Escape or an undo step.
     m_impl->moveOriginal.reset();
@@ -4150,6 +4181,7 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
             m_impl->dragButton = event->button();
             m_impl->pressPos = event->pos();
             m_impl->draggingVertex = vertex;
+            m_impl->vertexDragAnchor = editing->vertices[*vertex];
             m_impl->vertexDragOriginal = *m_impl->annotations->find(m_impl->vertexEditId);
             updateCursor();
             event->accept();
@@ -4162,8 +4194,11 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
             m_impl->dragOwner = DragOwner::MoveVertex;
             m_impl->dragButton = event->button();
             m_impl->pressPos = event->pos();
-            // The inserted vertex is the one now being dragged.
+            // The inserted vertex is the one now being dragged, and it sits
+            // exactly where the press projected onto the edge -- so the delta
+            // from the press is zero until the cursor moves.
             m_impl->draggingVertex = edge->afterIndex + 1;
+            m_impl->vertexDragAnchor = edge->position;
             updateCursor();
             event->accept();
             update();
@@ -4484,10 +4519,22 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event)
             double slideX = 0.0;
             double slideY = 0.0;
             m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
+            // A DELTA from the press, applied to the vertex as it was picked
+            // up -- not the cursor position outright. The press may land up to
+            // kHitToleranceScreenPixels from the vertex it grabbed, so setting
+            // the vertex to the cursor would teleport it by that offset on the
+            // first mouse-move: invisible on screen at one pixel of travel,
+            // but tens of microns of slide at low zoom, recorded and autosaved.
+            // Measuring from the press also means every frame transforms a
+            // pristine anchor rather than the previous frame's output, which is
+            // the rule §5.2 of the geometry-widening spec sets for the move
+            // drag.
+            const core::PointF anchor = m_impl->vertexDragAnchor;
+            const core::PointF moved{anchor.x + (slideX - m_impl->movePressSlide.x),
+                                     anchor.y + (slideY - m_impl->movePressSlide.y)};
             m_impl->annotations->setGeometry(
                 m_impl->vertexEditId,
-                core::withVertexMoved(*editing, *m_impl->draggingVertex,
-                                      core::PointF{slideX, slideY}));
+                core::withVertexMoved(*editing, *m_impl->draggingVertex, moved));
             event->accept();
             update();
         }
@@ -4576,7 +4623,13 @@ void ViewportWidget::mouseDoubleClickEvent(QMouseEvent* event)
     // on a slide whose annotations are not editable -- the same gate that
     // blocks a move drag. Offering an edit that would then be refused is worse
     // than not offering it. Design spec 2.
-    if (!m_impl->annotationsEditable() || m_impl->controller == nullptr) {
+    // Only under the Pan (select) tool, exactly as the whole-shape move drag
+    // is: resolveDragOwner hands a left press to the active drawing tool, so a
+    // mode entered under Rectangle would then intercept the very presses meant
+    // to draw with it -- a press near the edited outline would insert a vertex
+    // into an existing trace instead of starting a rectangle, and autosave it.
+    if (m_impl->activeTool != AnnotationTool::Pan || !m_impl->annotationsEditable()
+        || m_impl->controller == nullptr) {
         QOpenGLWidget::mouseDoubleClickEvent(event);
         return;
     }
@@ -4797,6 +4850,25 @@ void ViewportWidget::focusOutEvent(QFocusEvent* event)
     if (m_impl->dragOwner == DragOwner::Tool && m_impl->drawing) {
         commitDrawDrag();
     }
+    // A vertex drag abandoned by focus loss has already written every
+    // intermediate position into the model through the per-frame update, so
+    // the edit is committed, modifiedAt is restamped and autosave will write
+    // it. This is the last chance to record the step: the teardown below
+    // clears dragOwner and the eventual release takes mouseReleaseEvent's
+    // early return. Without this the vertex stays where the drag left it with
+    // no undo step, and Ctrl+Z silently undoes an unrelated earlier operation
+    // -- the same harm the MoveAnnotation case above exists to prevent.
+    if (m_impl->dragOwner == DragOwner::MoveVertex && m_impl->vertexDragOriginal.has_value()) {
+        const auto* was =
+            std::get_if<core::PolygonGeometry>(&m_impl->vertexDragOriginal->geometry());
+        const core::PolygonGeometry* now = m_impl->vertexEditPolygon();
+        if (was != nullptr && now != nullptr && !core::sameVertices(*was, *now)) {
+            pushGeometryCommand(m_impl->vertexEditId, *m_impl->vertexDragOriginal,
+                                tr("Edit Points"));
+        }
+    }
+    m_impl->draggingVertex.reset();
+    m_impl->vertexDragOriginal.reset();
     // Likewise the release of an in-flight drag: left set, dragOwner makes
     // mousePressEvent's early return swallow every later press.
     m_impl->dragOwner = DragOwner::None;

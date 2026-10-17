@@ -71,15 +71,39 @@ TEST_CASE("nearestVertex returns the nearest of several in range", "[core][Verte
 
 // Review Focus 1. A duplicate vertex is a STORED vertex and must be
 // addressable; outline() would have dropped it and shifted every later index.
+// The duplicate sits in the MIDDLE, and the press targets a vertex AFTER it.
+// That is what makes this able to fail: core::outline() drops the duplicate,
+// so an outline-based implementation would shift every later index down and
+// answer 2 where the stored index is 3. A trailing duplicate would not
+// distinguish the two, because dropping it leaves earlier indices untouched.
 TEST_CASE("nearestVertex addresses stored indices, duplicates included",
           "[core][VertexEditing]")
 {
-    const PolygonGeometry withDuplicate{
-        {PointF{0.0, 0.0}, PointF{10.0, 0.0}, PointF{10.0, 10.0}, PointF{10.0, 10.0}}, true};
+    const PolygonGeometry withDuplicate{{PointF{0.0, 0.0}, PointF{10.0, 0.0},
+                                         PointF{10.0, 0.0}, PointF{10.0, 10.0}},
+                                        true};
     REQUIRE(withDuplicate.vertices.size() == 4);
-    const auto index = nearestVertex(withDuplicate, PointF{0.0, 0.1}, 1.0);
+
+    const auto index = nearestVertex(withDuplicate, PointF{10.0, 9.9}, 1.0);
     REQUIRE(index.has_value());
-    REQUIRE(*index == 0);
+    REQUIRE(*index == 3);
+}
+
+// The divergence the rule above exists because of, pinned directly: these two
+// views of one shape have different lengths, so an index into one does not
+// address the other. If outline()'s dedup is ever removed this fails, and the
+// reason for every "stored vertices, never outline()" comment disappears with
+// it.
+TEST_CASE("outline drops a duplicate that the stored vertices keep",
+          "[core][VertexEditing]")
+{
+    const PolygonGeometry withDuplicate{{PointF{0.0, 0.0}, PointF{10.0, 0.0},
+                                         PointF{10.0, 0.0}, PointF{10.0, 10.0}},
+                                        true};
+    const Outline shape = outline(AnnotationGeometry{withDuplicate});
+
+    REQUIRE(withDuplicate.vertices.size() == 4);
+    REQUIRE(shape.points.size() == 3);
 }
 
 TEST_CASE("a negative tolerance behaves as zero", "[core][VertexEditing]")
