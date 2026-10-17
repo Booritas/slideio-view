@@ -29,6 +29,8 @@ enum class DragOwner
     MoveAnnotation,
     /// Dragging one vertex of the annotation in vertex-editing mode.
     MoveVertex,
+    /// Dragging one handle of a selected box-shaped annotation.
+    ResizeBox,
 };
 
 /// What a press does while the viewport is in vertex-editing mode. Separate

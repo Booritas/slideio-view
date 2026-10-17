@@ -1549,6 +1549,18 @@ struct ViewportWidget::Impl
     // vertex the user never grabbed.
     core::PointF vertexDragLastApplied;
 
+    // Resizing a box-shaped annotation.
+    std::optional<core::BoxHandle> resizingHandle;
+    std::optional<core::Annotation> boxResizeOriginal;
+    // The box as it was when the handle was picked up. Every frame resizes
+    // THIS rather than the previous frame's output, so the drag cannot drift,
+    // and the grab offset is not lost.
+    core::RectF boxResizeAnchorBox;
+    // The box this drag last wrote. If the shape is not where we left it,
+    // something else rewrote the geometry mid-drag -- an undo is the reachable
+    // case -- and the drag stops rather than resizing from a stale box.
+    core::RectF boxResizeLastApplied;
+
     /// The polygon being vertex-edited, or null when the mode is off, the
     /// annotation is gone, or it is not a traced shape.
     ///
@@ -3060,6 +3072,23 @@ void ViewportWidget::pushGeometryCommand(const std::string& id, const core::Anno
         *m_impl->annotations, id, before, *after, description.toStdString()));
 }
 
+void ViewportWidget::recordBoxResize()
+{
+    if (m_impl->boxResizeOriginal.has_value()) {
+        const std::string id = m_impl->boxResizeOriginal->id();
+        const core::Annotation* now = m_impl->annotations->find(id);
+        // moveEdit, not core::sameVertices: it compares bounding boxes, which
+        // is EXACT for this gesture because a resize is precisely a change of
+        // box. That is the opposite of a vertex drag, where an interior vertex
+        // can move inside an unchanged box and moveEdit was the wrong test.
+        if (now != nullptr && moveEdit(*m_impl->boxResizeOriginal, *now).has_value()) {
+            pushGeometryCommand(id, *m_impl->boxResizeOriginal, tr("Resize"));
+        }
+    }
+    m_impl->resizingHandle.reset();
+    m_impl->boxResizeOriginal.reset();
+}
+
 void ViewportWidget::recordVertexDrag()
 {
     if (m_impl->vertexDragOriginal.has_value()) {
@@ -3476,6 +3505,14 @@ void ViewportWidget::setActiveTool(AnnotationTool tool)
     // A tool change is a change of intent: the handles belong to the gesture
     // the user has just left behind.
     endVertexEditing();
+    // endToolDrag() above returns early unless dragOwner == Tool, so it does
+    // NOT clean up a live resize. Without this a tool shortcut pressed
+    // mid-resize would leave the resized box in the model with no undo step.
+    if (m_impl->dragOwner == DragOwner::ResizeBox) {
+        recordBoxResize();
+        m_impl->dragOwner = DragOwner::None;
+        m_impl->dragButton = Qt::NoButton;
+    }
     m_impl->activeTool = tool;
     updateCursor();
     update();
@@ -3512,6 +3549,10 @@ void ViewportWidget::resetAnnotationState()
     // restore onto the next one.
     m_impl->draggingVertex.reset();
     m_impl->vertexDragOriginal.reset();
+    // Same hazard again: boxResizeOriginal holds a whole annotation from the
+    // slide being left, which an Escape would restore onto the next one.
+    m_impl->resizingHandle.reset();
+    m_impl->boxResizeOriginal.reset();
     // The annotation this held belongs to the slide being left. Kept, it would
     // be restored onto a different slide by an Escape or an undo step.
     m_impl->moveOriginal.reset();
@@ -3605,6 +3646,11 @@ void ViewportWidget::updateCursor()
         setCursor(Qt::ClosedHandCursor);
         return;
     case DragOwner::MoveAnnotation:
+        setCursor(Qt::SizeAllCursor);
+        return;
+    case DragOwner::ResizeBox:
+        // The same cursor as a move and a vertex drag. Per-handle directional
+        // cursors are out of scope -- design spec 8.
         setCursor(Qt::SizeAllCursor);
         return;
     case DragOwner::MoveVertex:
@@ -4347,6 +4393,37 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
         }
     }
 
+    if (const std::optional<core::RectF> selectedBox =
+            m_impl->controller == nullptr ? std::nullopt : m_impl->selectedBoxGeometry()) {
+        const double tolerance = screenToleranceToSlide(kHitToleranceScreenPixels,
+                                                        m_impl->controller->viewport().scale());
+        const std::optional<core::BoxHandle> handle =
+            core::nearestBoxHandle(*selectedBox, m_impl->movePressSlide, tolerance);
+
+        if (resolveBoxResizePress(event->button(), m_impl->spaceHeld, handle.has_value())
+            == BoxResizeAction::Resize) {
+            // Refused on a read-only slide by the same gate that refuses a
+            // move, and the user is told why. Selecting still works and the
+            // handles stay painted -- hiding them would make a read-only slide
+            // look like a different application. Design spec 4.1.
+            if (!m_impl->annotationsEditable()) {
+                emit annotationEditBlocked(readOnlyEditMessage());
+            } else {
+                m_impl->dragOwner = DragOwner::ResizeBox;
+                m_impl->dragButton = event->button();
+                m_impl->pressPos = event->pos();
+                m_impl->resizingHandle = handle;
+                m_impl->boxResizeAnchorBox = *selectedBox;
+                m_impl->boxResizeLastApplied = *selectedBox;
+                m_impl->boxResizeOriginal =
+                    *m_impl->annotations->find(m_impl->annotations->selectedId());
+                updateCursor();
+            }
+            event->accept();
+            return;
+        }
+    }
+
     DragOwner owner = resolveDragOwner(event->button(), event->modifiers(),
                                        m_impl->spaceHeld, m_impl->activeTool,
                                        !pressHitId.empty());
@@ -4464,6 +4541,30 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
     // own button is still held.
     if (m_impl->dragOwner == DragOwner::None || event->button() != m_impl->dragButton) {
         QOpenGLWidget::mouseReleaseEvent(event);
+        return;
+    }
+
+    if (m_impl->dragOwner == DragOwner::ResizeBox) {
+        // A collapsed axis is widened to one screen pixel, exactly as a newly
+        // drawn shape's is, so a shape dragged to nothing comes back visible
+        // rather than becoming an invisible line. Design spec 6.4.
+        if (m_impl->boxResizeOriginal.has_value() && m_impl->controller) {
+            const std::string id = m_impl->boxResizeOriginal->id();
+            if (const core::Annotation* current = m_impl->annotations->find(id)) {
+                const double scale = m_impl->controller->viewport().scale();
+                const core::RectF widened = withMinimumExtent(
+                    core::boundingBox(current->geometry()), screenToleranceToSlide(1.0, scale));
+                if (const auto geometry = core::withBoxReplaced(current->geometry(), widened)) {
+                    m_impl->annotations->setGeometry(id, *geometry);
+                }
+            }
+        }
+        recordBoxResize();
+        m_impl->dragOwner = DragOwner::None;
+        m_impl->dragButton = Qt::NoButton;
+        updateCursor();
+        event->accept();
+        update();
         return;
     }
 
@@ -4610,6 +4711,46 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event)
         }
         event->accept();
         update();
+    }
+
+    if (m_impl->dragOwner == DragOwner::ResizeBox && m_impl->resizingHandle.has_value()
+        && m_impl->boxResizeOriginal.has_value() && m_impl->controller) {
+        const std::string id = m_impl->boxResizeOriginal->id();
+        if (const core::Annotation* current = m_impl->annotations->find(id)) {
+            const core::RectF nowBox = core::boundingBox(current->geometry());
+            // Something else rewrote the geometry since the last frame -- an
+            // undo during a held drag is the reachable case. Carrying on would
+            // resize from a box the user is no longer looking at.
+            if (nowBox.x != m_impl->boxResizeLastApplied.x
+                || nowBox.y != m_impl->boxResizeLastApplied.y
+                || nowBox.width != m_impl->boxResizeLastApplied.width
+                || nowBox.height != m_impl->boxResizeLastApplied.height) {
+                m_impl->dragOwner = DragOwner::None;
+                m_impl->dragButton = Qt::NoButton;
+                m_impl->resizingHandle.reset();
+                m_impl->boxResizeOriginal.reset();
+                updateCursor();
+                event->accept();
+                update();
+                return;
+            }
+
+            double slideX = 0.0;
+            double slideY = 0.0;
+            m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
+            // Resize the ANCHOR box, not the current one: every frame
+            // transforms a pristine original rather than the previous frame's
+            // output, the rule 5.2 of the geometry-widening spec sets.
+            const core::RectF resized =
+                core::withBoxHandleAt(m_impl->boxResizeAnchorBox, *m_impl->resizingHandle,
+                                      core::PointF{slideX, slideY});
+            if (const auto geometry = core::withBoxReplaced(current->geometry(), resized)) {
+                m_impl->annotations->setGeometry(id, *geometry);
+                m_impl->boxResizeLastApplied = core::boundingBox(*geometry);
+                event->accept();
+                update();
+            }
+        }
     }
 
     if (m_impl->dragOwner == DragOwner::MoveVertex && m_impl->draggingVertex.has_value()
@@ -4825,6 +4966,18 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
             m_impl->dragOwner = DragOwner::None;
             m_impl->dragButton = Qt::NoButton;
             cancelled = true;
+        } else if (m_impl->dragOwner == DragOwner::ResizeBox
+                   && m_impl->boxResizeOriginal.has_value()) {
+            // restore(), not setGeometry(): the whole annotation goes back,
+            // metadata included. setGeometry restamps modifiedAt, which would
+            // leave the file saying the mark was last touched by a gesture
+            // whose entire purpose was to change nothing.
+            m_impl->annotations->restore(*m_impl->boxResizeOriginal);
+            m_impl->dragOwner = DragOwner::None;
+            m_impl->dragButton = Qt::NoButton;
+            m_impl->resizingHandle.reset();
+            m_impl->boxResizeOriginal.reset();
+            cancelled = true;
         } else if (m_impl->dragOwner == DragOwner::MoveVertex
                    && m_impl->vertexDragOriginal.has_value()) {
             // restore(), not setGeometry(): the whole annotation goes back,
@@ -4979,8 +5132,17 @@ void ViewportWidget::focusOutEvent(QFocusEvent* event)
     if (m_impl->dragOwner == DragOwner::MoveVertex) {
         recordVertexDrag();
     }
+    // A resize abandoned by focus loss has already written the resized box
+    // into the model frame by frame, so this is the last chance to record the
+    // step: the teardown below clears dragOwner and the eventual release takes
+    // mouseReleaseEvent's early return.
+    if (m_impl->dragOwner == DragOwner::ResizeBox) {
+        recordBoxResize();
+    }
     m_impl->draggingVertex.reset();
     m_impl->vertexDragOriginal.reset();
+    m_impl->resizingHandle.reset();
+    m_impl->boxResizeOriginal.reset();
     // Likewise the release of an in-flight drag: left set, dragOwner makes
     // mousePressEvent's early return swallow every later press.
     m_impl->dragOwner = DragOwner::None;

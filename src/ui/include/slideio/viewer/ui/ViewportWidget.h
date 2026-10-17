@@ -275,6 +275,17 @@ private:
     /// that must call this BEFORE they do.
     void recordVertexDrag();
 
+    /// Pushes the undo step for a live box resize, if it changed anything, and
+    /// clears the drag state. Safe to call with no resize live.
+    ///
+    /// Every route out of a resize goes through this: the ordinary release,
+    /// focus loss, Escape, an undo taken mid-drag, a tool change and a slide
+    /// close. Each leaves the resized geometry already committed to the model
+    /// by the per-frame update, so a route that forgets to record produces an
+    /// edit that is saved with no undo step -- and the user's next Ctrl+Z then
+    /// undoes something unrelated. Design spec 6.2.
+    void recordBoxResize();
+
     /// Records one completed geometry edit: the annotation as it was, against
     /// what it is now. One per gesture, never one per mouse-move -- a single
     /// nudge would otherwise bury fifty steps of history and Ctrl+Z would

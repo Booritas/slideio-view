@@ -260,6 +260,9 @@ therefore behave identically, which is the point: both turn a drag into a box.
 No test binary creates a `QApplication`, so the handles, the gestures and every
 exit in §6.2 are unreachable from any suite.
 
+**Not yet run.** Group AA is the list to work through against the installed
+build; results are recorded here afterwards, as groups U through Z were.
+
 | | Check |
 |---|---|
 | AA1 | Select a rectangle: eight handles appear. Select an ellipse: the same. |
