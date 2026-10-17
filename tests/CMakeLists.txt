@@ -17,6 +17,7 @@ add_executable(slideio-viewer-core-tests
     core/AnnotationMergeTest.cpp
     core/VertexEditingTest.cpp
     core/BoxResizeTest.cpp
+    core/AnnotationDecorationTest.cpp
     core/WorkspaceSwitchPolicyTest.cpp
     core/LevelRasterTest.cpp
     core/AnnotationTest.cpp

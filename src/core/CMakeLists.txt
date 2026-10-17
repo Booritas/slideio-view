@@ -15,6 +15,7 @@ add_library(slideio-viewer-core STATIC
     src/AnnotationMerge.cpp
     src/VertexEditing.cpp
     src/BoxResize.cpp
+    src/AnnotationDecoration.cpp
     src/LevelRaster.cpp
     src/WorkspaceSwitchPolicy.cpp
     src/Annotation.cpp
