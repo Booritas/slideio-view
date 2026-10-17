@@ -2920,6 +2920,44 @@ void ViewportWidget::setUndoStack(app::UndoRedoStack* stack)
     m_impl->undoStack = stack;
 }
 
+bool ViewportWidget::commitDrawDrag()
+{
+    // Two boxes, deliberately. The misclick test asks whether the user's
+    // GESTURE was big enough to mean something, so it reads the raw drag --
+    // Alt doubles the constrained box, which would otherwise halve the
+    // threshold and turn a 4-pixel twitch into an annotation.
+    const core::RectF gestureBox = core::boundingBox(
+        core::RectangleGeometry{m_impl->drawAnchorSlide, m_impl->drawCurrentSlide});
+    const core::RectF shapeBox = m_impl->pendingDragBox();
+
+    // A drag smaller than the click target is a misclick, not a shape. The
+    // test is screen-space on purpose: at high zoom a couple of pixels of
+    // jitter is many slide pixels. A rejected drag falls through to the
+    // selection block in mouseReleaseEvent. With no controller the scale is 0
+    // and this refuses, which is what stops a focus loss before the first
+    // frame from inventing a shape.
+    const double scale = m_impl->controller ? m_impl->controller->viewport().scale() : 0.0;
+    if (!dragExceedsMinimumSize(gestureBox, scale, kHitToleranceScreenPixels)) {
+        return false;
+    }
+
+    // A short sideways or upright drag has zero extent on one axis, because
+    // mouse deltas are integers. That axis is widened to one screen pixel
+    // rather than the gesture being discarded -- the user dragged deliberately
+    // and must get something back.
+    const core::RectF box = withMinimumExtent(shapeBox, screenToleranceToSlide(1.0, scale));
+    const core::PointF topLeft{box.x, box.y};
+    const core::PointF bottomRight{box.x + box.width, box.y + box.height};
+    const core::AnnotationGeometry geometry =
+        m_impl->activeTool == AnnotationTool::Ellipse
+            ? core::AnnotationGeometry{core::EllipseGeometry{topLeft, bottomRight}}
+            : core::AnnotationGeometry{core::RectangleGeometry{topLeft, bottomRight}};
+    const std::string id = m_impl->annotations->add(geometry);
+    pushCreateCommand(id);
+    m_impl->annotations->setSelected(id);
+    return true;
+}
+
 void ViewportWidget::pushCreateCommand(const std::string& id)
 {
     if (m_impl->undoStack == nullptr || id.empty()) {
@@ -4141,35 +4179,7 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
             // an ellipse.
         }
 
-        // Two boxes, deliberately. The misclick test asks whether the user's
-        // GESTURE was big enough to mean something, so it reads the raw drag --
-        // Alt doubles the constrained box, which would otherwise halve the
-        // threshold and turn a 4-pixel twitch into an annotation.
-        const core::RectF gestureBox = core::boundingBox(
-            core::RectangleGeometry{m_impl->drawAnchorSlide, m_impl->drawCurrentSlide});
-        const core::RectF shapeBox = m_impl->pendingDragBox();
-
-        // A drag smaller than the click target is a misclick, not a shape. The
-        // test is screen-space on purpose: at high zoom a couple of pixels of
-        // jitter is many slide pixels. A rejected drag falls through to the
-        // selection block below.
-        const double scale = m_impl->controller ? m_impl->controller->viewport().scale() : 0.0;
-        if (dragExceedsMinimumSize(gestureBox, scale, kHitToleranceScreenPixels)) {
-            // A short sideways or upright drag has zero extent on one axis,
-            // because mouse deltas are integers. That axis is widened to one
-            // screen pixel rather than the gesture being discarded -- the user
-            // dragged deliberately and must get something back.
-            const core::RectF box = withMinimumExtent(shapeBox, screenToleranceToSlide(1.0, scale));
-            const core::PointF topLeft{box.x, box.y};
-            const core::PointF bottomRight{box.x + box.width, box.y + box.height};
-            const core::AnnotationGeometry geometry =
-                m_impl->activeTool == AnnotationTool::Ellipse
-                    ? core::AnnotationGeometry{core::EllipseGeometry{topLeft, bottomRight}}
-                    : core::AnnotationGeometry{core::RectangleGeometry{topLeft, bottomRight}};
-            const std::string id = m_impl->annotations->add(geometry);
-            pushCreateCommand(id);
-            m_impl->annotations->setSelected(id);
-        }
+        commitDrawDrag();
         update();
     }
 
@@ -4504,6 +4514,23 @@ void ViewportWidget::focusOutEvent(QFocusEvent* event)
     // reach it, as is the autosave's own save-failure dialog stealing focus.
     if (m_impl->dragOwner == DragOwner::MoveAnnotation) {
         pushMoveCommand(m_impl->movingId, m_impl->moveOriginal);
+    }
+    // A rectangle or ellipse drag abandoned by focus loss is recorded for the
+    // same reason, and this is the only chance to: the teardown below clears
+    // dragOwner, and mouseReleaseEvent's first guard then swallows the release
+    // whole -- so without this the shape, the selection change and any message
+    // all vanish without a word. The user dragged something out and watched it
+    // preview; an unwanted shape is one Ctrl+Z away, a lost one is gone.
+    //
+    // Reachable by Alt-tabbing mid-drag, by the autosave's save-failure dialog
+    // stealing focus -- and, since Alt became the draw-from-centre modifier,
+    // possibly by releasing Alt before the mouse button, because Qt gives the
+    // menu bar focus on a lone Alt. See group Y check Y18 in the ellipse spec.
+    //
+    // commitDrawDrag applies the same minimum-size guard as an ordinary
+    // release, so focus lost during an accidental twitch still creates nothing.
+    if (m_impl->dragOwner == DragOwner::Tool && m_impl->drawing) {
+        commitDrawDrag();
     }
     // Likewise the release of an in-flight drag: left set, dragOwner makes
     // mousePressEvent's early return swallow every later press.

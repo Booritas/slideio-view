@@ -252,6 +252,16 @@ private:
     /// Record a completed operation on the undo stack. No-ops when no stack is
     /// set or the annotation is not in the model. Called after the mutation has
     /// already gone through AnnotationModel's own API.
+    /// Turns the in-flight single-drag shape into an annotation, selects it and
+    /// records the undo step. False when the drag was too small to be anything
+    /// but a misclick, in which case nothing is created.
+    ///
+    /// Called from mouseReleaseEvent and from focusOutEvent, which is what
+    /// makes a drag interrupted by focus loss survive rather than vanish.
+    /// Reads drawAnchorSlide, drawCurrentSlide and drawModifiers, so the caller
+    /// updates those first if it has fresher values.
+    bool commitDrawDrag();
+
     void pushCreateCommand(const std::string& id);
     /// Removes `id` and records the removal. Unlike the push* functions around
     /// it, this one performs the mutation as well, which is why it must not be
