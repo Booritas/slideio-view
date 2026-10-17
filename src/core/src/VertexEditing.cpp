@@ -58,4 +58,50 @@ std::optional<EdgeHit> nearestEdge(const PolygonGeometry& poly, PointF point,
     return best;
 }
 
+PolygonGeometry withVertexMoved(const PolygonGeometry& poly, std::size_t index, PointF position)
+{
+    PolygonGeometry result = poly;
+    if (index < result.vertices.size()) {
+        result.vertices[index] = position;
+    }
+    return result;
+}
+
+PolygonGeometry withVertexInserted(const PolygonGeometry& poly, std::size_t afterIndex,
+                                   PointF position)
+{
+    PolygonGeometry result = poly;
+    const std::size_t at =
+        afterIndex < result.vertices.size() ? afterIndex + 1 : result.vertices.size();
+    result.vertices.insert(result.vertices.begin() + static_cast<std::ptrdiff_t>(at), position);
+    return result;
+}
+
+std::optional<PolygonGeometry> withVertexRemoved(const PolygonGeometry& poly, std::size_t index)
+{
+    if (index >= poly.vertices.size()) {
+        return std::nullopt;
+    }
+    const std::size_t minimum = poly.closed ? kMinPolygonVertices : kMinPolylineVertices;
+    if (poly.vertices.size() <= minimum) {
+        return std::nullopt;
+    }
+    PolygonGeometry result = poly;
+    result.vertices.erase(result.vertices.begin() + static_cast<std::ptrdiff_t>(index));
+    return result;
+}
+
+bool sameVertices(const PolygonGeometry& a, const PolygonGeometry& b)
+{
+    if (a.closed != b.closed || a.vertices.size() != b.vertices.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < a.vertices.size(); ++i) {
+        if (a.vertices[i].x != b.vertices[i].x || a.vertices[i].y != b.vertices[i].y) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace slideio::viewer::core

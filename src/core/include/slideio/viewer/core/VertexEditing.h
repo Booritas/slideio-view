@@ -39,4 +39,38 @@ struct EdgeHit
 [[nodiscard]] std::optional<EdgeHit> nearestEdge(const PolygonGeometry& poly, PointF point,
                                                  double toleranceSlideUnits);
 
+/// `poly` with vertex `index` at `position`. An index past the end returns the
+/// polygon unchanged: the only caller passes an index nearestVertex produced,
+/// so out of range means a bug upstream, and corrupting the shape would be a
+/// worse answer than doing nothing.
+[[nodiscard]] PolygonGeometry withVertexMoved(const PolygonGeometry& poly, std::size_t index,
+                                              PointF position);
+
+/// `poly` with a new vertex at `position`, placed at afterIndex + 1 so it lies
+/// between the segment's endpoints. On the closing segment of a closed shape
+/// afterIndex is the last index and the vertex is appended, which is the same
+/// place.
+[[nodiscard]] PolygonGeometry withVertexInserted(const PolygonGeometry& poly,
+                                                 std::size_t afterIndex, PointF position);
+
+/// `poly` without vertex `index`; absent when that would take the shape below
+/// kMinPolygonVertices for a closed shape or kMinPolylineVertices for an open
+/// one, or when the index is past the end.
+///
+/// Those are the same constants the serializer enforces on read and write, so
+/// this cannot produce a shape the application would refuse to save or reopen
+/// -- the rule ui::pendingShapeCommits already follows for the drawing tools.
+[[nodiscard]] std::optional<PolygonGeometry> withVertexRemoved(const PolygonGeometry& poly,
+                                                               std::size_t index);
+
+/// True when `a` and `b` have the same vertices in the same order and the same
+/// closed flag.
+///
+/// Exists because a completed gesture that changed nothing must record no undo
+/// step, and ui::moveEdit cannot answer that here: it compares bounding boxes,
+/// which is exact for a translation but blind to an interior vertex moving
+/// inside an unchanged extent. PointF is an aggregate with no operator==, so
+/// the coordinates are compared directly.
+[[nodiscard]] bool sameVertices(const PolygonGeometry& a, const PolygonGeometry& b);
+
 } // namespace slideio::viewer::core

@@ -144,3 +144,137 @@ TEST_CASE("a press on a corner is in range of both a vertex and an edge",
     REQUIRE(nearestVertex(square(), PointF{10.0, 0.0}, 1.0).has_value());
     REQUIRE(nearestEdge(square(), PointF{10.0, 0.0}, 1.0).has_value());
 }
+
+TEST_CASE("withVertexMoved moves the addressed vertex and no other",
+          "[core][VertexEditing]")
+{
+    const PolygonGeometry moved = withVertexMoved(square(), 1, PointF{99.0, 98.0});
+    REQUIRE(moved.vertices.size() == 4);
+    REQUIRE(moved.vertices[0].x == 0.0);
+    REQUIRE(moved.vertices[1].x == 99.0);
+    REQUIRE(moved.vertices[1].y == 98.0);
+    REQUIRE(moved.vertices[2].x == 10.0);
+    REQUIRE(moved.closed);
+}
+
+TEST_CASE("withVertexMoved leaves an out-of-range index alone",
+          "[core][VertexEditing]")
+{
+    const PolygonGeometry moved = withVertexMoved(square(), 99, PointF{1.0, 1.0});
+    REQUIRE(moved.vertices.size() == 4);
+    REQUIRE(moved.vertices[0].x == 0.0);
+}
+
+TEST_CASE("withVertexInserted puts the new vertex after the given index",
+          "[core][VertexEditing]")
+{
+    const PolygonGeometry grown = withVertexInserted(square(), 0, PointF{5.0, 0.0});
+    REQUIRE(grown.vertices.size() == 5);
+    REQUIRE(grown.vertices[1].x == 5.0);
+    REQUIRE(grown.vertices[1].y == 0.0);
+    REQUIRE(grown.vertices[2].x == 10.0);
+    REQUIRE(grown.closed);
+}
+
+// Review Focus 5. Inserting on the closing segment means appending: the new
+// vertex sits between the old last and the first, which is exactly that edge.
+TEST_CASE("withVertexInserted on the closing segment appends",
+          "[core][VertexEditing]")
+{
+    const PolygonGeometry grown = withVertexInserted(square(), 3, PointF{0.0, 5.0});
+    REQUIRE(grown.vertices.size() == 5);
+    REQUIRE(grown.vertices[4].x == 0.0);
+    REQUIRE(grown.vertices[4].y == 5.0);
+}
+
+TEST_CASE("withVertexRemoved removes the addressed vertex", "[core][VertexEditing]")
+{
+    const auto shrunk = withVertexRemoved(square(), 1);
+    REQUIRE(shrunk.has_value());
+    REQUIRE(shrunk->vertices.size() == 3);
+    REQUIRE(shrunk->vertices[1].x == 10.0);
+    REQUIRE(shrunk->vertices[1].y == 10.0);
+    REQUIRE(shrunk->closed);
+}
+
+// Review Focus 4. The floor is the serializer's own minimum, so the tool
+// cannot build a shape the file format would refuse on write or read.
+TEST_CASE("withVertexRemoved refuses at the closed-shape floor",
+          "[core][VertexEditing]")
+{
+    const PolygonGeometry triangle{
+        {PointF{0.0, 0.0}, PointF{10.0, 0.0}, PointF{5.0, 10.0}}, true};
+    REQUIRE(triangle.vertices.size() == kMinPolygonVertices);
+    REQUIRE_FALSE(withVertexRemoved(triangle, 0).has_value());
+}
+
+TEST_CASE("withVertexRemoved refuses at the open-path floor", "[core][VertexEditing]")
+{
+    const PolygonGeometry line{{PointF{0.0, 0.0}, PointF{10.0, 0.0}}, false};
+    REQUIRE(line.vertices.size() == kMinPolylineVertices);
+    REQUIRE_FALSE(withVertexRemoved(line, 0).has_value());
+}
+
+// One above the floor still removes, which is what makes the refusal a floor
+// rather than a blanket refusal.
+TEST_CASE("withVertexRemoved allows the removal that reaches the floor",
+          "[core][VertexEditing]")
+{
+    const auto shrunk = withVertexRemoved(square(), 0);
+    REQUIRE(shrunk.has_value());
+    REQUIRE(shrunk->vertices.size() == kMinPolygonVertices);
+}
+
+TEST_CASE("withVertexRemoved refuses an out-of-range index", "[core][VertexEditing]")
+{
+    REQUIRE_FALSE(withVertexRemoved(square(), 99).has_value());
+}
+
+// An open path has a lower floor than a closed one, so the same vertex count
+// is removable in one and not the other.
+TEST_CASE("the floor depends on whether the shape is closed",
+          "[core][VertexEditing]")
+{
+    PolygonGeometry three{{PointF{0.0, 0.0}, PointF{10.0, 0.0}, PointF{5.0, 10.0}}, true};
+    REQUIRE_FALSE(withVertexRemoved(three, 0).has_value());
+    three.closed = false;
+    REQUIRE(withVertexRemoved(three, 0).has_value());
+}
+
+TEST_CASE("sameVertices sees an identical shape as unchanged",
+          "[core][VertexEditing]")
+{
+    REQUIRE(sameVertices(square(), square()));
+}
+
+// The case ui::moveEdit's bounding-box comparison would get WRONG: an
+// interior vertex moves, the outer extent does not budge, and the edit is
+// real. Recording nothing here would lose the user's work from the undo stack.
+TEST_CASE("sameVertices sees an interior move that preserves the bounding box",
+          "[core][VertexEditing]")
+{
+    const PolygonGeometry before{{PointF{0.0, 0.0}, PointF{10.0, 0.0}, PointF{5.0, 4.0},
+                                  PointF{10.0, 10.0}, PointF{0.0, 10.0}},
+                                 true};
+    const PolygonGeometry after = withVertexMoved(before, 2, PointF{6.0, 5.0});
+
+    const RectF boxBefore = boundingBox(before);
+    const RectF boxAfter = boundingBox(after);
+    REQUIRE(boxBefore.x == boxAfter.x);
+    REQUIRE(boxBefore.y == boxAfter.y);
+    REQUIRE(boxBefore.width == boxAfter.width);
+    REQUIRE(boxBefore.height == boxAfter.height);
+
+    REQUIRE_FALSE(sameVertices(before, after));
+}
+
+TEST_CASE("sameVertices distinguishes count, order and closedness",
+          "[core][VertexEditing]")
+{
+    REQUIRE_FALSE(sameVertices(square(), withVertexRemoved(square(), 0).value()));
+    REQUIRE_FALSE(sameVertices(square(), withVertexInserted(square(), 0, PointF{5.0, 0.0})));
+
+    PolygonGeometry open = square();
+    open.closed = false;
+    REQUIRE_FALSE(sameVertices(square(), open));
+}
