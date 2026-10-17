@@ -389,8 +389,8 @@ routing decision in `ViewportWidget` are unreachable from any suite.
 
 **Not yet run.** The build to run them against is the installed binary at
 `build/install/release/bin/slideio-viewer.exe`, sha256
-`1351e7ef3c54635000393a1f39b4dbb34714c4e0ddacc2cc4da798379817773e`, commit
-`805f979`. The hash was compared against `build/build/Release/slideio-viewer.exe`
+`c539ede5312dc9d5fdaa910358e8d01911b47fa4c7925067a10cfebe2ac40755`, commit
+`589c45a`. The hash was compared against `build/build/Release/slideio-viewer.exe`
 and matched — a running viewer turns `cmake --install` into a silent no-op that
 still exits 0, so the artifact is what was checked, not the exit code. Results
 are recorded here afterwards, as groups U through AA were — what was observed,
@@ -428,6 +428,7 @@ dialog as Open Read-Only.
 | AB20 | Escape with the Point tool active: reverts to the Pan tool, as other tools do. |
 | AB21 | Place a marker over pale background and over dark tissue: visible against both. |
 | AB22 | Delete a marker, Ctrl+Z, Ctrl+Y: it comes back, then goes again, in one step each. |
+| AB23 | With the read-only slide of AB19 still open, select the **Rectangle** tool and drag: refused with the status-bar message, no rectangle created. This is the pre-existing defect `commitDrawDrag`'s new gate fixes — AB19 exercises the gate through the Point tool, and nothing otherwise drives the path the rectangle and ellipse tools have been using unguarded since persistence landed. The ellipse shares that path; one check covers both. |
 
 ---
 
