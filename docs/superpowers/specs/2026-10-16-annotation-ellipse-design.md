@@ -399,12 +399,39 @@ no-op that still exits 0.
 |---|---|
 | Y1 | passed |
 | Y2 | passed |
+| Y16 | passed |
+| Y17 | passed |
+| Y18 | passed |
+| Y19 | passed |
 
 **Y1, Y2.** The tool activates on `E` and shows checked, and a dragged ellipse
 commits the shape its preview showed. Y2 is the one that matters most of the
 two: the preview is stroked from `core::outline()` rather than
 `QPainter::drawEllipse`, precisely so that what is previewed and what is stored
 are the same 512-gon, and nothing but a human eye can confirm they match.
+
+**Y16, Y17.** The two regressions found in the whole-branch review are gone in
+both directions: releasing a modifier without moving commits the shape last
+previewed, pressing one after the drag stops does not retroactively reshape it,
+and an Alt-held twitch is rejected as a misclick exactly as a bare one is.
+Neither could be pinned by a test — both live in `ViewportWidget::Impl`, which
+no suite can construct — so this run is the whole of their verification.
+
+**Y18, Y19 — read these together.** Y19 is the one that proves the fix: an
+Alt-tab certainly moves focus, so `focusOutEvent` certainly fired, and the
+shape was created rather than swallowed by `mouseReleaseEvent`'s guard. The
+viewport still accepted a press afterwards, which is what confirms the teardown
+was *not* skipped — the failure mode a careless fix would have introduced — and
+Ctrl+Z removed the shape, confirming the undo step was recorded.
+
+Y18 passing does **not** establish that its trigger exists. Releasing Alt before
+the button produced the ellipse, but that is equally consistent with Qt never
+giving the menu bar focus mid-drag on this machine, in which case the scenario
+never exercised the fix at all. The tool shortcuts still responded afterwards,
+which rather suggests focus never moved. Either way the user-visible behaviour
+is correct, and the fix is independently verified by Y19; the open question is
+only whether Y18's hazard was ever real. Recorded so a future reader does not
+mistake this for proof that it was.
 
 ---
 
