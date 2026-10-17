@@ -348,13 +348,16 @@ struct MainWindow::Impl
         rectangleToolAction = new QAction("&Rectangle", owner);
         rectangleToolAction->setCheckable(true);
         rectangleToolAction->setShortcut(QKeySequence("R"));
-        rectangleToolAction->setStatusTip("Draw a rectangular annotation by dragging");
+        rectangleToolAction->setStatusTip(
+            "Draw a rectangular annotation by dragging; hold Shift for a square, "
+            "Alt to draw from the center");
 
         ellipseToolAction = new QAction("&Ellipse", owner);
         ellipseToolAction->setCheckable(true);
         ellipseToolAction->setShortcut(QKeySequence("E"));
         ellipseToolAction->setStatusTip(
-            "Draw an elliptical annotation by dragging; hold Shift for a circle");
+            "Draw an elliptical annotation by dragging; hold Shift for a circle, "
+            "Alt to draw from the center");
 
         polygonToolAction = new QAction("P&olygon", owner);
         polygonToolAction->setCheckable(true);

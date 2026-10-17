@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <utility>
 #include <variant>
 
 namespace slideio::viewer::core
@@ -186,8 +187,8 @@ Outline outlineShape(const EllipseGeometry& ellipse)
 // the painted interior and the hit-tested interior from disagreeing.
 bool hitTestShape(const EllipseGeometry& ellipse, PointF point, double tolerance)
 {
-    const Outline shape = outlineShape(ellipse);
-    return hitTestShape(PolygonGeometry{shape.points, true}, point, tolerance);
+    Outline shape = outlineShape(ellipse);
+    return hitTestShape(PolygonGeometry{std::move(shape.points), true}, point, tolerance);
 }
 
 AnnotationType typeOfShape(const EllipseGeometry&)
