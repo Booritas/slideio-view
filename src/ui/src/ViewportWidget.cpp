@@ -1526,6 +1526,19 @@ struct ViewportWidget::Impl
 
     core::PointF drawAnchorSlide;
     core::PointF drawCurrentSlide;
+    // Read from the mouse events rather than queried globally, so the preview
+    // and the committed shape are constrained by the same value.
+    Qt::KeyboardModifiers drawModifiers = Qt::NoModifier;
+
+    /// The box the pending drag describes, with its modifiers applied. One
+    /// source for the preview and the commit: computing it twice is how a
+    /// preview comes to lie about what the release will produce.
+    core::RectF pendingDragBox() const
+    {
+        const core::RectF raw =
+            core::boundingBox(core::RectangleGeometry{drawAnchorSlide, drawCurrentSlide});
+        return applyDragConstraints(raw, drawAnchorSlide, drawModifiers);
+    }
 
     // Moving a selected annotation.
     /// Cursor position in slide space at the moment the move drag began.
@@ -3128,14 +3141,34 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         }
     }
 
-    // The rectangle being dragged right now is not in the model yet.
+    // The rectangle or ellipse being dragged right now is not in the model yet.
     if (m_impl->drawing) {
-        const QRectF preview =
-            QRectF(toScreen(m_impl->drawAnchorSlide), toScreen(m_impl->drawCurrentSlide))
-                .normalized();
+        const core::RectF box = m_impl->pendingDragBox();
+        const core::PointF topLeft{box.x, box.y};
+        const core::PointF bottomRight{box.x + box.width, box.y + box.height};
         painter.setPen(QPen(QColor(0xE6, 0x7E, 0x22), 2.0, Qt::DashLine));
         painter.setBrush(Qt::NoBrush);
-        painter.drawRect(preview);
+        if (m_impl->activeTool == AnnotationTool::Ellipse) {
+            // Stroked from core::outline rather than drawEllipse, so the preview
+            // is the same 512-gon the release will commit -- design spec 6.1.
+            const core::Outline shape =
+                core::outline(core::EllipseGeometry{topLeft, bottomRight});
+            QPainterPath path;
+            bool first = true;
+            for (const core::PointF& vertex : shape.points) {
+                const QPointF screen = toScreen(vertex);
+                if (first) {
+                    path.moveTo(screen);
+                    first = false;
+                } else {
+                    path.lineTo(screen);
+                }
+            }
+            path.closeSubpath();
+            painter.drawPath(path);
+        } else {
+            painter.drawRect(QRectF(toScreen(topLeft), toScreen(bottomRight)).normalized());
+        }
     }
 
     // The polygon or freehand line being traced, likewise not in the model yet.
@@ -4053,6 +4086,7 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
         m_impl->drawing = true;
         m_impl->drawAnchorSlide = core::PointF{slideX, slideY};
         m_impl->drawCurrentSlide = m_impl->drawAnchorSlide;
+        m_impl->drawModifiers = event->modifiers();
         updateCursor();
         event->accept();
         update();
@@ -4094,10 +4128,10 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
             double slideY = 0.0;
             m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
             m_impl->drawCurrentSlide = core::PointF{slideX, slideY};
+            m_impl->drawModifiers = event->modifiers();
         }
 
-        const core::RectF rawBox = core::boundingBox(
-            core::RectangleGeometry{m_impl->drawAnchorSlide, m_impl->drawCurrentSlide});
+        const core::RectF rawBox = m_impl->pendingDragBox();
 
         // A drag smaller than the click target is a misclick, not a shape. The
         // test is screen-space on purpose: at high zoom a couple of pixels of
@@ -4110,9 +4144,12 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
             // screen pixel rather than the gesture being discarded -- the user
             // dragged deliberately and must get something back.
             const core::RectF box = withMinimumExtent(rawBox, screenToleranceToSlide(1.0, scale));
+            const core::PointF topLeft{box.x, box.y};
+            const core::PointF bottomRight{box.x + box.width, box.y + box.height};
             const core::AnnotationGeometry geometry =
-                core::RectangleGeometry{core::PointF{box.x, box.y},
-                                        core::PointF{box.x + box.width, box.y + box.height}};
+                m_impl->activeTool == AnnotationTool::Ellipse
+                    ? core::AnnotationGeometry{core::EllipseGeometry{topLeft, bottomRight}}
+                    : core::AnnotationGeometry{core::RectangleGeometry{topLeft, bottomRight}};
             const std::string id = m_impl->annotations->add(geometry);
             pushCreateCommand(id);
             m_impl->annotations->setSelected(id);
@@ -4227,6 +4264,7 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event)
         double slideY = 0.0;
         m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
         m_impl->drawCurrentSlide = core::PointF{slideX, slideY};
+        m_impl->drawModifiers = event->modifiers();
         event->accept();
         update();
     }

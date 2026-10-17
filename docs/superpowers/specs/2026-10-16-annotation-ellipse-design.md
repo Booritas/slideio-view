@@ -163,6 +163,18 @@ and `geometryToJson` through the `shapeToJson` overload set; `geometryTypeName`
 carries an explicit `static_assert`. Omitting any of these is a **compile
 error naming the site**. One site is not protected that way — §5.3.
 
+**Corrected during implementation, 2026-10-17.** The table above lists five
+sites and this paragraph names three more. The real count is **ten**. Two were
+not anticipated here and were found only because the compiler refused to
+build: `isRepresentableShape` in `AnnotationSerialization.cpp` — the "refusing
+to write a shape we would refuse to read" guard, which needed a
+finite-corners-only overload matching the rectangle's — and `ShapeNameVisitor`
+in `src/ui/src/AnnotationShapeName.cpp`, which produces the user-facing shape
+name in the annotation list and properties panel and has a `switch` over
+`AnnotationType` beside it. The sixth core overload set, `convexShape`, is
+added by §4.1. The lesson for the next shape is that the count in a spec is
+not to be trusted — let the compiler enumerate the sites.
+
 `boundingBox` returning the exact box while `outline` is inscribed means the
 box is very slightly larger than the painted shape. That direction is the safe
 one: the box is used for culling and for the selection rectangle, where
@@ -338,7 +350,10 @@ than a discovery.
 
 No test binary creates a `QApplication`, so nothing below is reachable from any
 suite. Group Y, to be run against the installed build and recorded in this file
-the way groups U, V, W and X were:
+the way groups U, V, W and X were.
+
+**Not yet run.** Group Y is the list to work through against the installed
+build; results are recorded here afterwards.
 
 | | Check |
 |---|---|

@@ -182,6 +182,7 @@ struct MainWindow::Impl
     QAction* manageSlideProfilesAction = nullptr;
     QAction* panToolAction = nullptr;
     QAction* rectangleToolAction = nullptr;
+    QAction* ellipseToolAction = nullptr;
     QAction* polygonToolAction = nullptr;
     QAction* freehandToolAction = nullptr;
     QAction* preferencesAction = nullptr;
@@ -349,6 +350,12 @@ struct MainWindow::Impl
         rectangleToolAction->setShortcut(QKeySequence("R"));
         rectangleToolAction->setStatusTip("Draw a rectangular annotation by dragging");
 
+        ellipseToolAction = new QAction("&Ellipse", owner);
+        ellipseToolAction->setCheckable(true);
+        ellipseToolAction->setShortcut(QKeySequence("E"));
+        ellipseToolAction->setStatusTip(
+            "Draw an elliptical annotation by dragging; hold Shift for a circle");
+
         polygonToolAction = new QAction("P&olygon", owner);
         polygonToolAction->setCheckable(true);
         polygonToolAction->setShortcut(QKeySequence("P"));
@@ -369,6 +376,7 @@ struct MainWindow::Impl
         // out of the way everywhere else.
         panToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         rectangleToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        ellipseToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         polygonToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         freehandToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
 
@@ -376,6 +384,7 @@ struct MainWindow::Impl
         toolGroup->setExclusive(true);
         toolGroup->addAction(panToolAction);
         toolGroup->addAction(rectangleToolAction);
+        toolGroup->addAction(ellipseToolAction);
         toolGroup->addAction(polygonToolAction);
         toolGroup->addAction(freehandToolAction);
         // Spec §6: no drawing tools without a slide. Enabled and disabled from
@@ -383,6 +392,7 @@ struct MainWindow::Impl
         // "a slide is open": an associated image and a slide whose annotation
         // file would not parse both leave it off.
         rectangleToolAction->setEnabled(false);
+        ellipseToolAction->setEnabled(false);
         polygonToolAction->setEnabled(false);
         freehandToolAction->setEnabled(false);
 
@@ -472,6 +482,7 @@ struct MainWindow::Impl
         QMenu* toolsMenu = owner->menuBar()->addMenu("&Tools");
         toolsMenu->addAction(panToolAction);
         toolsMenu->addAction(rectangleToolAction);
+        toolsMenu->addAction(ellipseToolAction);
         toolsMenu->addAction(polygonToolAction);
         toolsMenu->addAction(freehandToolAction);
         // There is no Edit menu, so Preferences lives here. setMenuRole() moves
@@ -580,6 +591,7 @@ struct MainWindow::Impl
         // menu still shows "V" and "R" either way.
         viewportWidget->addAction(panToolAction);
         viewportWidget->addAction(rectangleToolAction);
+        viewportWidget->addAction(ellipseToolAction);
         viewportWidget->addAction(polygonToolAction);
         viewportWidget->addAction(freehandToolAction);
 
@@ -606,6 +618,9 @@ struct MainWindow::Impl
         };
         QObject::connect(rectangleToolAction, &QAction::triggered, owner, [selectDrawingTool]() {
             selectDrawingTool(AnnotationTool::Rectangle);
+        });
+        QObject::connect(ellipseToolAction, &QAction::triggered, owner, [selectDrawingTool]() {
+            selectDrawingTool(AnnotationTool::Ellipse);
         });
         QObject::connect(polygonToolAction, &QAction::triggered, owner, [selectDrawingTool]() {
             selectDrawingTool(AnnotationTool::Polygon);
@@ -637,6 +652,7 @@ struct MainWindow::Impl
                          [this](AnnotationTool tool) {
                              panToolAction->setChecked(tool == AnnotationTool::Pan);
                              rectangleToolAction->setChecked(tool == AnnotationTool::Rectangle);
+                             ellipseToolAction->setChecked(tool == AnnotationTool::Ellipse);
                              polygonToolAction->setChecked(tool == AnnotationTool::Polygon);
                              freehandToolAction->setChecked(tool == AnnotationTool::Freehand);
                              if (isNPointTool(tool)) {
@@ -920,6 +936,7 @@ struct MainWindow::Impl
             // drop the user back to Navigate every time they opened the next
             // slide -- re-picking the tool on every slide of a series.
             rectangleToolAction->setEnabled(false);
+            ellipseToolAction->setEnabled(false);
             polygonToolAction->setEnabled(false);
             freehandToolAction->setEnabled(false);
             closeAction->setEnabled(false);
@@ -1650,6 +1667,7 @@ bool MainWindow::Impl::openPreferences()
 void MainWindow::Impl::applyAnnotationAvailability(bool available, const QString& reason)
 {
     rectangleToolAction->setEnabled(available);
+    ellipseToolAction->setEnabled(available);
     polygonToolAction->setEnabled(available);
     freehandToolAction->setEnabled(available);
     // Same gate for the properties editor's fields. A read-only slide still

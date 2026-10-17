@@ -472,3 +472,30 @@ TEST_CASE("a zero-length drag stays zero under either modifier",
         REQUIRE(result.y == 50.0);
     }
 }
+
+// The ellipse is a single-drag tool, like the rectangle. isNPointTool
+// returning false is the whole of what routes it down that path rather than
+// the multi-click one.
+TEST_CASE("the ellipse tool is not an n-point tool", "[ui][AnnotationInteraction]")
+{
+    REQUIRE_FALSE(isNPointTool(AnnotationTool::Ellipse));
+    REQUIRE_FALSE(isNPointTool(AnnotationTool::Rectangle));
+    REQUIRE(isNPointTool(AnnotationTool::Polygon));
+    REQUIRE(isNPointTool(AnnotationTool::Freehand));
+}
+
+TEST_CASE("a left drag with the ellipse tool belongs to the tool",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveDragOwner(Qt::LeftButton, Qt::NoModifier, false, AnnotationTool::Ellipse,
+                             false) == DragOwner::Tool);
+    // Shift is the circle constraint, not a selection modifier, so it must not
+    // divert the drag away from the tool.
+    REQUIRE(resolveDragOwner(Qt::LeftButton, Qt::ShiftModifier, false, AnnotationTool::Ellipse,
+                             true) == DragOwner::Tool);
+    // Space and the middle button still pan, whatever the tool.
+    REQUIRE(resolveDragOwner(Qt::LeftButton, Qt::NoModifier, true, AnnotationTool::Ellipse,
+                             false) == DragOwner::Pan);
+    REQUIRE(resolveDragOwner(Qt::MiddleButton, Qt::NoModifier, false, AnnotationTool::Ellipse,
+                             false) == DragOwner::Pan);
+}

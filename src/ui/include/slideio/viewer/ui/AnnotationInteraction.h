@@ -16,6 +16,7 @@ enum class AnnotationTool
 {
     Pan,
     Rectangle,
+    Ellipse,
     Polygon,
     Freehand,
 };
