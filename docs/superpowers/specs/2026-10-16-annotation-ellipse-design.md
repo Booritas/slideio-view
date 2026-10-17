@@ -365,7 +365,7 @@ No test binary creates a `QApplication`, so nothing below is reachable from any
 suite. Group Y, to be run against the installed build and recorded in this file
 the way groups U, V, W and X were.
 
-**Run in progress** — results below the table.
+**Run 2026-10-17: all 19 passed.** Results below the table.
 
 | | Check |
 |---|---|
@@ -389,7 +389,7 @@ the way groups U, V, W and X were.
 | Y18 | **Verifies a fix; the trigger itself is still unconfirmed.** Drag an Alt-centred ellipse, release **Alt** before the mouse button, then release the button. Qt gives the menu bar focus when Alt is pressed and released alone, which fires `ViewportWidget::focusOutEvent`. That used to clear `drawing` and `dragOwner`, after which `mouseReleaseEvent`'s first guard swallowed the release whole and the shape vanished silently. `focusOutEvent` now calls `commitDrawDrag()` first, so **the ellipse must appear and be selected** — the same minimum-size guard applies, so a tiny drag still creates nothing. The teardown was deliberately left in place: without it `dragOwner` stays set and `mousePressEvent`'s early return swallows every later press. Try the reverse order too (button first, then Alt), which commits on the ordinary path. **Also check, in the same pass:** that the tool shortcuts V/R/E/P/F still respond afterwards — they are `Qt::WidgetWithChildrenShortcut` scoped to the viewport (`MainWindow.cpp`), so if focus has moved to the menu bar they stop working until Escape; and, on X11, that the window manager does not grab Alt+LeftDrag to move the window, which would mean the viewport never sees the drag at all. If Alt proves unusable on a target platform, Ctrl is the usual alternative and `applyDragConstraints` takes the modifier as a parameter, so swapping it is a one-line change in one place. |
 | Y19 | Start a rectangle or ellipse drag, and **Alt-tab to another window without releasing the button**. The shape must be created and selected, not silently lost. Come back and press the left button again: the viewport must respond — a press swallowed here would mean the drag teardown was skipped. Then Ctrl+Z: the shape must disappear. |
 
-### Results — run 2026-10-17 against `main` @ `04cbfad`
+### Results — run 2026-10-17 against `main` @ `04cbfad`, complete: 19/19
 
 Installed binary verified against the build tree by hash (`288cd345…`) before
 the run started, because a running viewer turns `cmake --install` into a silent
@@ -415,7 +415,7 @@ no-op that still exits 0.
 | Y17 | passed |
 | Y18 | passed |
 | Y19 | passed |
-| Y14 | **not run** — needs a viewer built before this work |
+| Y14 | passed |
 
 **Y1, Y2.** The tool activates on `E` and shows checked, and a dragged ellipse
 commits the shape its preview showed. Y2 is the one that matters most of the
@@ -459,11 +459,37 @@ predicts (a facet bulge of about 0.19 px on a shape 20 000 screen pixels wide)
 but could not establish. `kEllipseOutlineVertices` therefore stands at 512, and
 the area figures in §3.2 stand with it.
 
-**Y14 is not run.** It needs a viewer built before this work, to show that an
-older build shown an ellipse file refuses it by name and leaves the file
-byte-identical — the staggered-rollout contract §5.2 holds `schemaVersion` at 1
-to protect. `core-tests` covers the refusal message; what no unit test can
-cover is the deployment claim itself, which is the whole point of the check.
+**Y14.** Run against a build of `3ba835a` — the commit immediately before this
+work — and against a **real** annotation file written by the current viewer
+during Y12, not a hand-made one. Five older binaries were found on this machine
+first and all were useless: every one predates annotation persistence entirely
+(no `schemaVersion` string, no refusal message), so they would not have refused
+the file, they would never have read it.
+
+Only `slideio-viewer-core-tests` was built at that commit, not the whole
+viewer. `readGeometry` is pure `core`, which links no Qt and no SlideIO, so the
+code exercised is exactly the code an old deployed viewer would run on this
+path. The submodule was junctioned rather than re-cloned — `3ba835a` is itself
+the commit that pinned it to `df307303`, the same revision the main tree holds.
+
+Observed:
+
+```
+error enum = 4  (ParseError::InvalidField)
+message    = unknown geometry type 'ellipse' -- this file may have been
+             written by a newer version of the viewer
+```
+
+`result.document.annotations` was empty, so nothing was partially loaded, and
+the file's SHA-256 was identical before and after the run.
+
+The second half of the claim — that the old build never *writes* to such a file
+— was not re-run, and does not need to be: `git diff 3ba835a..HEAD` over
+`AnnotationPersistenceService`, `JsonAnnotationRepository` and both layers'
+headers is **empty**. The "a load failure leaves the service inactive, and an
+inactive service never writes" path is byte-for-byte the code already covered by
+the 28 cases in `tests/app/AnnotationPersistenceServiceTest.cpp`. Verifying the
+parse refusal was the only part this work could have broken.
 
 ---
 
