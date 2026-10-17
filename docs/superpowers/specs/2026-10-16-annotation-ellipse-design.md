@@ -399,10 +399,23 @@ no-op that still exits 0.
 |---|---|
 | Y1 | passed |
 | Y2 | passed |
+| Y3 | passed |
+| Y4 | passed |
+| Y5 | passed |
+| Y6 | passed |
+| Y7 | passed |
+| Y8 | passed |
+| Y9 | passed |
+| Y10 | passed |
+| Y11 | passed |
+| Y12 | passed |
+| Y13 | passed |
+| Y15 | passed |
 | Y16 | passed |
 | Y17 | passed |
 | Y18 | passed |
 | Y19 | passed |
+| Y14 | **not run** — needs a viewer built before this work |
 
 **Y1, Y2.** The tool activates on `E` and shows checked, and a dragged ellipse
 commits the shape its preview showed. Y2 is the one that matters most of the
@@ -432,6 +445,25 @@ which rather suggests focus never moved. Either way the user-visible behaviour
 is correct, and the fix is independently verified by Y19; the open question is
 only whether Y18's hazard was ever real. Recorded so a future reader does not
 mistake this for proof that it was.
+
+**Y3–Y13, Y15.** All passed. Three are worth naming. **Y8** is what proves the
+shape is an ellipse and not a box: a click in the corner of its bounding box,
+outside the curve, does not select it — the painted interior and the
+hit-tested interior are the same 512-gon by construction, and this is where a
+user would have seen them disagree. **Y7** closes FR-ANN-01's "Shift constrains
+to square", unbuilt since the beginning of the project; it came free because
+`applyDragConstraints` takes a box and knows nothing about what is built from
+it. **Y15** is the only check whose answer is a judgement rather than a yes or
+no, and the reported answer was "smooth at any zoom level" — which is what §3.2
+predicts (a facet bulge of about 0.19 px on a shape 20 000 screen pixels wide)
+but could not establish. `kEllipseOutlineVertices` therefore stands at 512, and
+the area figures in §3.2 stand with it.
+
+**Y14 is not run.** It needs a viewer built before this work, to show that an
+older build shown an ellipse file refuses it by name and leaves the file
+byte-identical — the staggered-rollout contract §5.2 holds `schemaVersion` at 1
+to protect. `core-tests` covers the refusal message; what no unit test can
+cover is the deployment claim itself, which is the whole point of the check.
 
 ---
 
