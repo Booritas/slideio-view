@@ -30,6 +30,7 @@ namespace
 using json = nlohmann::ordered_json;
 
 constexpr const char* kRectangleTypeName = "rectangle";
+constexpr const char* kEllipseTypeName = "ellipse";
 constexpr const char* kPolygonTypeName = "polygon";
 constexpr const char* kPolylineTypeName = "polyline";
 
@@ -41,6 +42,14 @@ bool isFinitePoint(const PointF& point)
 bool isRepresentableShape(const RectangleGeometry& rectangle)
 {
     return isFinitePoint(rectangle.topLeft) && isFinitePoint(rectangle.bottomRight);
+}
+
+// Finite corners and nothing more, exactly as for a rectangle. No minimum
+// extent, because readEllipse accepts a degenerate one (design spec 2.2) and
+// the two sides must agree or this application writes a file it cannot open.
+bool isRepresentableShape(const EllipseGeometry& ellipse)
+{
+    return isFinitePoint(ellipse.topLeft) && isFinitePoint(ellipse.bottomRight);
 }
 
 bool isRepresentableShape(const PolygonGeometry& poly)
@@ -108,6 +117,15 @@ json shapeToJson(const RectangleGeometry& rectangle)
     };
 }
 
+json shapeToJson(const EllipseGeometry& ellipse)
+{
+    return json{
+        {"type", kEllipseTypeName},
+        {"topLeft", pointToJson(ellipse.topLeft)},
+        {"bottomRight", pointToJson(ellipse.bottomRight)},
+    };
+}
+
 /// The geometry "type" string for a polygon-shaped path. Shared by the geometry
 /// object and the annotation-level field, so the closed/open choice is made once.
 const char* polygonTypeName(const PolygonGeometry& poly)
@@ -141,6 +159,8 @@ const char* geometryTypeName(const AnnotationGeometry& geometry)
         using Shape = std::decay_t<decltype(shape)>;
         if constexpr (std::is_same_v<Shape, RectangleGeometry>) {
             return kRectangleTypeName;
+        } else if constexpr (std::is_same_v<Shape, EllipseGeometry>) {
+            return kEllipseTypeName;
         } else if constexpr (std::is_same_v<Shape, PolygonGeometry>) {
             return polygonTypeName(shape);
         } else {
@@ -329,6 +349,25 @@ bool readRectangle(const json& value, AnnotationGeometry& out, std::string& prob
     return true;
 }
 
+bool readEllipse(const json& value, AnnotationGeometry& out, std::string& problem)
+{
+    EllipseGeometry ellipse;
+    if (!value.contains("topLeft") || !readPoint(value.at("topLeft"), ellipse.topLeft)) {
+        problem = "geometry.topLeft is not a finite point";
+        return false;
+    }
+    if (!value.contains("bottomRight") || !readPoint(value.at("bottomRight"), ellipse.bottomRight)) {
+        problem = "geometry.bottomRight is not a finite point";
+        return false;
+    }
+    // A zero-extent ellipse is accepted, exactly as a degenerate rectangle is
+    // (design spec 2.2): refusing it would make the whole document unloadable,
+    // and by the governing rule never again writable, over one shape the user
+    // can see and fix.
+    out = ellipse;
+    return true;
+}
+
 bool readPolygon(const json& value, bool closed, AnnotationGeometry& out, std::string& problem)
 {
     if (!value.contains("vertices") || !value.at("vertices").is_array()) {
@@ -372,6 +411,9 @@ bool readGeometry(const json& value, AnnotationGeometry& out, std::string& probl
     const std::string type = value.at("type").get<std::string>();
     if (type == kRectangleTypeName) {
         return readRectangle(value, out, problem);
+    }
+    if (type == kEllipseTypeName) {
+        return readEllipse(value, out, problem);
     }
     if (type == kPolygonTypeName) {
         return readPolygon(value, true, out, problem);

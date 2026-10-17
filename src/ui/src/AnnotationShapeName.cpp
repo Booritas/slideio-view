@@ -15,6 +15,11 @@ QString rectangleName()
     return QCoreApplication::translate("AnnotationShapeName", "Rectangle");
 }
 
+QString ellipseName()
+{
+    return QCoreApplication::translate("AnnotationShapeName", "Ellipse");
+}
+
 QString polygonName()
 {
     return QCoreApplication::translate("AnnotationShapeName", "Polygon");
@@ -30,6 +35,11 @@ struct ShapeNameVisitor
     QString operator()(const core::RectangleGeometry&) const
     {
         return rectangleName();
+    }
+
+    QString operator()(const core::EllipseGeometry&) const
+    {
+        return ellipseName();
     }
 
     QString operator()(const core::PolygonGeometry& polygon) const
@@ -52,6 +62,8 @@ QString shapeTypeName(core::AnnotationType type)
     switch (type) {
     case core::AnnotationType::Rectangle:
         return rectangleName();
+    case core::AnnotationType::Ellipse:
+        return ellipseName();
     case core::AnnotationType::Polygon:
         return polygonName();
     case core::AnnotationType::Polyline:

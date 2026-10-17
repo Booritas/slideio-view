@@ -900,11 +900,71 @@ TEST_CASE("serializing a polygon with a non-finite vertex is refused",
 
 // The whole point of holding schemaVersion at 1: an older build must fail on
 // the shape, with a message that explains itself, and must not touch the file.
+// The placeholder here must be a type this build will never know. It used to
+// be "ellipse", which stopped being unknown the moment the ellipse shipped --
+// the test then exercised a malformed ellipse rather than an unknown shape.
 TEST_CASE("an unknown geometry type names the likely cause",
           "[core][AnnotationSerialization]")
 {
     const ParseResult result = parseAnnotationDocument(
-        documentWithGeometry(R"({"type": "ellipse", "vertices": []})"));
+        documentWithGeometry(R"({"type": "trapezoid", "vertices": []})"));
     REQUIRE(result.error == ParseError::InvalidField);
     REQUIRE(result.message.find("newer version") != std::string::npos);
+    // Naming the offending type is the whole value of the message: a user has
+    // to be told which shape their build is too old for.
+    REQUIRE(result.message.find("trapezoid") != std::string::npos);
+}
+
+// Spec 5.3: readGeometry is a string chain with no compile-time link to the
+// variant. Nothing in the compiler forces its ellipse branch to exist -- this
+// test is what forces it. Without the branch the application writes files it
+// then refuses to open.
+TEST_CASE("an ellipse round-trips through JSON", "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document = makeDocument();
+    document.annotations.clear();
+    document.annotations.emplace_back(
+        "e1", EllipseGeometry{PointF{10.0, 20.0}, PointF{110.0, 70.0}});
+
+    const ParseResult result = parseAnnotationDocument(serializeAnnotationDocument(document));
+
+    REQUIRE(result.error == ParseError::None);
+    REQUIRE(result.document.annotations.size() == 1);
+
+    const AnnotationGeometry& geometry = result.document.annotations.front().geometry();
+    REQUIRE(std::holds_alternative<EllipseGeometry>(geometry));
+    const EllipseGeometry& ellipse = std::get<EllipseGeometry>(geometry);
+    REQUIRE(ellipse.topLeft.x == 10.0);
+    REQUIRE(ellipse.topLeft.y == 20.0);
+    REQUIRE(ellipse.bottomRight.x == 110.0);
+    REQUIRE(ellipse.bottomRight.y == 70.0);
+    REQUIRE(result.document.annotations.front().type() == AnnotationType::Ellipse);
+}
+
+TEST_CASE("an ellipse is written with the ellipse type name",
+          "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document = makeDocument();
+    document.annotations.clear();
+    document.annotations.emplace_back(
+        "e1", EllipseGeometry{PointF{10.0, 20.0}, PointF{110.0, 70.0}});
+
+    const std::string json = serializeAnnotationDocument(document);
+    REQUIRE(json.find("\"ellipse\"") != std::string::npos);
+}
+
+// Spec 2.2: accepted, not rejected. Refusing would make the whole document
+// permanently unloadable -- and by the governing rule, never again writable --
+// over one shape the user can see and fix.
+TEST_CASE("a degenerate ellipse loads rather than failing the document",
+          "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document = makeDocument();
+    document.annotations.clear();
+    document.annotations.emplace_back(
+        "e1", EllipseGeometry{PointF{10.0, 25.0}, PointF{110.0, 25.0}});
+
+    const ParseResult result = parseAnnotationDocument(serializeAnnotationDocument(document));
+    REQUIRE(result.error == ParseError::None);
+    REQUIRE(result.document.annotations.size() == 1);
 }

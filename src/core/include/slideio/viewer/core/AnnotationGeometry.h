@@ -15,11 +15,25 @@ struct RectangleGeometry
     PointF bottomRight;
 };
 
+/// An axis-aligned ellipse, stored as the bounding box of the drag that made
+/// it (FR-ANN-02).
+///
+/// The box rather than a centre and radii, so RectangleGeometry's
+/// normalisation of an inverted drag, ui::dragExceedsMinimumSize and
+/// ui::withMinimumExtent all apply unchanged rather than through conversions --
+/// and so the written file reads the same way a rectangle's does.
+struct EllipseGeometry
+{
+    PointF topLeft;
+    PointF bottomRight;
+};
+
 /// Named kind of a shape. Derived from the geometry rather than stored
 /// alongside it, so the two cannot disagree -- see typeOf() below.
 enum class AnnotationType
 {
     Rectangle,
+    Ellipse,
     Polygon,
     Polyline,
 };
@@ -49,7 +63,17 @@ struct PolygonGeometry
 constexpr std::size_t kMinPolygonVertices = 3;
 constexpr std::size_t kMinPolylineVertices = 2;
 
-using AnnotationGeometry = std::variant<RectangleGeometry, PolygonGeometry>;
+/// Vertices in an ellipse's outline. Fixed, never adaptive and never derived
+/// from the shape's size or the current zoom: an adaptive count would make a
+/// stored annotation's measured area depend on the zoom it happened to be
+/// measured at, and sub-project G exists to make measurements reproducible.
+///
+/// At 512 the area reads about 0.0025% under the true ellipse and the facet
+/// bulge is about 0.19 px on a shape 20000 screen pixels wide. See the design
+/// spec 3.2 before changing it -- both numbers move with it.
+constexpr std::size_t kEllipseOutlineVertices = 512;
+
+using AnnotationGeometry = std::variant<RectangleGeometry, PolygonGeometry, EllipseGeometry>;
 
 /// Always positive-extent: a shape built from an inverted drag is normalised.
 [[nodiscard]] RectF boundingBox(const AnnotationGeometry& geom);
@@ -93,5 +117,14 @@ struct Outline
 /// rebuild every annotation from its bounding box, which would have turned a
 /// polygon into a rectangle the first time a user dragged it.
 [[nodiscard]] AnnotationGeometry translated(const AnnotationGeometry& geom, double dx, double dy);
+
+/// True when the shape cannot self-intersect whatever its values -- a property
+/// of the TYPE, not of the instance.
+///
+/// core::measure() uses it to skip the O(n^2) self-intersection test, which at
+/// kEllipseOutlineVertices costs about 131000 segment-pair comparisons to
+/// answer a question that is structurally always false. A polygon's vertices
+/// are the user's, so nothing can promise anything about them.
+[[nodiscard]] bool isConvexByConstruction(const AnnotationGeometry& geom);
 
 } // namespace slideio::viewer::core

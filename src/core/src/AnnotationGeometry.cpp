@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <variant>
 
 namespace slideio::viewer::core
 {
@@ -10,12 +11,23 @@ namespace slideio::viewer::core
 namespace
 {
 
+constexpr double kPi = 3.14159265358979323846;
+
 RectF normalized(const RectangleGeometry& rect)
 {
     const double x0 = std::min(rect.topLeft.x, rect.bottomRight.x);
     const double y0 = std::min(rect.topLeft.y, rect.bottomRight.y);
     const double x1 = std::max(rect.topLeft.x, rect.bottomRight.x);
     const double y1 = std::max(rect.topLeft.y, rect.bottomRight.y);
+    return RectF{x0, y0, x1 - x0, y1 - y0};
+}
+
+RectF normalized(const EllipseGeometry& ellipse)
+{
+    const double x0 = std::min(ellipse.topLeft.x, ellipse.bottomRight.x);
+    const double y0 = std::min(ellipse.topLeft.y, ellipse.bottomRight.y);
+    const double x1 = std::max(ellipse.topLeft.x, ellipse.bottomRight.x);
+    const double y1 = std::max(ellipse.topLeft.y, ellipse.bottomRight.y);
     return RectF{x0, y0, x1 - x0, y1 - y0};
 }
 
@@ -150,6 +162,60 @@ AnnotationGeometry translatedShape(const PolygonGeometry& poly, double dx, doubl
     return moved;
 }
 
+Outline outlineShape(const EllipseGeometry& ellipse)
+{
+    const RectF box = normalized(ellipse);
+    const double cx = box.x + box.width * 0.5;
+    const double cy = box.y + box.height * 0.5;
+    const double a = box.width * 0.5;
+    const double b = box.height * 0.5;
+
+    Outline result;
+    result.closed = true;
+    result.points.reserve(kEllipseOutlineVertices);
+    for (std::size_t i = 0; i < kEllipseOutlineVertices; ++i) {
+        const double theta = 2.0 * kPi * static_cast<double>(i)
+                           / static_cast<double>(kEllipseOutlineVertices);
+        result.points.push_back(PointF{cx + a * std::cos(theta), cy + b * std::sin(theta)});
+    }
+    return result;
+}
+
+// The outline IS the shape (design spec 3), so the hit test runs over exactly
+// the points the painter strokes. Deriving both from one source is what stops
+// the painted interior and the hit-tested interior from disagreeing.
+bool hitTestShape(const EllipseGeometry& ellipse, PointF point, double tolerance)
+{
+    const Outline shape = outlineShape(ellipse);
+    return hitTestShape(PolygonGeometry{shape.points, true}, point, tolerance);
+}
+
+AnnotationType typeOfShape(const EllipseGeometry&)
+{
+    return AnnotationType::Ellipse;
+}
+
+AnnotationGeometry translatedShape(const EllipseGeometry& ellipse, double dx, double dy)
+{
+    return EllipseGeometry{PointF{ellipse.topLeft.x + dx, ellipse.topLeft.y + dy},
+                           PointF{ellipse.bottomRight.x + dx, ellipse.bottomRight.y + dy}};
+}
+
+bool convexShape(const RectangleGeometry&)
+{
+    return true;
+}
+
+bool convexShape(const EllipseGeometry&)
+{
+    return true;
+}
+
+bool convexShape(const PolygonGeometry&)
+{
+    return false;
+}
+
 } // namespace
 
 RectF boundingBox(const AnnotationGeometry& geom)
@@ -177,6 +243,11 @@ Outline outline(const AnnotationGeometry& geom)
 AnnotationGeometry translated(const AnnotationGeometry& geom, double dx, double dy)
 {
     return std::visit([&](const auto& shape) { return translatedShape(shape, dx, dy); }, geom);
+}
+
+bool isConvexByConstruction(const AnnotationGeometry& geom)
+{
+    return std::visit([](const auto& shape) { return convexShape(shape); }, geom);
 }
 
 } // namespace slideio::viewer::core

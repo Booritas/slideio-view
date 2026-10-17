@@ -2,6 +2,7 @@
 
 #include "slideio/viewer/core/AnnotationGeometry.h"
 
+#include <cmath>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -14,6 +15,11 @@ namespace
 AnnotationGeometry rect(double x0, double y0, double x1, double y1)
 {
     return RectangleGeometry{PointF{x0, y0}, PointF{x1, y1}};
+}
+
+AnnotationGeometry ellipseGeom(double x0, double y0, double x1, double y1)
+{
+    return EllipseGeometry{PointF{x0, y0}, PointF{x1, y1}};
 }
 
 } // namespace
@@ -317,4 +323,124 @@ TEST_CASE("translated preserves an open path's openness", "[core][AnnotationGeom
         translated(polyline({PointF{0.0, 0.0}, PointF{10.0, 0.0}}), 1.0, 1.0);
     REQUIRE_FALSE(std::get<PolygonGeometry>(moved).closed);
     REQUIRE(typeOf(moved) == AnnotationType::Polyline);
+}
+
+TEST_CASE("an ellipse outline has the fixed vertex count and is closed",
+          "[core][AnnotationGeometry]")
+{
+    const Outline shape = outline(ellipseGeom(0.0, 0.0, 100.0, 50.0));
+    REQUIRE(shape.points.size() == kEllipseOutlineVertices);
+    REQUIRE(shape.closed);
+}
+
+// The first vertex is the rightmost point of the curve -- theta = 0. Fixing
+// this pins the parameterisation, so a later change to the loop that happened
+// to preserve the vertex count would still be caught.
+TEST_CASE("an ellipse outline starts at the rightmost point", "[core][AnnotationGeometry]")
+{
+    const Outline shape = outline(ellipseGeom(0.0, 0.0, 100.0, 50.0));
+    REQUIRE(std::abs(shape.points.front().x - 100.0) < 1e-9);
+    REQUIRE(std::abs(shape.points.front().y - 25.0) < 1e-9);
+}
+
+// Every vertex lies ON the curve. The polygon is inscribed, which is what makes
+// the measured area slightly low in a known, documented direction (spec 3.2).
+TEST_CASE("every ellipse outline vertex satisfies the ellipse equation",
+          "[core][AnnotationGeometry]")
+{
+    const Outline shape = outline(ellipseGeom(10.0, 20.0, 110.0, 70.0));
+    const double cx = 60.0;
+    const double cy = 45.0;
+    const double a = 50.0;
+    const double b = 25.0;
+    for (const PointF& point : shape.points) {
+        const double nx = (point.x - cx) / a;
+        const double ny = (point.y - cy) / b;
+        REQUIRE(std::abs(nx * nx + ny * ny - 1.0) < 1e-9);
+    }
+}
+
+TEST_CASE("boundingBox normalises an inverted ellipse drag", "[core][AnnotationGeometry]")
+{
+    const RectF box = boundingBox(ellipseGeom(110.0, 70.0, 10.0, 20.0));
+    REQUIRE(box.x == 10.0);
+    REQUIRE(box.y == 20.0);
+    REQUIRE(box.width == 100.0);
+    REQUIRE(box.height == 50.0);
+}
+
+// Review Focus 5: a file may hold either winding. Both must describe one shape.
+TEST_CASE("an inverted ellipse has the same outline as the normalised one",
+          "[core][AnnotationGeometry]")
+{
+    const Outline normal = outline(ellipseGeom(10.0, 20.0, 110.0, 70.0));
+    const Outline inverted = outline(ellipseGeom(110.0, 70.0, 10.0, 20.0));
+    REQUIRE(normal.points.size() == inverted.points.size());
+    for (std::size_t i = 0; i < normal.points.size(); ++i) {
+        REQUIRE(std::abs(normal.points[i].x - inverted.points[i].x) < 1e-9);
+        REQUIRE(std::abs(normal.points[i].y - inverted.points[i].y) < 1e-9);
+    }
+}
+
+TEST_CASE("typeOf reports an ellipse", "[core][AnnotationGeometry]")
+{
+    REQUIRE(typeOf(ellipseGeom(0.0, 0.0, 10.0, 20.0)) == AnnotationType::Ellipse);
+}
+
+TEST_CASE("translating an ellipse moves it and preserves its extents",
+          "[core][AnnotationGeometry]")
+{
+    const AnnotationGeometry moved = translated(ellipseGeom(10.0, 20.0, 110.0, 70.0), 5.0, -7.0);
+    const RectF box = boundingBox(moved);
+    REQUIRE(box.x == 15.0);
+    REQUIRE(box.y == 13.0);
+    REQUIRE(box.width == 100.0);
+    REQUIRE(box.height == 50.0);
+    REQUIRE(typeOf(moved) == AnnotationType::Ellipse);
+}
+
+// The whole point of the shape: the corner of the bounding box is outside the
+// curve. A rectangle of the same box would be hit here.
+TEST_CASE("an ellipse is not hit in the corner of its bounding box",
+          "[core][AnnotationGeometry]")
+{
+    const AnnotationGeometry shape = ellipseGeom(0.0, 0.0, 100.0, 50.0);
+    REQUIRE(hitTest(shape, PointF{50.0, 25.0}, 0.0));
+    REQUIRE_FALSE(hitTest(shape, PointF{0.0, 0.0}, 0.0));
+    REQUIRE(hitTest(shape, PointF{100.0, 25.0}, 0.0));
+}
+
+TEST_CASE("a point just outside an ellipse is hit within the tolerance band",
+          "[core][AnnotationGeometry]")
+{
+    const AnnotationGeometry shape = ellipseGeom(0.0, 0.0, 100.0, 50.0);
+    REQUIRE_FALSE(hitTest(shape, PointF{103.0, 25.0}, 0.0));
+    REQUIRE(hitTest(shape, PointF{103.0, 25.0}, 4.0));
+}
+
+// The header promises a negative tolerance is treated as zero. An unclamped
+// one would shrink the shape instead of growing it.
+TEST_CASE("a negative tolerance on an ellipse behaves as zero",
+          "[core][AnnotationGeometry]")
+{
+    const AnnotationGeometry shape = ellipseGeom(0.0, 0.0, 100.0, 50.0);
+    REQUIRE(hitTest(shape, PointF{50.0, 25.0}, -10.0));
+    REQUIRE_FALSE(hitTest(shape, PointF{0.0, 0.0}, -10.0));
+}
+
+// Review Focus 1: a hand-edited file may hold one. It must still be clickable
+// rather than becoming an invisible, unselectable annotation.
+TEST_CASE("a degenerate ellipse is still hit along its line", "[core][AnnotationGeometry]")
+{
+    const AnnotationGeometry flat = ellipseGeom(0.0, 25.0, 100.0, 25.0);
+    REQUIRE(hitTest(flat, PointF{50.0, 25.0}, 0.5));
+}
+
+TEST_CASE("convexity by construction is known per shape", "[core][AnnotationGeometry]")
+{
+    REQUIRE(isConvexByConstruction(ellipseGeom(0.0, 0.0, 100.0, 50.0)));
+    REQUIRE(isConvexByConstruction(rect(0.0, 0.0, 100.0, 50.0)));
+    // A polygon's vertices are the user's; nothing can promise they are convex.
+    REQUIRE_FALSE(isConvexByConstruction(
+        PolygonGeometry{{PointF{0.0, 0.0}, PointF{10.0, 0.0}, PointF{10.0, 10.0}}, true}));
 }
