@@ -699,3 +699,71 @@ TEST_CASE("a left press under the point or arrow tool belongs to the tool",
     REQUIRE(resolveDragOwner(Qt::LeftButton, Qt::NoModifier, true,
                              AnnotationTool::Point, false) == DragOwner::Pan);
 }
+
+// Review finding: a marker's bounding box is degenerate on both axes, so the
+// stroke-derived margin alone is 2 px at the default line width -- while its
+// disc is 6 px in radius and its selection ring reaches 10.5 px. A marker
+// whose centre sat just outside the widget was culled with part of its glyph
+// on screen, and because the selection pass does not cull at all, a SELECTED
+// marker just off-screen painted a ring with no disc inside it.
+TEST_CASE("a shape with no glyph is margined by its stroke alone",
+          "[ui][AnnotationInteraction]")
+{
+    const core::AnnotationGeometry rect =
+        core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{10.0, 10.0}};
+    REQUIRE(annotationPaintMarginScreenPixels(rect, 2.0, 1.0) == 2.0);
+    REQUIRE(annotationPaintMarginScreenPixels(rect, 8.0, 1.0) == 5.0);
+}
+
+// The disc reaches its radius; the ring is included because the selection pass
+// does not cull, so the disc must not be culled while the ring would paint.
+TEST_CASE("a marker is margined past its disc and its selection ring",
+          "[ui][AnnotationInteraction]")
+{
+    const core::AnnotationGeometry marker = core::PointGeometry{core::PointF{5.0, 5.0}};
+    const double expected = kHitToleranceScreenPixels + kSelectionRingGapScreenPixels
+                          + kSelectionRingPenScreenPixels / 2.0;
+    REQUIRE(annotationPaintMarginScreenPixels(marker, 2.0, 1.0) == expected);
+    // Screen-space, so it does not shrink as the user zooms out.
+    REQUIRE(annotationPaintMarginScreenPixels(marker, 2.0, 0.01) == expected);
+}
+
+// A fat stroke can out-reach the glyph, and then it is the margin.
+TEST_CASE("the wider of the stroke and the glyph wins",
+          "[ui][AnnotationInteraction]")
+{
+    const core::AnnotationGeometry marker = core::PointGeometry{core::PointF{5.0, 5.0}};
+    REQUIRE(annotationPaintMarginScreenPixels(marker, 100.0, 1.0) == 51.0);
+}
+
+// An arrowhead's barbs reach half the head's size perpendicular to the shaft,
+// which is outside the shaft's own bounding box.
+TEST_CASE("an arrow is margined past its head", "[ui][AnnotationInteraction]")
+{
+    const core::AnnotationGeometry arrow =
+        core::ArrowGeometry{core::PointF{0.0, 0.0}, core::PointF{100.0, 0.0}};
+    const double expected = core::kArrowHeadScreenPixels + kSelectionRingGapScreenPixels
+                          + kSelectionRingPenScreenPixels / 2.0;
+    REQUIRE(annotationPaintMarginScreenPixels(arrow, 2.0, 1.0) == expected);
+}
+
+// No usable transform means no glyph, so the stroke is all that is left. This
+// must not divide by or multiply through a scale it cannot use.
+TEST_CASE("a non-positive scale falls back to the stroke margin",
+          "[ui][AnnotationInteraction]")
+{
+    const core::AnnotationGeometry marker = core::PointGeometry{core::PointF{5.0, 5.0}};
+    REQUIRE(annotationPaintMarginScreenPixels(marker, 2.0, 0.0) == 2.0);
+    REQUIRE(annotationPaintMarginScreenPixels(marker, 2.0, -1.0) == 2.0);
+}
+
+// A degenerate arrow from disk has a zero-size head, but the ring still
+// reaches past it, so the margin is the ring's and not the stroke's.
+TEST_CASE("a zero-length arrow is still margined by its ring",
+          "[ui][AnnotationInteraction]")
+{
+    const core::AnnotationGeometry arrow =
+        core::ArrowGeometry{core::PointF{40.0, 40.0}, core::PointF{40.0, 40.0}};
+    REQUIRE(annotationPaintMarginScreenPixels(arrow, 2.0, 1.0)
+            == kSelectionRingGapScreenPixels + kSelectionRingPenScreenPixels / 2.0);
+}

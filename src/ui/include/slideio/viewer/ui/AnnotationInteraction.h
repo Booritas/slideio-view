@@ -1,6 +1,7 @@
 #pragma once
 
 #include "slideio/viewer/core/Annotation.h"
+#include "slideio/viewer/core/AnnotationDecoration.h"
 #include "slideio/viewer/core/AnnotationGeometry.h"
 #include "slideio/viewer/core/Types.h"
 
@@ -71,12 +72,47 @@ constexpr double kHitToleranceScreenPixels = 6.0;
 /// aimed with a mouse.
 constexpr double kVertexHandleScreenPixels = 8.0;
 
+/// Clear gap between a marker's disc and the selection ring drawn around it,
+/// measured from the disc's edge to the ring's centreline, in screen pixels.
+///
+/// A point's outline() is a single vertex, so the ordinary selection strokes
+/// paint nothing at all and a selected marker would be pixel-identical to an
+/// unselected one. The ring is what the selection looks like instead.
+constexpr double kSelectionRingGapScreenPixels = 3.0;
+
+/// Width of that ring's black underlay pen, in screen pixels. Half of it
+/// reaches outside the ring's centreline, which is why
+/// annotationPaintMarginScreenPixels adds half and not the whole.
+constexpr double kSelectionRingPenScreenPixels = 3.0;
+
 /// Minimum screen-pixel gap between consecutive points of a trailed trace.
 /// Screen-space, like every other tolerance here, so a trace has the same
 /// density at 1x and at 40x. This is the only control on how many vertices a
 /// freehand outline accumulates -- the serializer deliberately imposes no
 /// maximum, because a dense trace is legitimate data.
 constexpr double kTrailMinScreenPixels = 2.0;
+
+/// How far beyond its slide-space bounding box an annotation actually paints,
+/// in screen pixels. The viewport culls against the box widened by this.
+///
+/// The stroke alone is not enough once a shape carries a screen-space glyph.
+/// A marker's bounding box is degenerate on BOTH axes, so the stroke-derived
+/// margin is about 2 px at the default line width, while its disc reaches
+/// kHitToleranceScreenPixels and its selection ring further still. Culling on
+/// the stroke alone made markers pop in and out at the viewport edge during a
+/// pan.
+///
+/// The ring is counted even though only a selected annotation draws one,
+/// because the selection pass does not cull at all: if the disc were culled
+/// while the ring was painted, a selected marker just off-screen would show a
+/// ring with nothing inside it. One margin that covers both is cheaper than
+/// teaching two passes to agree.
+///
+/// Pure, so the rule is covered without a QApplication -- which no test binary
+/// in this repository creates, and which is why this does not live inside
+/// paintAnnotations where it is used.
+[[nodiscard]] double annotationPaintMarginScreenPixels(const core::AnnotationGeometry& geom,
+                                                       double lineWidth, double viewportScale);
 
 /// True for the tools that build a shape across several press/release pairs.
 /// Those tools need pending-shape state that outlives a drag, which the

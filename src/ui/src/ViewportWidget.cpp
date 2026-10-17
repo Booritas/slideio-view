@@ -3442,11 +3442,15 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         // thousands of points and the viewport repaints on every pan frame.
         const core::AnnotationProperties& props = annotation.properties();
         const core::RectF box = annotation.boundingBox();
-        // Padded by the stroke extent: QRectF::intersects is false for a rect
-        // with zero width or height, which would hide a degenerate annotation
-        // that is fully on screen, and a pen reaching in from just outside the
-        // widget must still be drawn.
-        const double margin = props.lineWidth / 2.0 + 1.0;
+        // Padded by everything the annotation paints beyond its box:
+        // QRectF::intersects is false for a rect with zero width or height,
+        // which would hide a degenerate annotation that is fully on screen,
+        // and a pen -- or a screen-space glyph -- reaching in from just
+        // outside the widget must still be drawn. A marker's box is degenerate
+        // on both axes and its disc is six pixels across, so the stroke alone
+        // is not the answer here.
+        const double margin = annotationPaintMarginScreenPixels(
+            annotation.geometry(), props.lineWidth, vp.scale());
         const QRectF bounds =
             QRectF(toScreen(core::PointF{box.x, box.y}),
                    toScreen(core::PointF{box.x + box.width, box.y + box.height}))
@@ -3520,9 +3524,12 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
                     selected->geometry(), vp.scale(), kHitToleranceScreenPixels)) {
                 if (glyph->kind == core::ScreenDecoration::Kind::Disc) {
                     const QPointF centre = toScreen(glyph->anchor);
-                    const double radius = glyph->sizePixels + 3.0;
+                    // The same two constants the cull margin reads, so the
+                    // ring cannot grow past the point where the disc beneath
+                    // it is still drawn.
+                    const double radius = glyph->sizePixels + kSelectionRingGapScreenPixels;
                     painter.setBrush(Qt::NoBrush);
-                    painter.setPen(QPen(QColor(0x00, 0x00, 0x00), 3.0));
+                    painter.setPen(QPen(QColor(0x00, 0x00, 0x00), kSelectionRingPenScreenPixels));
                     painter.drawEllipse(centre, radius, radius);
                     painter.setPen(QPen(QColor(0xFF, 0xFF, 0xFF), 1.0, Qt::DashLine));
                     painter.drawEllipse(centre, radius, radius);

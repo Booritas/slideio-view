@@ -47,6 +47,23 @@ bool dragExceedsMinimumSize(const core::RectF& boxSlideUnits,
     return widthScreen >= minimumScreenPixels || heightScreen >= minimumScreenPixels;
 }
 
+double annotationPaintMarginScreenPixels(const core::AnnotationGeometry& geom,
+                                         double lineWidth, double viewportScale)
+{
+    // The stroke reaches half its width either side of the path, plus a pixel
+    // so antialiasing on the outermost edge is not clipped away.
+    double margin = lineWidth / 2.0 + 1.0;
+    // A glyph is sized in SCREEN pixels, so it extends past a bounding box
+    // that may have no extent at all to give. screenDecoration answers nullopt
+    // for every shape that has no glyph, and for a scale it cannot use.
+    if (const std::optional<core::ScreenDecoration> glyph =
+            core::screenDecoration(geom, viewportScale, kHitToleranceScreenPixels)) {
+        margin = std::max(margin, glyph->sizePixels + kSelectionRingGapScreenPixels
+                                      + kSelectionRingPenScreenPixels / 2.0);
+    }
+    return margin;
+}
+
 bool arrowExceedsMinimumLength(core::PointF tailSlide, core::PointF headSlide,
                                double viewportScale, double minimumScreenPixels)
 {
