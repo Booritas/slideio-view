@@ -372,6 +372,9 @@ build; results are recorded here afterwards.
 | Y13 | A tiny drag below the minimum size produces no annotation, as with a rectangle. |
 | Y14 | A build predating this work, shown a file containing an ellipse, refuses it naming `'ellipse'` and leaves the file byte-identical. |
 | Y15 | Zoom deeply into a large ellipse; the curve shows no visible faceting. |
+| Y16 | Hold Shift, drag out a circle, **let go of Shift without moving the mouse**, then release the button. The committed shape must match the circle last previewed, not the unconstrained drag. (The inverse too: press Shift after the drag stops moving, release the button — the shape must stay the ellipse that was on screen.) |
+| Y17 | With Alt held, make a tiny drag of a few pixels. It must be rejected as a misclick exactly as the same drag without Alt is — no annotation. |
+| Y18 | **Known risk, unverified.** Drag an Alt-centred ellipse, release **Alt** before the mouse button, then release the button. Qt gives the menu bar focus when Alt is pressed and released alone; `ViewportWidget::focusOutEvent` clears `drawing` and `dragOwner`, and `mouseReleaseEvent`'s first guard then swallows the release — so the shape would vanish with no annotation and no message. If this reproduces it needs its own fix, designed against what is observed here: the teardown in `focusOutEvent` exists so a drag whose release went to another window cannot swallow every later press, so it cannot simply be removed. Try the reverse order too (button first, then Alt), which should commit normally. |
 
 ---
 

@@ -1530,9 +1530,14 @@ struct ViewportWidget::Impl
     // and the committed shape are constrained by the same value.
     Qt::KeyboardModifiers drawModifiers = Qt::NoModifier;
 
-    /// The box the pending drag describes, with its modifiers applied. One
-    /// source for the preview and the commit: computing it twice is how a
-    /// preview comes to lie about what the release will produce.
+    /// The SHAPE box the pending drag describes, with its modifiers applied.
+    /// One source for the preview and the commit: computing it twice is how a
+    /// preview comes to lie about what the release will produce. For that to
+    /// hold, drawModifiers must not be refreshed at release -- see
+    /// mouseReleaseEvent.
+    ///
+    /// Not the box the misclick threshold reads. That one asks how far the
+    /// user actually dragged, which Alt's doubling would otherwise flatter.
     core::RectF pendingDragBox() const
     {
         const core::RectF raw =
@@ -4128,22 +4133,33 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
             double slideY = 0.0;
             m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
             m_impl->drawCurrentSlide = core::PointF{slideX, slideY};
-            m_impl->drawModifiers = event->modifiers();
+            // drawModifiers is deliberately NOT refreshed here. Modifiers are
+            // read from move events, so the preview was last painted with
+            // whatever was held then; taking the release-time state instead
+            // would commit a shape the user never saw. Let go of Shift without
+            // moving the mouse and this would have painted a circle and stored
+            // an ellipse.
         }
 
-        const core::RectF rawBox = m_impl->pendingDragBox();
+        // Two boxes, deliberately. The misclick test asks whether the user's
+        // GESTURE was big enough to mean something, so it reads the raw drag --
+        // Alt doubles the constrained box, which would otherwise halve the
+        // threshold and turn a 4-pixel twitch into an annotation.
+        const core::RectF gestureBox = core::boundingBox(
+            core::RectangleGeometry{m_impl->drawAnchorSlide, m_impl->drawCurrentSlide});
+        const core::RectF shapeBox = m_impl->pendingDragBox();
 
         // A drag smaller than the click target is a misclick, not a shape. The
         // test is screen-space on purpose: at high zoom a couple of pixels of
         // jitter is many slide pixels. A rejected drag falls through to the
         // selection block below.
         const double scale = m_impl->controller ? m_impl->controller->viewport().scale() : 0.0;
-        if (dragExceedsMinimumSize(rawBox, scale, kHitToleranceScreenPixels)) {
+        if (dragExceedsMinimumSize(gestureBox, scale, kHitToleranceScreenPixels)) {
             // A short sideways or upright drag has zero extent on one axis,
             // because mouse deltas are integers. That axis is widened to one
             // screen pixel rather than the gesture being discarded -- the user
             // dragged deliberately and must get something back.
-            const core::RectF box = withMinimumExtent(rawBox, screenToleranceToSlide(1.0, scale));
+            const core::RectF box = withMinimumExtent(shapeBox, screenToleranceToSlide(1.0, scale));
             const core::PointF topLeft{box.x, box.y};
             const core::PointF bottomRight{box.x + box.width, box.y + box.height};
             const core::AnnotationGeometry geometry =
