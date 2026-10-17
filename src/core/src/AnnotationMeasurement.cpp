@@ -127,6 +127,14 @@ bool segmentsIntersect(PointF a, PointF b, PointF c, PointF d)
 
 ShapeMetrics measure(const AnnotationGeometry& geometry, PixelSize pixelSize)
 {
+    // A shape that cannot self-intersect whatever its values does not need the
+    // O(n^2) test. An ellipse carries kEllipseOutlineVertices points, so asking
+    // costs about 131000 segment-pair comparisons to produce a constant -- and
+    // on a degenerate ellipse the collinear-overlap rule would answer TRUE,
+    // withholding an area that is plainly zero.
+    if (isConvexByConstruction(geometry)) {
+        return measureKnown(geometry, pixelSize, false);
+    }
     // The expensive question, asked once, then delegated. An open path never
     // needs it: its area is absent either way, and open freehand traces carry
     // the most vertices by far.

@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "slideio/viewer/core/AnnotationGeometry.h"
 #include "slideio/viewer/core/AnnotationMeasurement.h"
 
 #include <cmath>
@@ -340,4 +341,69 @@ TEST_CASE("a half-calibrated slide does not invent a self-intersection",
     REQUIRE_FALSE(m.selfIntersecting);
     REQUIRE(m.area.has_value());
     REQUIRE(*m.area == 0.0);
+}
+
+// A degenerate ellipse's 512 vertices are collinear, which trips
+// isSelfIntersecting's collinear-overlap rule. Before the convexity
+// short-circuit that made measure() report "self-intersecting, area unknown"
+// for a shape whose area is plainly zero -- a stated reason that is false,
+// which the header on isSelfIntersecting calls worse than stating none.
+TEST_CASE("a degenerate ellipse measures zero rather than self-intersecting",
+          "[core][AnnotationMeasurement]")
+{
+    const core::AnnotationGeometry flat =
+        core::EllipseGeometry{core::PointF{0.0, 25.0}, core::PointF{100.0, 25.0}};
+    const core::ShapeMetrics metrics = core::measure(flat, core::PixelSize{});
+
+    REQUIRE_FALSE(metrics.selfIntersecting);
+    REQUIRE(metrics.closed);
+    REQUIRE(metrics.area.has_value());
+    REQUIRE(std::abs(*metrics.area) < 1e-9);
+}
+
+TEST_CASE("an ellipse is never reported as self-intersecting",
+          "[core][AnnotationMeasurement]")
+{
+    const core::AnnotationGeometry shape =
+        core::EllipseGeometry{core::PointF{0.0, 0.0}, core::PointF{100.0, 50.0}};
+    const core::ShapeMetrics metrics = core::measure(shape, core::PixelSize{});
+
+    REQUIRE_FALSE(metrics.selfIntersecting);
+    REQUIRE(metrics.area.has_value());
+}
+
+// The inscribed polygon is the definition of the shape, so this is the exact
+// expected value, not an approximation of one. The second assertion documents
+// the relationship design spec 3.2 claims and fails if kEllipseOutlineVertices
+// changes without that spec changing.
+TEST_CASE("an ellipse measures its inscribed polygon's area",
+          "[core][AnnotationMeasurement]")
+{
+    const double a = 50.0;
+    const double b = 25.0;
+    const core::AnnotationGeometry shape =
+        core::EllipseGeometry{core::PointF{0.0, 0.0}, core::PointF{2.0 * a, 2.0 * b}};
+    const core::ShapeMetrics metrics = core::measure(shape, core::PixelSize{});
+
+    REQUIRE(metrics.area.has_value());
+
+    const double n = static_cast<double>(core::kEllipseOutlineVertices);
+    const double exactPolygonArea = 0.5 * n * a * b * std::sin(2.0 * 3.14159265358979323846 / n);
+    REQUIRE(std::abs(*metrics.area - exactPolygonArea) < 1e-6);
+
+    const double trueArea = 3.14159265358979323846 * a * b;
+    REQUIRE(std::abs(*metrics.area - trueArea) / trueArea < 0.0001);
+}
+
+TEST_CASE("a circle measures pi r squared within the documented tolerance",
+          "[core][AnnotationMeasurement]")
+{
+    const double r = 40.0;
+    const core::AnnotationGeometry circle =
+        core::EllipseGeometry{core::PointF{0.0, 0.0}, core::PointF{2.0 * r, 2.0 * r}};
+    const core::ShapeMetrics metrics = core::measure(circle, core::PixelSize{});
+
+    REQUIRE(metrics.area.has_value());
+    const double trueArea = 3.14159265358979323846 * r * r;
+    REQUIRE(std::abs(*metrics.area - trueArea) / trueArea < 0.0001);
 }
