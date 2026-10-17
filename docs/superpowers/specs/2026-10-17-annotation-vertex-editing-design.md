@@ -318,8 +318,7 @@ No test binary creates a `QApplication`, so the mode, the handles and the
 gestures are unreachable from any suite. Group Z, to be run against the
 installed build and recorded here as groups U through Y were.
 
-**Not yet run.** Group Z is the list to work through against the installed
-build; results are recorded here afterwards.
+**Run in progress** — results below the table.
 
 **One behaviour added during implementation, not in the design above:** held
 space still pans while the mode is on. The vertex router is skipped entirely
@@ -356,6 +355,27 @@ without leaving what they are doing. Checked by Z18.
 | Z24 | While holding a vertex drag, press **Ctrl+Z**. The drag must stop rather than continue moving a vertex; whatever the undo restored must stand. |
 | Z25 | While holding a vertex drag, press a tool shortcut (V, R, E, P or F). The edit must survive AND Ctrl+Z must undo it in one step. |
 | Z26 | During a vertex drag the cursor must show the move cursor, not a crosshair or arrow. |
+
+---
+
+### Results — run 2026-10-17 against `main` @ `0dba47c`
+
+Installed binary verified against the build tree by hash (`6ca3fa93…`) before
+the run started, because a running viewer turns `cmake --install` into a silent
+no-op that still exits 0.
+
+| Check | Result |
+|---|---|
+| Z1 | passed |
+| Z2 | passed |
+| Z3 | passed |
+
+**Z1–Z3.** The mode opens on a double-click, the handles appear, and a dragged
+handle moves its own vertex and no other. **Z2 is the one worth naming**: a
+double-click while a trace is still unfinished closes the shape as it always
+did and does not enter the mode. That is §2.2's claim — that `pending.active`
+separates the two uses of one gesture cleanly enough that no precedence rule is
+needed — and it was an argument until this run.
 
 ---
 
