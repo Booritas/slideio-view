@@ -10,6 +10,7 @@
 #include "slideio/viewer/app/UndoRedoStack.h"
 #include "slideio/viewer/core/Annotation.h"
 #include "slideio/viewer/core/AnnotationGeometry.h"
+#include "slideio/viewer/core/VertexEditing.h"
 #include "slideio/viewer/core/CoordinateSystem.h"
 #include "slideio/viewer/core/Histogram.h"
 #include "slideio/viewer/core/ISlideSource.h"
@@ -1524,6 +1525,29 @@ struct ViewportWidget::Impl
     };
     PendingShape pending;
 
+    // Vertex editing: the annotation whose handles are shown and whose
+    // vertices presses address. Empty when not editing. Design spec 2.
+    std::string vertexEditId;
+
+    /// The polygon being vertex-edited, or null when the mode is off, the
+    /// annotation is gone, or it is not a traced shape.
+    ///
+    /// Returns the STORED geometry. Callers must not substitute core::outline():
+    /// it drops consecutive duplicate vertices, so its indices do not address
+    /// stored ones, and every polygon saved before 2026-10-17 has such a
+    /// duplicate. Design spec 3.2.
+    const core::PolygonGeometry* vertexEditPolygon() const
+    {
+        if (vertexEditId.empty() || annotations == nullptr) {
+            return nullptr;
+        }
+        const core::Annotation* annotation = annotations->find(vertexEditId);
+        if (annotation == nullptr) {
+            return nullptr;
+        }
+        return std::get_if<core::PolygonGeometry>(&annotation->geometry());
+    }
+
     core::PointF drawAnchorSlide;
     core::PointF drawCurrentSlide;
     // Read from the mouse events rather than queried globally, so the preview
@@ -2958,6 +2982,15 @@ bool ViewportWidget::commitDrawDrag()
     return true;
 }
 
+void ViewportWidget::endVertexEditing()
+{
+    if (m_impl->vertexEditId.empty()) {
+        return;
+    }
+    m_impl->vertexEditId.clear();
+    update();
+}
+
 void ViewportWidget::pushCreateCommand(const std::string& id)
 {
     if (m_impl->undoStack == nullptr || id.empty()) {
@@ -3184,6 +3217,31 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         }
     }
 
+    // Vertex handles, painted from the STORED vertices -- not core::outline(),
+    // which drops duplicates and would therefore paint a handle whose index
+    // does not address the vertex a press will move. Design spec 3.2.
+    if (const core::PolygonGeometry* editing = m_impl->vertexEditPolygon()) {
+        const double half = kVertexHandleScreenPixels * 0.5;
+        const QRectF viewportRect(0.0, 0.0, static_cast<double>(width()),
+                                  static_cast<double>(height()));
+        painter.setPen(QPen(QColor(0x00, 0x00, 0x00), 1.0));
+        painter.setBrush(QBrush(QColor(0xFF, 0xFF, 0xFF)));
+        for (const core::PointF& vertex : editing->vertices) {
+            const QPointF centre = toScreen(vertex);
+            // Culled to what is on screen: a trace can run far outside the
+            // viewport and those handles cannot be grabbed anyway.
+            if (!viewportRect.contains(centre)) {
+                continue;
+            }
+            // Two-tone for the same reason the selection outline is:
+            // brightfield H&E glass and tissue are near-white, and paintGL
+            // clears the slide rect to white, so a white handle alone would
+            // vanish on the commonest slide type.
+            painter.drawRect(QRectF(centre.x() - half, centre.y() - half,
+                                    kVertexHandleScreenPixels, kVertexHandleScreenPixels));
+        }
+    }
+
     // The rectangle or ellipse being dragged right now is not in the model yet.
     if (m_impl->drawing) {
         const core::RectF box = m_impl->pendingDragBox();
@@ -3271,6 +3329,9 @@ void ViewportWidget::setActiveTool(AnnotationTool tool)
     // pending-shape guard and fall into the selection-click path, selecting
     // under a drawing tool. A pan is not ours to end.
     endToolDrag();
+    // A tool change is a change of intent: the handles belong to the gesture
+    // the user has just left behind.
+    endVertexEditing();
     m_impl->activeTool = tool;
     updateCursor();
     update();
@@ -3296,6 +3357,12 @@ void ViewportWidget::resetAnnotationState()
     m_impl->dragOwner = DragOwner::None;
     m_impl->dragButton = Qt::NoButton;
     m_impl->movingId.clear();
+    // The mode names an annotation belonging to the slide being left. Kept, it
+    // would paint handles over a different slide's tissue and address indices
+    // into a shape that is gone -- the same reason moveOriginal is reset here.
+    // Cleared directly rather than through endVertexEditing(), which repaints:
+    // this runs mid-teardown where the other resets deliberately do not.
+    m_impl->vertexEditId.clear();
     // The annotation this held belongs to the slide being left. Kept, it would
     // be restored onto a different slide by an Escape or an undo step.
     m_impl->moveOriginal.reset();
@@ -4348,21 +4415,61 @@ void ViewportWidget::wheelEvent(QWheelEvent* event)
 
 void ViewportWidget::mouseDoubleClickEvent(QMouseEvent* event)
 {
-    if (!m_impl->pending.active || event->button() != Qt::LeftButton) {
+    if (event->button() != Qt::LeftButton) {
         QOpenGLWidget::mouseDoubleClickEvent(event);
         return;
     }
 
-    // Qt sends MouseButtonDblClick in place of the second press, not in
-    // addition to it -- QWidget's default implementation forwards it to
-    // mousePressEvent for exactly that reason. This override does not forward,
-    // so the pair has appended exactly one vertex, placed by its first click,
-    // and that vertex is the one the user double-clicked to position. Removing
-    // it would drop a real point and, on a triangle, take the shape below
-    // kMinPolygonVertices so it was discarded in silence.
-    commitPendingShape();
+    // A pending trace takes the gesture: double-click closes it. The two never
+    // contend, because entering vertex editing applies only to a COMMITTED
+    // annotation and pending.active is true only while a trace is unfinished.
+    // Design spec 2.2.
+    if (m_impl->pending.active) {
+        // Qt sends MouseButtonDblClick in place of the second press, not in
+        // addition to it -- QWidget's default implementation forwards it to
+        // mousePressEvent for exactly that reason. This override does not
+        // forward, so the pair has appended exactly one vertex, placed by its
+        // first click, and that vertex is the one the user double-clicked to
+        // position. Removing it would drop a real point and, on a triangle,
+        // take the shape below kMinPolygonVertices so it was discarded in
+        // silence.
+        commitPendingShape();
+        updateCursor();
+        event->accept();
+        return;
+    }
+
+    // Entering is declined silently for a shape with no vertices to edit, and
+    // on a slide whose annotations are not editable -- the same gate that
+    // blocks a move drag. Offering an edit that would then be refused is worse
+    // than not offering it. Design spec 2.
+    if (!m_impl->annotationsEditable() || m_impl->controller == nullptr) {
+        QOpenGLWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+
+    double slideX = 0.0;
+    double slideY = 0.0;
+    m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
+    const double tolerance =
+        screenToleranceToSlide(kHitToleranceScreenPixels, m_impl->controller->viewport().scale());
+    const std::string hit = m_impl->annotations->hitTest(core::PointF{slideX, slideY}, tolerance);
+    if (hit.empty()) {
+        QOpenGLWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+    const core::Annotation* annotation = m_impl->annotations->find(hit);
+    if (annotation == nullptr
+        || std::get_if<core::PolygonGeometry>(&annotation->geometry()) == nullptr) {
+        QOpenGLWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+
+    m_impl->annotations->setSelected(hit);
+    m_impl->vertexEditId = hit;
     updateCursor();
     event->accept();
+    update();
 }
 
 void ViewportWidget::keyPressEvent(QKeyEvent* event)

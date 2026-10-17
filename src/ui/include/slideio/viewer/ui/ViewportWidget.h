@@ -262,6 +262,9 @@ private:
     /// updates those first if it has fresher values.
     bool commitDrawDrag();
 
+    /// Leaves vertex-editing mode and repaints. Safe to call when not editing.
+    void endVertexEditing();
+
     void pushCreateCommand(const std::string& id);
     /// Removes `id` and records the removal. Unlike the push* functions around
     /// it, this one performs the mutation as well, which is why it must not be
