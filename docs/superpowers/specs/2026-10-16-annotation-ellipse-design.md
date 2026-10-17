@@ -365,8 +365,7 @@ No test binary creates a `QApplication`, so nothing below is reachable from any
 suite. Group Y, to be run against the installed build and recorded in this file
 the way groups U, V, W and X were.
 
-**Not yet run.** Group Y is the list to work through against the installed
-build; results are recorded here afterwards.
+**Run in progress** — results below the table.
 
 | | Check |
 |---|---|
@@ -389,6 +388,23 @@ build; results are recorded here afterwards.
 | Y17 | With Alt held, make a tiny drag of a few pixels. It must be rejected as a misclick exactly as the same drag without Alt is — no annotation. |
 | Y18 | **Verifies a fix; the trigger itself is still unconfirmed.** Drag an Alt-centred ellipse, release **Alt** before the mouse button, then release the button. Qt gives the menu bar focus when Alt is pressed and released alone, which fires `ViewportWidget::focusOutEvent`. That used to clear `drawing` and `dragOwner`, after which `mouseReleaseEvent`'s first guard swallowed the release whole and the shape vanished silently. `focusOutEvent` now calls `commitDrawDrag()` first, so **the ellipse must appear and be selected** — the same minimum-size guard applies, so a tiny drag still creates nothing. The teardown was deliberately left in place: without it `dragOwner` stays set and `mousePressEvent`'s early return swallows every later press. Try the reverse order too (button first, then Alt), which commits on the ordinary path. **Also check, in the same pass:** that the tool shortcuts V/R/E/P/F still respond afterwards — they are `Qt::WidgetWithChildrenShortcut` scoped to the viewport (`MainWindow.cpp`), so if focus has moved to the menu bar they stop working until Escape; and, on X11, that the window manager does not grab Alt+LeftDrag to move the window, which would mean the viewport never sees the drag at all. If Alt proves unusable on a target platform, Ctrl is the usual alternative and `applyDragConstraints` takes the modifier as a parameter, so swapping it is a one-line change in one place. |
 | Y19 | Start a rectangle or ellipse drag, and **Alt-tab to another window without releasing the button**. The shape must be created and selected, not silently lost. Come back and press the left button again: the viewport must respond — a press swallowed here would mean the drag teardown was skipped. Then Ctrl+Z: the shape must disappear. |
+
+### Results — run 2026-10-17 against `main` @ `04cbfad`
+
+Installed binary verified against the build tree by hash (`288cd345…`) before
+the run started, because a running viewer turns `cmake --install` into a silent
+no-op that still exits 0.
+
+| Check | Result |
+|---|---|
+| Y1 | passed |
+| Y2 | passed |
+
+**Y1, Y2.** The tool activates on `E` and shows checked, and a dragged ellipse
+commits the shape its preview showed. Y2 is the one that matters most of the
+two: the preview is stroked from `core::outline()` rather than
+`QPainter::drawEllipse`, precisely so that what is previewed and what is stored
+are the same 512-gon, and nothing but a human eye can confirm they match.
 
 ---
 
