@@ -318,7 +318,7 @@ No test binary creates a `QApplication`, so the mode, the handles and the
 gestures are unreachable from any suite. Group Z, to be run against the
 installed build and recorded here as groups U through Y were.
 
-**Run in progress** — results below the table.
+**Run 2026-10-17: all 26 passed.** Results below the table.
 
 **One behaviour added during implementation, not in the design above:** held
 space still pans while the mode is on. The vertex router is skipped entirely
@@ -358,7 +358,7 @@ without leaving what they are doing. Checked by Z18.
 
 ---
 
-### Results — run 2026-10-17 against `main` @ `0dba47c`
+### Results — run 2026-10-17 against `main` @ `0dba47c`, complete: 26/26
 
 Installed binary verified against the build tree by hash (`6ca3fa93…`) before
 the run started, because a running viewer turns `cmake --install` into a silent
@@ -382,7 +382,7 @@ no-op that still exits 0.
 | Z14 | passed |
 | Z15 | passed |
 | Z16 | passed |
-| Z17 | **not run** |
+| Z17 | passed |
 | Z18 | passed |
 | Z19 | passed |
 | Z20 | passed |
@@ -443,13 +443,28 @@ both end the mode, a dense trace grabs its nearest vertex, an edit survives
 save/close/reopen, whole-shape move still works afterwards, and the mode
 declines silently on a rectangle, an ellipse and a read-only slide.
 
-**Z17 is not run.** It is the only end-to-end guard on the property this whole
-design is arranged around — that `outline()` drops consecutive duplicates while
-stored vertices keep them, so UI code using an outline index addresses the
-wrong point. The core side is pinned by a test proved able to fail (an
-outline-based `nearestVertex` returned 2 where the stored index is 3), but the
-painting and press paths are reachable from no suite, and a polygon saved
-before 2026-10-17 is the only input that distinguishes them.
+**Z17 — run against a hand-prepared pre-fix file, and worth reading with its
+caveat.** No polygon saved before 2026-10-17 had survived the group Y and Z
+runs, so one was reconstructed: the workspace polygon was backed up and vertex
+40 duplicated, giving 85 stored vertices against an 84-point outline — exactly
+the shape every file this application wrote until that morning. The mode was
+entered and handles after the duplicate dragged. The right vertex moved.
+
+**What it did not prove.** It is close to unable to fail against this code, and
+that was realised while briefing the run rather than before proposing it.
+`nearestVertex` searches by POSITION, not by index: a press finds the nearest
+stored vertex geometrically and its stored index goes straight to
+`withVertexMoved` over the same stored vector, so no index ever crosses between
+the outline view and the stored view and the off-by-one has nothing to corrupt.
+This is the same flaw review found in the core test named for this property --
+an assertion guaranteed by construction -- very nearly repeated one level up.
+
+**What it is worth.** A regression guard: it is the input that catches anyone
+later writing `outline()` into the paint or press path. And it exercised the
+real-data path end to end — one incidental observation being that the run left
+the file at 86 vertices with the duplicate pair shifted to 41/42, because a
+vertex was inserted ahead of it and the pair moved down together, which is what
+stored-index arithmetic should do and what a dropped duplicate would not.
 
 ---
 
