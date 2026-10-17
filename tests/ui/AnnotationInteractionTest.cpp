@@ -585,3 +585,32 @@ TEST_CASE("unrelated modifiers do not change the action",
     REQUIRE(resolveVertexEditPress(Qt::LeftButton, Qt::AltModifier, false, true)
             == VertexEditAction::InsertAndDrag);
 }
+
+TEST_CASE("a left press on a resize handle resizes", "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveBoxResizePress(Qt::LeftButton, false, true) == BoxResizeAction::Resize);
+}
+
+TEST_CASE("a left press off the handles passes through",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveBoxResizePress(Qt::LeftButton, false, false)
+            == BoxResizeAction::PassThrough);
+}
+
+// Space pans whatever else is happening. That promise predates every mode in
+// this widget and was broken once already during vertex editing.
+TEST_CASE("held space passes through even over a handle",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveBoxResizePress(Qt::LeftButton, true, true) == BoxResizeAction::PassThrough);
+}
+
+// Middle pans and right is reserved for a future context menu; neither is a
+// resize, and neither may be swallowed.
+TEST_CASE("a non-left press is not ours", "[ui][AnnotationInteraction]")
+{
+    REQUIRE(resolveBoxResizePress(Qt::MiddleButton, false, true) == BoxResizeAction::None);
+    REQUIRE(resolveBoxResizePress(Qt::RightButton, false, true) == BoxResizeAction::None);
+    REQUIRE(resolveBoxResizePress(Qt::MiddleButton, true, false) == BoxResizeAction::None);
+}

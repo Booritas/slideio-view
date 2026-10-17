@@ -60,6 +60,18 @@ core::RectF withMinimumExtent(const core::RectF& box, double minExtentSlideUnits
     return result;
 }
 
+BoxResizeAction resolveBoxResizePress(Qt::MouseButton button, bool spaceHeld, bool hitHandle)
+{
+    if (button != Qt::LeftButton) {
+        return BoxResizeAction::None;
+    }
+    // Space pans whatever else is happening, including over a handle.
+    if (spaceHeld) {
+        return BoxResizeAction::PassThrough;
+    }
+    return hitHandle ? BoxResizeAction::Resize : BoxResizeAction::PassThrough;
+}
+
 VertexEditAction resolveVertexEditPress(Qt::MouseButton button, Qt::KeyboardModifiers modifiers,
                                         bool hitVertex, bool hitEdge)
 {

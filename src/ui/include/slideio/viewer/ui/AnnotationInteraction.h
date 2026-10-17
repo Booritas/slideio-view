@@ -43,6 +43,20 @@ enum class VertexEditAction
     Exit,
 };
 
+/// What a press means when a box-shaped annotation is selected.
+///
+/// `None` and `PassThrough` are both handled by falling through to
+/// resolveDragOwner today, and are kept distinct because they answer different
+/// questions: None means the press was never ours -- a middle-button pan, or a
+/// right-click a future context menu will want -- while PassThrough means ours
+/// to consider and declined.
+enum class BoxResizeAction
+{
+    None,
+    Resize,
+    PassThrough,
+};
+
 /// Screen-space radius within which a click counts as hitting an annotation.
 /// Screen-space so the target stays the same physical size at 1x and at 40x.
 constexpr double kHitToleranceScreenPixels = 6.0;
@@ -100,6 +114,17 @@ constexpr double kTrailMinScreenPixels = 2.0;
 [[nodiscard]] VertexEditAction resolveVertexEditPress(Qt::MouseButton button,
                                                       Qt::KeyboardModifiers modifiers,
                                                       bool hitVertex, bool hitEdge);
+
+/// Whether a press on a selected box-shaped annotation starts a resize.
+///
+/// `hitHandle` comes from core::nearestBoxHandle against the selected shape's
+/// normalised bounding box. Tested BEFORE resolveDragOwner, because a corner
+/// handle sits on the outline and would otherwise be taken as a move.
+///
+/// Pure, like every other routing predicate here, so the rules are covered
+/// without a QApplication.
+[[nodiscard]] BoxResizeAction resolveBoxResizePress(Qt::MouseButton button, bool spaceHeld,
+                                                    bool hitHandle);
 
 /// True when a click at `cursorSlide` lands on the shape's first vertex and so
 /// closes it. Reuses the click-target radius rather than introducing a second
