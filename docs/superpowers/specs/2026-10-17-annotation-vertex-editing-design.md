@@ -371,8 +371,14 @@ no-op that still exits 0.
 | Z3 | passed |
 | Z9 | passed |
 | Z19 | passed |
+| Z18 | passed |
+| Z20 | passed |
+| Z21 | passed |
+| Z22 | passed |
+| Z23 | passed |
 | Z24 | passed |
 | Z25 | passed |
+| Z26 | passed |
 
 **Z1–Z3.** The mode opens on a double-click, the handles appear, and a dragged
 handle moves its own vertex and no other. **Z2 is the one worth naming**: a
@@ -400,6 +406,20 @@ None of these four could be covered by a test: all of them live in widget
 handlers and no suite in this repository creates a `QApplication`. This run is
 the whole of their verification, which is why they were run second, before
 anything cosmetic.
+
+**Z18, Z20–Z23, Z26 — the rest of the review-driven fixes.** All passed. Three
+are worth naming because each was a defect a reasonable person would have met.
+**Z20** confirms the drag applies a press-to-cursor delta rather than snapping:
+the press may land up to six screen pixels from the handle it grabs, and
+setting the vertex to the cursor teleported it by that offset on the first
+mouse-move — one pixel of visible motion, tens of microns of slide at low zoom,
+recorded and autosaved. **Z21** confirms the mode cannot be entered under a
+drawing tool, where it would then intercept the very presses meant to draw and
+insert vertices into an existing trace. **Z22** confirms the mode ends when the
+selection moves — including from the annotation list panel, which changes the
+selection with no viewport press at all and is the case that proved the plan's
+ruling wrong. Z18 confirms held space still pans inside the mode, Z23 that
+nothing grabbable goes unpainted, and Z26 the cursor.
 
 ---
 
