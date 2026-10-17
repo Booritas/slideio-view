@@ -260,8 +260,21 @@ therefore behave identically, which is the point: both turn a drag into a box.
 No test binary creates a `QApplication`, so the handles, the gestures and every
 exit in §6.2 are unreachable from any suite.
 
-**Not yet run.** Group AA is the list to work through against the installed
-build; results are recorded here afterwards, as groups U through Z were.
+**Run 2026-10-17 against the installed build (sha256 `d33f0403…`, commit
+`7fd262e`): 23/23 passed.**
+
+AA16 and AA23 need `annotationsEditable()` false, which takes an inactive
+persistence service. The cheapest route is not a file-permission change: point
+the stored `slideId` at a value matching no slide and resolve the mismatch
+dialog as Open-Read-Only. The annotations then show over the slide, handles and
+all, and nothing can be written. The edited file was restored from a
+byte-identical backup afterwards.
+
+AA20 through AA23 were added after the whole-branch review, each pinning one of
+its four findings. Three of them — AA20 for the seventh exit, AA21 for the
+missing tool gate, AA22 for the no-op restamp — would have caught a defect the
+review found instead. The order was wrong: this list should have been run
+before the review, not after it.
 
 | | Check |
 |---|---|
