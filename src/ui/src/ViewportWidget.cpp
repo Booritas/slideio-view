@@ -1529,6 +1529,13 @@ struct ViewportWidget::Impl
     // vertices presses address. Empty when not editing. Design spec 2.
     std::string vertexEditId;
 
+    // The vertex being dragged, and the whole annotation as it was when the
+    // drag began. The original is what Escape restores and what the undo step
+    // records as "before" -- the same press-captures, release-records shape
+    // the move drag uses.
+    std::optional<std::size_t> draggingVertex;
+    std::optional<core::Annotation> vertexDragOriginal;
+
     /// The polygon being vertex-edited, or null when the mode is off, the
     /// annotation is gone, or it is not a traced shape.
     ///
@@ -2982,6 +2989,20 @@ bool ViewportWidget::commitDrawDrag()
     return true;
 }
 
+void ViewportWidget::pushGeometryCommand(const std::string& id, const core::Annotation& before,
+                                         const QString& description)
+{
+    if (m_impl->undoStack == nullptr || id.empty()) {
+        return;
+    }
+    const core::Annotation* after = m_impl->annotations->find(id);
+    if (after == nullptr) {
+        return;
+    }
+    m_impl->undoStack->push(app::AnnotationEditCommand::create(
+        *m_impl->annotations, id, before, *after, description.toStdString()));
+}
+
 void ViewportWidget::endVertexEditing()
 {
     if (m_impl->vertexEditId.empty()) {
@@ -4105,6 +4126,78 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
         m_impl->movePressSlide = core::PointF{slideX, slideY};
     }
 
+    // Vertex editing owns the press before the ordinary routing sees it --
+    // except under held space, which pans whatever the tool and whatever mode
+    // the viewport is in. That is the one gesture the user has for getting
+    // around without leaving what they are doing, and resolveDragOwner has
+    // promised it since before this mode existed.
+    if (const core::PolygonGeometry* editing =
+            m_impl->spaceHeld ? nullptr : m_impl->vertexEditPolygon()) {
+        const core::PointF cursor = m_impl->movePressSlide;
+        const double tolerance = screenToleranceToSlide(kHitToleranceScreenPixels,
+                                                        m_impl->controller->viewport().scale());
+
+        // Vertex first, edge only if no vertex answered: a press on a handle is
+        // in range of the segments meeting there too. Design spec 3.4.
+        const std::optional<std::size_t> vertex = core::nearestVertex(*editing, cursor, tolerance);
+        const std::optional<core::EdgeHit> edge =
+            vertex.has_value() ? std::nullopt : core::nearestEdge(*editing, cursor, tolerance);
+
+        switch (resolveVertexEditPress(event->button(), event->modifiers(), vertex.has_value(),
+                                       edge.has_value())) {
+        case VertexEditAction::DragVertex:
+            m_impl->dragOwner = DragOwner::MoveVertex;
+            m_impl->dragButton = event->button();
+            m_impl->pressPos = event->pos();
+            m_impl->draggingVertex = vertex;
+            m_impl->vertexDragOriginal = *m_impl->annotations->find(m_impl->vertexEditId);
+            updateCursor();
+            event->accept();
+            return;
+        case VertexEditAction::InsertAndDrag:
+            m_impl->vertexDragOriginal = *m_impl->annotations->find(m_impl->vertexEditId);
+            m_impl->annotations->setGeometry(
+                m_impl->vertexEditId,
+                core::withVertexInserted(*editing, edge->afterIndex, edge->position));
+            m_impl->dragOwner = DragOwner::MoveVertex;
+            m_impl->dragButton = event->button();
+            m_impl->pressPos = event->pos();
+            // The inserted vertex is the one now being dragged.
+            m_impl->draggingVertex = edge->afterIndex + 1;
+            updateCursor();
+            event->accept();
+            update();
+            return;
+        case VertexEditAction::RemoveVertex: {
+            const std::optional<core::PolygonGeometry> shrunk =
+                core::withVertexRemoved(*editing, *vertex);
+            if (!shrunk.has_value()) {
+                const std::size_t minimum =
+                    editing->closed ? core::kMinPolygonVertices : core::kMinPolylineVertices;
+                emit annotationEditBlocked(
+                    tr("This shape cannot have fewer than %1 points.")
+                        .arg(static_cast<int>(minimum)));
+                event->accept();
+                return;
+            }
+            const core::Annotation before = *m_impl->annotations->find(m_impl->vertexEditId);
+            m_impl->annotations->setGeometry(m_impl->vertexEditId, *shrunk);
+            pushGeometryCommand(m_impl->vertexEditId, before, tr("Remove Point"));
+            event->accept();
+            update();
+            return;
+        }
+        case VertexEditAction::Exit:
+            // Falls through to the ordinary press handling below, so the same
+            // click that leaves the mode also selects or pans as it normally
+            // would.
+            endVertexEditing();
+            break;
+        case VertexEditAction::None:
+            break;
+        }
+    }
+
     DragOwner owner = resolveDragOwner(event->button(), event->modifiers(),
                                        m_impl->spaceHeld, m_impl->activeTool,
                                        !pressHitId.empty());
@@ -4222,6 +4315,31 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
     // own button is still held.
     if (m_impl->dragOwner == DragOwner::None || event->button() != m_impl->dragButton) {
         QOpenGLWidget::mouseReleaseEvent(event);
+        return;
+    }
+
+    if (m_impl->dragOwner == DragOwner::MoveVertex) {
+        // A gesture that changed nothing records nothing: touching the model
+        // would mark the slide dirty and restamp modifiedAt for an edit that
+        // did not happen, and the autosave would then write exactly that.
+        if (m_impl->vertexDragOriginal.has_value()) {
+            const auto* was =
+                std::get_if<core::PolygonGeometry>(&m_impl->vertexDragOriginal->geometry());
+            const core::PolygonGeometry* now = m_impl->vertexEditPolygon();
+            // sameVertices, not ui::moveEdit: that compares bounding boxes,
+            // which an interior vertex can move without changing.
+            if (was != nullptr && now != nullptr && !core::sameVertices(*was, *now)) {
+                pushGeometryCommand(m_impl->vertexEditId, *m_impl->vertexDragOriginal,
+                                    tr("Edit Points"));
+            }
+        }
+        m_impl->dragOwner = DragOwner::None;
+        m_impl->dragButton = Qt::NoButton;
+        m_impl->draggingVertex.reset();
+        m_impl->vertexDragOriginal.reset();
+        updateCursor();
+        event->accept();
+        update();
         return;
     }
 
@@ -4358,6 +4476,21 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event)
         }
         event->accept();
         update();
+    }
+
+    if (m_impl->dragOwner == DragOwner::MoveVertex && m_impl->draggingVertex.has_value()
+        && m_impl->controller) {
+        if (const core::PolygonGeometry* editing = m_impl->vertexEditPolygon()) {
+            double slideX = 0.0;
+            double slideY = 0.0;
+            m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
+            m_impl->annotations->setGeometry(
+                m_impl->vertexEditId,
+                core::withVertexMoved(*editing, *m_impl->draggingVertex,
+                                      core::PointF{slideX, slideY}));
+            event->accept();
+            update();
+        }
     }
 
     if (m_impl->dragOwner == DragOwner::Tool && m_impl->drawing && m_impl->controller) {
@@ -4520,6 +4653,23 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
             m_impl->drawing = false;
             m_impl->dragOwner = DragOwner::None;
             m_impl->dragButton = Qt::NoButton;
+            cancelled = true;
+        } else if (m_impl->dragOwner == DragOwner::MoveVertex
+                   && m_impl->vertexDragOriginal.has_value()) {
+            // restore(), not setGeometry(): the whole annotation goes back,
+            // metadata included. setGeometry restamps modifiedAt, which would
+            // leave the file saying the mark was last touched by a gesture
+            // whose entire purpose was to change nothing -- and the autosave
+            // that follows would write exactly that.
+            m_impl->annotations->restore(*m_impl->vertexDragOriginal);
+            m_impl->dragOwner = DragOwner::None;
+            m_impl->dragButton = Qt::NoButton;
+            m_impl->draggingVertex.reset();
+            m_impl->vertexDragOriginal.reset();
+            cancelled = true;
+        } else if (!m_impl->vertexEditId.empty()) {
+            // No drag live: Escape leaves the mode itself.
+            endVertexEditing();
             cancelled = true;
         } else if (m_impl->dragOwner == DragOwner::MoveAnnotation && !m_impl->movingId.empty()) {
             // Put the annotation back where it was picked up. Without this the

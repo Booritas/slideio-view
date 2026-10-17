@@ -265,6 +265,18 @@ private:
     /// Leaves vertex-editing mode and repaints. Safe to call when not editing.
     void endVertexEditing();
 
+    /// Records one completed geometry edit: the annotation as it was, against
+    /// what it is now. One per gesture, never one per mouse-move -- a single
+    /// nudge would otherwise bury fifty steps of history and Ctrl+Z would
+    /// appear not to work.
+    ///
+    /// Unlike pushMoveCommand this does NOT consult ui::moveEdit, which decides
+    /// "did anything change" by comparing bounding boxes: exact for a
+    /// translation, blind to an interior vertex moving inside an unchanged
+    /// extent. The caller makes that decision with core::sameVertices.
+    void pushGeometryCommand(const std::string& id, const core::Annotation& before,
+                             const QString& description);
+
     void pushCreateCommand(const std::string& id);
     /// Removes `id` and records the removal. Unlike the push* functions around
     /// it, this one performs the mutation as well, which is why it must not be

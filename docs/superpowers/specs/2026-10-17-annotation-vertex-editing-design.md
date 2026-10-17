@@ -316,7 +316,17 @@ document dirty exactly as a move does. No autosave change is needed.
 
 No test binary creates a `QApplication`, so the mode, the handles and the
 gestures are unreachable from any suite. Group Z, to be run against the
-installed build and recorded here as groups U through Y were:
+installed build and recorded here as groups U through Y were.
+
+**Not yet run.** Group Z is the list to work through against the installed
+build; results are recorded here afterwards.
+
+**One behaviour added during implementation, not in the design above:** held
+space still pans while the mode is on. The vertex router is skipped entirely
+when space is down, so a press over a handle pans rather than dragging the
+vertex. `resolveDragOwner` has promised "held space pans, whatever the tool"
+since before this mode existed, and it is the user's only way to move around
+without leaving what they are doing. Checked by Z18.
 
 | | Check |
 |---|---|
@@ -337,6 +347,7 @@ installed build and recorded here as groups U through Y were:
 | Z15 | Double-click a rectangle and an ellipse: nothing happens, no handles, no message. |
 | Z16 | On a read-only slide, double-click a polygon: the mode is not entered. |
 | Z17 | Enter the mode on a polygon saved **before** 2026-10-17 — one that still carries a duplicate final vertex — and drag the last few handles. The vertex that moves must be the one grabbed (§3.2). |
+| Z18 | In the mode, hold **space** and drag from over a handle. The viewport must pan; the vertex must not move. Release space and the same drag must move the vertex. |
 
 ---
 

@@ -27,6 +27,8 @@ enum class DragOwner
     Pan,
     Tool,
     MoveAnnotation,
+    /// Dragging one vertex of the annotation in vertex-editing mode.
+    MoveVertex,
 };
 
 /// What a press does while the viewport is in vertex-editing mode. Separate
