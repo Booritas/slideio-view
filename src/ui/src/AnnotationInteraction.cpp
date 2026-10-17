@@ -60,6 +60,32 @@ core::RectF withMinimumExtent(const core::RectF& box, double minExtentSlideUnits
     return result;
 }
 
+core::RectF applyDragConstraints(core::RectF box, core::PointF anchor,
+                                 Qt::KeyboardModifiers mods)
+{
+    if (mods.testFlag(Qt::ShiftModifier)) {
+        // Which corner the anchor sits on says which way the drag went. The
+        // midpoint comparison rather than an equality test on doubles: the box
+        // came from the anchor by arithmetic, so exact equality is not
+        // guaranteed, and a zero-extent box answers "extends positive" either
+        // way, which is harmless because there is nothing to extend.
+        const bool extendsRight = anchor.x <= box.x + box.width * 0.5;
+        const bool extendsDown = anchor.y <= box.y + box.height * 0.5;
+        const double side = std::max(box.width, box.height);
+        box.x = extendsRight ? anchor.x : anchor.x - side;
+        box.y = extendsDown ? anchor.y : anchor.y - side;
+        box.width = side;
+        box.height = side;
+    }
+    if (mods.testFlag(Qt::AltModifier)) {
+        box.x = anchor.x - box.width;
+        box.y = anchor.y - box.height;
+        box.width *= 2.0;
+        box.height *= 2.0;
+    }
+    return box;
+}
+
 bool isNPointTool(AnnotationTool tool)
 {
     return tool == AnnotationTool::Polygon || tool == AnnotationTool::Freehand;

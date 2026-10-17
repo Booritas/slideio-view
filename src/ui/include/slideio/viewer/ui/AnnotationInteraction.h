@@ -106,6 +106,26 @@ constexpr double kTrailMinScreenPixels = 2.0;
 /// annotation rather than a zero-area one.
 [[nodiscard]] core::RectF withMinimumExtent(const core::RectF& box, double minExtentSlideUnits);
 
+/// `box` constrained by the modifiers held during the drag that produced it.
+///
+/// `box` is the normalised bounding box of the drag, so `anchor` -- the press
+/// point -- is one of its four corners, and which corner is what tells this
+/// function which way the drag went.
+///
+///   * Shift squares the box about `anchor`, taking the LARGER of the two
+///     extents so the shape never shrinks away from the cursor.
+///   * Alt re-centres the box on `anchor` and doubles both extents, making the
+///     press point the centre and the drag a radius rather than a diameter.
+///   * Both compose, Shift first, so the pair gives a circle centred on the
+///     press.
+///   * Any other modifier is ignored.
+///
+/// Shape-agnostic on purpose: it constrains a box and knows nothing about what
+/// will be built from it, which is what lets the rectangle tool use it too
+/// (FR-ANN-01's "Shift constrains to square").
+[[nodiscard]] core::RectF applyDragConstraints(core::RectF box, core::PointF anchor,
+                                               Qt::KeyboardModifiers mods);
+
 
 /// True when the cursor has travelled far enough from the press for a move
 /// drag to be a deliberate one.

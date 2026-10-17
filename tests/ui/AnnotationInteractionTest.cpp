@@ -341,3 +341,134 @@ TEST_CASE("a shape put back where it was is not a recorded move",
 
     REQUIRE_FALSE(moveEdit(original, unmoved).has_value());
 }
+
+TEST_CASE("no modifier leaves the drag box untouched", "[ui][AnnotationInteraction]")
+{
+    const core::RectF box{10.0, 20.0, 100.0, 40.0};
+    const core::RectF result = applyDragConstraints(box, core::PointF{10.0, 20.0}, Qt::NoModifier);
+    REQUIRE(result.x == 10.0);
+    REQUIRE(result.y == 20.0);
+    REQUIRE(result.width == 100.0);
+    REQUIRE(result.height == 40.0);
+}
+
+// Review Focus 3: a modifier this function does not implement must not fall
+// into a constraint branch.
+TEST_CASE("an unrelated modifier leaves the drag box untouched",
+          "[ui][AnnotationInteraction]")
+{
+    const core::RectF box{10.0, 20.0, 100.0, 40.0};
+    for (const Qt::KeyboardModifiers mods :
+         {Qt::KeyboardModifiers(Qt::ControlModifier), Qt::KeyboardModifiers(Qt::MetaModifier)}) {
+        const core::RectF result = applyDragConstraints(box, core::PointF{10.0, 20.0}, mods);
+        REQUIRE(result.width == 100.0);
+        REQUIRE(result.height == 40.0);
+    }
+}
+
+// The anchor is the top-left corner, so the square grows right and down.
+TEST_CASE("shift squares the box about an anchor dragged down-right",
+          "[ui][AnnotationInteraction]")
+{
+    const core::RectF box{10.0, 20.0, 100.0, 40.0};
+    const core::RectF result =
+        applyDragConstraints(box, core::PointF{10.0, 20.0}, Qt::ShiftModifier);
+    REQUIRE(result.x == 10.0);
+    REQUIRE(result.y == 20.0);
+    REQUIRE(result.width == 100.0);
+    REQUIRE(result.height == 100.0);
+}
+
+// The anchor is the bottom-right corner, so the square grows left and up and
+// the box origin moves.
+TEST_CASE("shift squares the box about an anchor dragged up-left",
+          "[ui][AnnotationInteraction]")
+{
+    const core::RectF box{10.0, 20.0, 100.0, 40.0};
+    const core::RectF result =
+        applyDragConstraints(box, core::PointF{110.0, 60.0}, Qt::ShiftModifier);
+    REQUIRE(result.width == 100.0);
+    REQUIRE(result.height == 100.0);
+    REQUIRE(result.x == 10.0);
+    REQUIRE(result.y == -40.0);
+}
+
+// The anchor is the bottom-left corner: the square grows right and up.
+TEST_CASE("shift squares the box about an anchor dragged up-right",
+          "[ui][AnnotationInteraction]")
+{
+    const core::RectF box{10.0, 20.0, 100.0, 40.0};
+    const core::RectF result =
+        applyDragConstraints(box, core::PointF{10.0, 60.0}, Qt::ShiftModifier);
+    REQUIRE(result.width == 100.0);
+    REQUIRE(result.height == 100.0);
+    REQUIRE(result.x == 10.0);
+    REQUIRE(result.y == -40.0);
+}
+
+// The anchor is the top-right corner: the square grows left and down.
+TEST_CASE("shift squares the box about an anchor dragged down-left",
+          "[ui][AnnotationInteraction]")
+{
+    const core::RectF box{10.0, 20.0, 100.0, 40.0};
+    const core::RectF result =
+        applyDragConstraints(box, core::PointF{110.0, 20.0}, Qt::ShiftModifier);
+    REQUIRE(result.width == 100.0);
+    REQUIRE(result.height == 100.0);
+    REQUIRE(result.x == 10.0);
+    REQUIRE(result.y == 20.0);
+}
+
+TEST_CASE("shift takes the larger extent so the shape never shrinks",
+          "[ui][AnnotationInteraction]")
+{
+    const core::RectF tall{0.0, 0.0, 10.0, 90.0};
+    const core::RectF result =
+        applyDragConstraints(tall, core::PointF{0.0, 0.0}, Qt::ShiftModifier);
+    REQUIRE(result.width == 90.0);
+    REQUIRE(result.height == 90.0);
+}
+
+// Alt makes the press point the centre and the drag a radius, so both extents
+// double.
+TEST_CASE("alt re-centres the box on the anchor and doubles it",
+          "[ui][AnnotationInteraction]")
+{
+    const core::RectF box{10.0, 20.0, 100.0, 40.0};
+    const core::RectF result =
+        applyDragConstraints(box, core::PointF{10.0, 20.0}, Qt::AltModifier);
+    REQUIRE(result.width == 200.0);
+    REQUIRE(result.height == 80.0);
+    REQUIRE(result.x == -90.0);
+    REQUIRE(result.y == -20.0);
+    REQUIRE(result.x + result.width * 0.5 == 10.0);
+    REQUIRE(result.y + result.height * 0.5 == 20.0);
+}
+
+TEST_CASE("shift and alt together give a square centred on the anchor",
+          "[ui][AnnotationInteraction]")
+{
+    const core::RectF box{10.0, 20.0, 100.0, 40.0};
+    const core::RectF result = applyDragConstraints(
+        box, core::PointF{10.0, 20.0}, Qt::ShiftModifier | Qt::AltModifier);
+    REQUIRE(result.width == 200.0);
+    REQUIRE(result.height == 200.0);
+    REQUIRE(result.x + result.width * 0.5 == 10.0);
+    REQUIRE(result.y + result.height * 0.5 == 20.0);
+}
+
+// Review Focus 4: a press and release without moving. No NaN, no inverted box.
+TEST_CASE("a zero-length drag stays zero under either modifier",
+          "[ui][AnnotationInteraction]")
+{
+    const core::RectF empty{50.0, 50.0, 0.0, 0.0};
+    for (const Qt::KeyboardModifiers mods :
+         {Qt::KeyboardModifiers(Qt::ShiftModifier), Qt::KeyboardModifiers(Qt::AltModifier),
+          Qt::KeyboardModifiers(Qt::ShiftModifier | Qt::AltModifier)}) {
+        const core::RectF result = applyDragConstraints(empty, core::PointF{50.0, 50.0}, mods);
+        REQUIRE(result.width == 0.0);
+        REQUIRE(result.height == 0.0);
+        REQUIRE(result.x == 50.0);
+        REQUIRE(result.y == 50.0);
+    }
+}
