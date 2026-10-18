@@ -7,6 +7,7 @@
 #include "slideio/viewer/core/ColorManagement.h"
 #include "slideio/viewer/core/SlideId.h"
 #include "slideio/viewer/infra/JsonAnnotationRepository.h"
+#include "slideio/viewer/infra/QSettingsAnnotationCategoryStore.h"
 #include "slideio/viewer/infra/QSettingsColorProfileOverrideStore.h"
 #include "slideio/viewer/ui/AboutDialog.h"
 #include "slideio/viewer/ui/AnnotationInteraction.h"
@@ -210,6 +211,7 @@ struct MainWindow::Impl
     std::string pendingColorManagementEnableSlideId;
 
     std::unique_ptr<infra::QSettingsColorProfileOverrideStore> overrideStore;
+    std::unique_ptr<infra::QSettingsAnnotationCategoryStore> categoryStore;
 
     /// Owned here, not by the viewport. The viewport renders it, the panels
     /// list and edit it, and persistence saves it -- four consumers across two
@@ -1548,11 +1550,24 @@ void MainWindow::Impl::buildAnnotationPersistence()
 
 bool MainWindow::Impl::openPreferences()
 {
+    QStringList currentCategories;
+    for (const std::string& category : categoryStore->categories()) {
+        currentCategories.append(QString::fromStdString(category));
+    }
     PreferencesDialog dialog(annotationSettings->workspaceDirectory(),
-                             annotationSettings->userName(), owner);
+                             annotationSettings->userName(), currentCategories, owner);
     if (dialog.exec() != QDialog::Accepted) {
         return false;
     }
+
+    // The store normalises on write and on read, so what the panel is fed is
+    // what a restart would load.
+    std::vector<std::string> edited;
+    for (const QString& entry : dialog.categories()) {
+        edited.push_back(entry.toStdString());
+    }
+    categoryStore->setCategories(edited);
+    annotationPropertiesPanel->setCategories(categoryStore->categories());
 
     annotationSettings->setUserName(dialog.userName());
     annotations->setDefaultAuthor(annotationSettings->userName().toStdString());
@@ -1805,6 +1820,7 @@ MainWindow::MainWindow(QWidget* parent)
 {
     m_impl->owner = this;
     m_impl->overrideStore = std::make_unique<infra::QSettingsColorProfileOverrideStore>();
+    m_impl->categoryStore = std::make_unique<infra::QSettingsAnnotationCategoryStore>();
 
     setWindowTitle("SlideIO Viewer");
     setAcceptDrops(true);
@@ -1883,6 +1899,7 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->annotationPropertiesPanel->setObjectName(QStringLiteral("AnnotationPropertiesPanel"));
     addDockWidget(Qt::RightDockWidgetArea, m_impl->annotationPropertiesPanel);
     m_impl->annotationPropertiesPanel->hide();
+    m_impl->annotationPropertiesPanel->setCategories(m_impl->categoryStore->categories());
 
     // Create actions and menus
     m_impl->createActions();

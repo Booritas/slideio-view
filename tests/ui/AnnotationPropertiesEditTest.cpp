@@ -163,16 +163,6 @@ TEST_CASE("a free-text classification is kept", "[ui][AnnotationProperties]")
     REQUIRE(edited->classification == "Lymphovascular invasion");
 }
 
-TEST_CASE("the five offered classifications are the agreed set", "[ui][AnnotationProperties]")
-{
-    REQUIRE(ui::kAnnotationClassifications.size() == 5);
-    REQUIRE(ui::kAnnotationClassifications[0] == std::string("Tumor"));
-    REQUIRE(ui::kAnnotationClassifications[1] == std::string("Stroma"));
-    REQUIRE(ui::kAnnotationClassifications[2] == std::string("Necrosis"));
-    REQUIRE(ui::kAnnotationClassifications[3] == std::string("Normal"));
-    REQUIRE(ui::kAnnotationClassifications[4] == std::string("Artifact"));
-}
-
 TEST_CASE("the edit description names the field that changed",
           "[ui][AnnotationProperties]")
 {

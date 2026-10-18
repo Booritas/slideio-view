@@ -98,11 +98,8 @@ AnnotationPropertiesPanel::AnnotationPropertiesPanel(QWidget* parent)
 
     m_impl->classification = new QComboBox(contents);
     m_impl->classification->setEditable(true);
-    for (const char* name : kAnnotationClassifications) {
-        m_impl->classification->addItem(QString::fromLatin1(name));
-    }
-    // Cleared after populating: the combo must start empty rather than
-    // asserting "Tumor" for an annotation nobody has classified.
+    // Items arrive through setCategories(). Starts empty rather than asserting
+    // a category for an annotation nobody has classified.
     m_impl->classification->setCurrentText(QString());
     form->addRow(tr("Classification"), m_impl->classification);
 
@@ -348,6 +345,16 @@ void AnnotationPropertiesPanel::showEvent(QShowEvent* event)
     // yet, so there is no caret to protect and no earlier annotation's text to
     // keep out of a later commit.
     repopulate(true);
+}
+
+void AnnotationPropertiesPanel::setCategories(const std::vector<std::string>& categories)
+{
+    const QString current = m_impl->classification->currentText();
+    m_impl->classification->clear();
+    for (const std::string& category : categories) {
+        m_impl->classification->addItem(QString::fromStdString(category));
+    }
+    m_impl->classification->setCurrentText(current);
 }
 
 void AnnotationPropertiesPanel::commitPendingEdit()

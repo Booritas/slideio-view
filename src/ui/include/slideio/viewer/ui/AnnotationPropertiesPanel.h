@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 class QShowEvent;
 
@@ -73,6 +74,11 @@ public:
     /// rather than suppressed -- a labelled "12480 px²" is a real number that
     /// can be exported, where a scale bar with no scale would be meaningless.
     void setPixelSize(core::PixelSize pixelSize);
+
+    /// The user's configured category list, offered in the Classification
+    /// combo. The combo stays editable, so a classification already on an
+    /// annotation is still shown when it is not in the list.
+    void setCategories(const std::vector<std::string>& categories);
 
 signals:
     /// A field was committed and actually changed something. MainWindow applies

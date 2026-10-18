@@ -2,19 +2,11 @@
 
 #include "slideio/viewer/core/Annotation.h"
 
-#include <array>
 #include <optional>
 #include <string>
 
 namespace slideio::viewer::ui
 {
-
-/// Offered in the classification combo, which stays editable: these are
-/// suggestions, not a controlled vocabulary. classification remains a plain
-/// string in the stored file, so the serializer and schemaVersion are untouched
-/// by what is listed here.
-inline constexpr std::array<const char*, 5> kAnnotationClassifications{
-    "Tumor", "Stroma", "Necrosis", "Normal", "Artifact"};
 
 /// What the properties panel's widgets currently hold.
 struct AnnotationFieldValues

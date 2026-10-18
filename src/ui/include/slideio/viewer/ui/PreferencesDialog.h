@@ -2,8 +2,10 @@
 
 #include <QDialog>
 #include <QString>
+#include <QStringList>
 
 class QLineEdit;
+class QPlainTextEdit;
 
 namespace slideio::viewer::ui
 {
@@ -16,16 +18,18 @@ class PreferencesDialog : public QDialog
 
 public:
     PreferencesDialog(const QString& workspaceDirectory, const QString& userName,
-                      QWidget* parent = nullptr);
+                      const QStringList& categories, QWidget* parent = nullptr);
 
     [[nodiscard]] QString workspaceDirectory() const;
     [[nodiscard]] QString userName() const;
+    [[nodiscard]] QStringList categories() const;
 
 private:
     void browseForWorkspace();
 
     QLineEdit* m_workspaceEdit = nullptr;
     QLineEdit* m_userNameEdit = nullptr;
+    QPlainTextEdit* m_categoriesEdit = nullptr;
 };
 
 } // namespace slideio::viewer::ui

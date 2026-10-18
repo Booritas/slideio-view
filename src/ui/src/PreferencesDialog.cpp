@@ -6,6 +6,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QVBoxLayout>
 
@@ -13,7 +14,7 @@ namespace slideio::viewer::ui
 {
 
 PreferencesDialog::PreferencesDialog(const QString& workspaceDirectory, const QString& userName,
-                                     QWidget* parent)
+                                     const QStringList& categories, QWidget* parent)
     : QDialog(parent)
 {
     setWindowTitle(tr("Preferences"));
@@ -21,6 +22,10 @@ PreferencesDialog::PreferencesDialog(const QString& workspaceDirectory, const QS
     m_workspaceEdit = new QLineEdit(workspaceDirectory, this);
     m_userNameEdit = new QLineEdit(userName, this);
     m_userNameEdit->setPlaceholderText(tr("Required before creating annotations"));
+
+    m_categoriesEdit = new QPlainTextEdit(categories.join('\n'), this);
+    m_categoriesEdit->setToolTip(tr("One per line. Used for counting and for the Classification field."));
+    m_categoriesEdit->setPlaceholderText(tr("One per line"));
 
     auto* browse = new QPushButton(tr("Browse..."), this);
     connect(browse, &QPushButton::clicked, this, &PreferencesDialog::browseForWorkspace);
@@ -32,6 +37,7 @@ PreferencesDialog::PreferencesDialog(const QString& workspaceDirectory, const QS
     auto* form = new QFormLayout;
     form->addRow(tr("Annotation workspace:"), workspaceRow);
     form->addRow(tr("Your name:"), m_userNameEdit);
+    form->addRow(tr("Annotation categories:"), m_categoriesEdit);
 
     // Said plainly, because the alternative -- moving a user's files as a side
     // effect of changing a setting -- is worse than leaving them where they are.
@@ -59,6 +65,11 @@ QString PreferencesDialog::workspaceDirectory() const
 QString PreferencesDialog::userName() const
 {
     return m_userNameEdit->text().trimmed();
+}
+
+QStringList PreferencesDialog::categories() const
+{
+    return m_categoriesEdit->toPlainText().split('\n', Qt::SkipEmptyParts);
 }
 
 void PreferencesDialog::browseForWorkspace()
