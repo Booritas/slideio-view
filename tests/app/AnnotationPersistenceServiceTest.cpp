@@ -143,6 +143,16 @@ TEST_CASE("a mutation marks the model dirty", "[app][AnnotationPersistenceServic
         REQUIRE(service.isDirty());
     }
 
+    SECTION("restoring many in place")
+    {
+        const std::string id = model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+        service.flush();
+        REQUIRE_FALSE(service.isDirty());
+        core::Annotation edited(id, core::RectangleGeometry{core::PointF{5.0, 5.0}, core::PointF{6.0, 6.0}});
+        REQUIRE(model.restoreMany({edited}) == 1);
+        REQUIRE(service.isDirty());
+    }
+
     SECTION("removing")
     {
         const std::string id = model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});

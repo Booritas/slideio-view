@@ -36,6 +36,10 @@ AnnotationPersistenceService::AnnotationPersistenceService(core::IAnnotationRepo
     connect(&m_model, &AnnotationModel::annotationChanged, this,
             [this](const std::string&) { markDirty(); });
 
+    // Safe where modelReset() is not: the service never emits this itself, whereas
+    // it calls replaceAll() (which emits modelReset) during a load.
+    connect(&m_model, &AnnotationModel::annotationsBulkChanged, this, [this]() { markDirty(); });
+
     // Not modelReset(): replaceAll() emits that, and this service calls
     // replaceAll() itself during a load, so connecting it would make the
     // service deactivate itself on every successful open. clear() is the

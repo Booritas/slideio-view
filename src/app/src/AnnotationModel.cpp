@@ -190,7 +190,7 @@ std::size_t AnnotationModel::restoreMany(const std::vector<core::Annotation>& an
         ++stored;
     }
     if (stored > 0) {
-        emit modelReset();
+        emit annotationsBulkChanged();
     }
     return stored;
 }

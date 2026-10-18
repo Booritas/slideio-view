@@ -83,7 +83,7 @@ TEST_CASE("A retag command with no changes is not built", "[app][AnnotationRetag
     REQUIRE(AnnotationRetagCommand::create(model, {}, "Rename category") == nullptr);
 }
 
-TEST_CASE("restoreMany emits one modelReset rather than one change per annotation",
+TEST_CASE("restoreMany emits one annotationsBulkChanged rather than one change per annotation",
           "[app][AnnotationModel]")
 {
     // Review Focus 5: AnnotationListPanel rebuilds its whole tree on every
@@ -95,6 +95,8 @@ TEST_CASE("restoreMany emits one modelReset rather than one change per annotatio
     int resets = 0;
     int changes = 0;
     QObject::connect(&model, &AnnotationModel::modelReset, &model, [&resets]() { ++resets; });
+    int bulk = 0;
+    QObject::connect(&model, &AnnotationModel::annotationsBulkChanged, &model, [&bulk]() { ++bulk; });
     QObject::connect(&model, &AnnotationModel::annotationChanged, &model,
                      [&changes](const std::string&) { ++changes; });
 
@@ -105,7 +107,8 @@ TEST_CASE("restoreMany emits one modelReset rather than one change per annotatio
     }
 
     REQUIRE(model.restoreMany(after) == 2);
-    REQUIRE(resets == 1);
+    REQUIRE(bulk == 1);
+    REQUIRE(resets == 0);
     REQUIRE(changes == 0);
 }
 
@@ -118,5 +121,26 @@ TEST_CASE("restoreMany ignores an annotation the model does not hold",
     core::Annotation stranger("not-in-the-model", core::PointGeometry{core::PointF{0.0, 0.0}});
 
     REQUIRE(model.restoreMany({stranger}) == 0);
+    REQUIRE(model.find(id)->properties().classification == "Mitosis");
+}
+
+TEST_CASE("undo and redo survive an observer that clears the stack on modelReset",
+          "[app][AnnotationRetagCommand]")
+{
+    // The real application installs exactly this observer (MainWindow). A retag
+    // must not signal modelReset, or undo() would destroy the command it is
+    // running and wipe the history.
+    AnnotationModel model;
+    const std::string id = addMarker(model, "Mitossis");
+
+    UndoRedoStack stack;
+    QObject::connect(&model, &AnnotationModel::modelReset, &model, [&stack]() { stack.clear(); });
+
+    auto changes = core::retagClassification(model.annotations(), "Mitossis", "Mitosis", kStamp);
+    stack.push(AnnotationRetagCommand::create(model, std::move(changes), "Rename category"));
+
+    stack.undo();
+    REQUIRE(model.find(id)->properties().classification == "Mitossis");
+    stack.redo();
     REQUIRE(model.find(id)->properties().classification == "Mitosis");
 }

@@ -100,7 +100,7 @@ public:
     bool restore(core::Annotation annotation);
 
     /// Puts every annotation in `annotations` back under the id it carries,
-    /// exactly as restore() does, and emits modelReset() ONCE. Returns how many
+    /// exactly as restore() does, and emits annotationsBulkChanged() ONCE. Returns how many
     /// were stored; ids the model does not hold are skipped.
     ///
     /// One signal rather than one per annotation because AnnotationListPanel
@@ -138,6 +138,12 @@ signals:
     /// The whole contents changed at once. Listeners must rebuild rather than
     /// track individual ids.
     void modelReset();
+    /// Many existing annotations changed in place: rebuild, but this is an
+    /// ordinary edit, not a new document. Deliberately NOT modelReset(), which
+    /// means "the whole contents changed" and which MainWindow treats as a
+    /// reason to clear the undo stack and AnnotationPersistenceService cannot
+    /// connect because replaceAll() emits it during the service's own load.
+    void annotationsBulkChanged();
 
 private:
     std::vector<core::Annotation> m_annotations;
