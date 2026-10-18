@@ -484,3 +484,18 @@ TEST_CASE("categoryTally refuses \"Unclassified\" as a configured category",
     REQUIRE(rows.size() == 1);
     REQUIRE(rows[0].category == "Tumor");
 }
+
+TEST_CASE("categoryTally flags only the appended Unclassified row as synthetic", "[ui][CategoryTally]")
+{
+    const std::vector<core::Annotation> annotations{
+        markerWith("a", "Tumor"), markerWith("b", ""), markerWith("c", "Zeta"), markerWith("d", "UNCLASSIFIED")};
+
+    const auto rows = ui::categoryTally(annotations, {"Tumor", "Stroma"});
+
+    REQUIRE(rows.size() == 4);
+    for (std::size_t i = 0; i + 1 < rows.size(); ++i) {
+        REQUIRE_FALSE(rows[i].synthetic);
+    }
+    REQUIRE(rows.back().category == "Unclassified");
+    REQUIRE(rows.back().synthetic);
+}

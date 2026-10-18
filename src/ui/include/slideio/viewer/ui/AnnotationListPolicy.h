@@ -65,6 +65,7 @@ struct CategoryTallyRow
     std::string category;  ///< Display text; "Unclassified" for the empty one.
     std::size_t count;
     bool configured;  ///< In the user's list, as opposed to only in the data.
+    bool synthetic = false;  ///< The appended Unclassified row, and only that one.
 };
 
 /// The counting tallies, in display order.

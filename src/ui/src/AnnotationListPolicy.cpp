@@ -183,7 +183,7 @@ std::vector<CategoryTallyRow> categoryTally(const std::vector<core::Annotation>&
     }
 
     if (unclassified > 0) {
-        rows.push_back(CategoryTallyRow{"Unclassified", unclassified, false});
+        rows.push_back(CategoryTallyRow{"Unclassified", unclassified, false, true});
     }
     return rows;
 }

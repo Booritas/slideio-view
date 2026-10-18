@@ -162,3 +162,15 @@ TEST_CASE("retagClassification finds nothing when no annotation carries the cate
 
     REQUIRE(retagClassification(annotations, "Mitosis", "Other", kStamp).empty());
 }
+
+TEST_CASE("retagClassification refuses Unclassified as a target or a source, in any case",
+          "[core][Categories]")
+{
+    CHECK(slideio::viewer::core::isUnclassifiedCategory(" UNCLASSIFIED "));
+    CHECK_FALSE(slideio::viewer::core::isUnclassifiedCategory("Tumor"));
+    for (const char* name : {"Unclassified", "unclassified", " UnClassified "}) {
+        const std::vector<Annotation> carrying{markerWith("a", "Mitosis"), markerWith("b", name)};
+        CHECK(retagClassification(carrying, "Mitosis", name, kStamp).empty());
+        CHECK(retagClassification(carrying, name, "Mitosis", kStamp).empty());
+    }
+}

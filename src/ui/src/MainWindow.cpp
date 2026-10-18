@@ -2033,6 +2033,12 @@ MainWindow::MainWindow(QWidget* parent)
                         tr("A category needs a name. Nothing was renamed."));
                     return;
                 }
+                // Core refuses this too, but an empty result reads as "nothing matched".
+                if (core::isUnclassifiedCategory(target)) {
+                    m_impl->statusBarManager->showTransientMessage(
+                        tr("Unclassified is not a category. Nothing was renamed."));
+                    return;
+                }
                 if (QString::compare(QString::fromStdString(target), QString::fromStdString(from),
                                      Qt::CaseInsensitive) == 0) {
                     m_impl->statusBarManager->showTransientMessage(
@@ -2057,6 +2063,10 @@ MainWindow::MainWindow(QWidget* parent)
                 // Rename the entry in place so it keeps its position. normalizeCategoryList then
                 // folds a case-insensitive duplicate, which is what makes renaming onto an existing
                 // category a merge in the vocabulary as the retag has made it one in the data.
+                // Deliberately NOT undoable: the list is a global application preference shared by
+                // every slide, while the undo stack is per-slide and cleared on a slide change.
+                // Putting the vocabulary on it would let an undo here silently revert a change
+                // another slide is already using. Undo restores the annotations only.
                 std::vector<std::string> list = m_impl->categoryStore->categories();
                 for (std::string& entry : list) {
                     if (QString::compare(QString::fromStdString(entry), QString::fromStdString(from),

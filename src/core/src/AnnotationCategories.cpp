@@ -27,13 +27,18 @@ std::string trimmed(const std::string& text)
 
 } // namespace
 
+bool isUnclassifiedCategory(const std::string& text)
+{
+    return toLowerAscii(trimmed(text)) == "unclassified";
+}
+
 std::vector<std::string> normalizeCategoryList(const std::vector<std::string>& raw)
 {
     std::vector<std::string> result;
     std::vector<std::string> seen;
     for (const std::string& entry : raw) {
         const std::string clean = trimmed(entry);
-        if (clean.empty() || toLowerAscii(clean) == "unclassified") {
+        if (clean.empty() || isUnclassifiedCategory(clean)) {
             continue;
         }
         const std::string key = toLowerAscii(clean);
@@ -52,10 +57,13 @@ std::vector<RetagChange> retagClassification(const std::vector<Annotation>& anno
 {
     const std::string target = trimmed(to);
     const std::string fromKey = toLowerAscii(trimmed(from));
-    if (fromKey.empty() || target.empty() || fromKey == toLowerAscii(target)) {
+    if (fromKey.empty() || target.empty() || fromKey == toLowerAscii(target)
+        || isUnclassifiedCategory(target) || isUnclassifiedCategory(from)) {
         // Nothing to do, and nothing to record. An empty target would silently
         // unclassify every match as one undo step, so it is refused here, where a
-        // test can reach it. Renaming a category to itself
+        // test can reach it. "Unclassified" is refused on both sides: as a target it would write a string
+        // categoryTally folds into the synthetic row, and as a source it would miss every empty one.
+        // Renaming a category to itself
         // must not leave a step on the undo stack that does nothing.
         return {};
     }

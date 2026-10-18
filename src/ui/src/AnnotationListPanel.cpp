@@ -24,6 +24,7 @@ namespace slideio::viewer::ui
 namespace
 {
 constexpr int kIdRole = Qt::UserRole;
+constexpr int kSyntheticRole = Qt::UserRole + 1;
 }
 
 struct AnnotationListPanel::Impl
@@ -115,11 +116,9 @@ AnnotationListPanel::AnnotationListPanel(QWidget* parent)
         const QString label = item->text(0);
         const std::string category = label.toStdString();
         const bool configured = item->data(0, Qt::UserRole).toBool();
-        // categoryTally guarantees exactly one Unclassified row and that it is never configured;
-        // any real category spelled that way is folded into it, so the label identifies it. Rename
-        // on it would bulk-classify every unclassified annotation on the scene.
-        const bool unclassified =
-            !configured && label.compare(QStringLiteral("Unclassified"), Qt::CaseInsensitive) == 0;
+        // The policy flags the synthetic row; the label is never compared, so localising it cannot
+        // open Rename on Unclassified, which would bulk-classify every unclassified annotation.
+        const bool unclassified = item->data(0, kSyntheticRole).toBool();
 
         QMenu menu(m_impl->tally);
         if (!unclassified) {
@@ -327,6 +326,7 @@ void AnnotationListPanel::rebuild()
         item->setText(0, QString::fromStdString(row.category));
         item->setText(1, QString::number(static_cast<qulonglong>(row.count)));
         item->setData(0, Qt::UserRole, row.configured);
+        item->setData(0, kSyntheticRole, row.synthetic);
     }
     applySelection(m_impl->model->selectedId());
     m_impl->tree->verticalScrollBar()->setValue(scrollValue);

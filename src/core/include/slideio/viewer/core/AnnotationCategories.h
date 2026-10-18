@@ -28,6 +28,10 @@ inline const std::vector<std::string> kDefaultAnnotationCategories{
 /// otherwise preserved and is never sorted: categoryTally() displays tallies in
 /// list order, and a list that sorted itself would reorder the counting rows
 /// behind the user mid-count.
+/// True for "Unclassified" in any case, ignoring surrounding whitespace: the absence of a value,
+/// never a category. The one definition core uses to refuse it.
+[[nodiscard]] bool isUnclassifiedCategory(const std::string& text);
+
 [[nodiscard]] std::vector<std::string> normalizeCategoryList(
     const std::vector<std::string>& raw);
 
