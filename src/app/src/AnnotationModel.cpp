@@ -178,6 +178,23 @@ bool AnnotationModel::restore(core::Annotation annotation)
     return true;
 }
 
+std::size_t AnnotationModel::restoreMany(const std::vector<core::Annotation>& annotations)
+{
+    std::size_t stored = 0;
+    for (const core::Annotation& annotation : annotations) {
+        const std::size_t index = indexOf(annotation.id());
+        if (index == kNotFound) {
+            continue;
+        }
+        m_annotations[index] = annotation;
+        ++stored;
+    }
+    if (stored > 0) {
+        emit modelReset();
+    }
+    return stored;
+}
+
 const std::vector<core::Annotation>& AnnotationModel::annotations() const
 {
     return m_annotations;

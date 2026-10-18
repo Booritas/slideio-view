@@ -39,6 +39,7 @@ add_executable(slideio-viewer-app-tests
     app/AnnotationPersistenceServiceTest.cpp
     app/UndoRedoStackTest.cpp
     app/AnnotationEditCommandTest.cpp
+    app/AnnotationRetagCommandTest.cpp
     app/AnnotationEditingTest.cpp
     app/WorkspaceSwitchTest.cpp
 )

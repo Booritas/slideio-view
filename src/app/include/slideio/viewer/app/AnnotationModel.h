@@ -99,6 +99,15 @@ public:
     /// states for the same reason.
     bool restore(core::Annotation annotation);
 
+    /// Puts every annotation in `annotations` back under the id it carries,
+    /// exactly as restore() does, and emits modelReset() ONCE. Returns how many
+    /// were stored; ids the model does not hold are skipped.
+    ///
+    /// One signal rather than one per annotation because AnnotationListPanel
+    /// rebuilds its entire tree on annotationChanged: retagging 500 markers
+    /// through 500 restore() calls would rebuild a 500-row tree 500 times.
+    std::size_t restoreMany(const std::vector<core::Annotation>& annotations);
+
     [[nodiscard]] const std::vector<core::Annotation>& annotations() const;
 
     /// Null when `id` is unknown. The pointer is invalidated by any mutation.
