@@ -55,6 +55,7 @@ add_executable(slideio-viewer-infra-tests
     infra/TileLoadSchedulerTest.cpp
     infra/ColorManagedAdapterTest.cpp
     infra/QSettingsColorProfileOverrideStoreTest.cpp
+    infra/QSettingsAnnotationCategoryStoreTest.cpp
     infra/JsonAnnotationRepositoryTest.cpp
 )
 
