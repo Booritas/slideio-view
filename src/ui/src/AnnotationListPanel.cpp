@@ -5,6 +5,7 @@
 #include "slideio/viewer/ui/AnnotationShapeName.h"
 
 #include <QComboBox>
+#include <QFormLayout>
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QLineEdit>
@@ -29,6 +30,9 @@ struct AnnotationListPanel::Impl
     QLineEdit* filter = nullptr;
     QComboBox* sort = nullptr;
     QTreeWidget* tree = nullptr;
+    QComboBox* counting = nullptr;
+    QTreeWidget* tally = nullptr;
+    std::vector<std::string> categories;
 
     /// The id applySelection last highlighted. The list scrolls to the selected
     /// row only when this changes, so a model change that leaves the selection
@@ -50,6 +54,29 @@ AnnotationListPanel::AnnotationListPanel(QWidget* parent)
     m_impl->filter->setClearButtonEnabled(true);
     layout->addWidget(m_impl->filter);
 
+    m_impl->counting = new QComboBox(contents);
+    m_impl->counting->setEditable(true);
+    m_impl->counting->setInsertPolicy(QComboBox::NoInsert);
+    m_impl->counting->setToolTip(tr("New point markers are counted under this category"));
+    m_impl->counting->addItem(tr("(none)"));
+
+    m_impl->tally = new QTreeWidget(contents);
+    m_impl->tally->setColumnCount(2);
+    m_impl->tally->setHeaderHidden(true);
+    m_impl->tally->setRootIsDecorated(false);
+    m_impl->tally->setSelectionMode(QAbstractItemView::NoSelection);
+    m_impl->tally->setFocusPolicy(Qt::NoFocus);
+    m_impl->tally->header()->setStretchLastSection(false);
+    m_impl->tally->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    m_impl->tally->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    // The strip must not grow at the list's expense as categories accumulate.
+    m_impl->tally->setMaximumHeight(140);
+
+    auto* countingRow = new QFormLayout;
+    countingRow->addRow(tr("Counting:"), m_impl->counting);
+    layout->insertLayout(0, countingRow);
+    layout->insertWidget(1, m_impl->tally);
+
     m_impl->sort = new QComboBox(contents);
     m_impl->sort->addItem(tr("Creation order"), static_cast<int>(AnnotationSortKey::CreationOrder));
     m_impl->sort->addItem(tr("Label"), static_cast<int>(AnnotationSortKey::Label));
@@ -67,6 +94,15 @@ AnnotationListPanel::AnnotationListPanel(QWidget* parent)
     layout->addWidget(m_impl->tree);
 
     setWidget(contents);
+
+    connect(m_impl->counting, &QComboBox::currentTextChanged, this, [this](const QString& text) {
+        // By text, not index: an editable combo keeps its old index while a new name is typed.
+        const bool none = text.trimmed().isEmpty() || text == m_impl->counting->itemText(0);
+        const std::string category = none ? std::string{} : text.trimmed().toStdString();
+        if (m_impl->model != nullptr) {
+            m_impl->model->setCurrentCategory(category);
+        }
+    });
 
     connect(m_impl->filter, &QLineEdit::textChanged, this, [this](const QString&) { rebuild(); });
     connect(m_impl->sort, qOverload<int>(&QComboBox::currentIndexChanged), this,
@@ -107,15 +143,54 @@ void AnnotationListPanel::setAnnotationModel(app::AnnotationModel* model)
         // selectionChanged deliberately does not: it moves a highlight, and
         // rebuilding would destroy the item under the user's cursor mid-click.
         const auto rebuildRows = [this]() { rebuild(); };
-        connect(m_impl->model, &app::AnnotationModel::annotationAdded, this, rebuildRows);
+        connect(m_impl->model, &app::AnnotationModel::annotationAdded, this, [this](const std::string& id) {
+            rebuild();
+            const core::Annotation* added = m_impl->model->find(id);
+            if (added != nullptr && !added->properties().classification.empty()) {
+                emit categoryUsed(added->properties().classification);
+            }
+        });
         connect(m_impl->model, &app::AnnotationModel::annotationRemoved, this, rebuildRows);
         connect(m_impl->model, &app::AnnotationModel::annotationChanged, this, rebuildRows);
         connect(m_impl->model, &app::AnnotationModel::cleared, this, rebuildRows);
         connect(m_impl->model, &app::AnnotationModel::modelReset, this, rebuildRows);
+        // A bulk retag is not a reset (MainWindow would clear the undo stack), so it has its
+        // own signal -- and it must refresh the rows and the tally all the same.
+        connect(m_impl->model, &app::AnnotationModel::annotationsBulkChanged, this, rebuildRows);
         connect(m_impl->model, &app::AnnotationModel::selectionChanged, this,
                 [this](const std::string& id) { applySelection(id); });
     }
     rebuild();
+}
+
+void AnnotationListPanel::setCategories(const std::vector<std::string>& categories)
+{
+    const QString current = m_impl->counting->currentText();
+    const bool wasNone = current.trimmed().isEmpty() || current == m_impl->counting->itemText(0);
+    m_impl->categories = categories;
+
+    {
+        // Load-bearing, not decoration: rebuilding the items fires currentTextChanged, whose
+        // handler writes into the model's current category. Without the blocker, re-feeding the
+        // list after a category joins it would silently restamp what the user is counting under.
+        const QSignalBlocker blocker(m_impl->counting);
+        m_impl->counting->clear();
+        m_impl->counting->addItem(tr("(none)"));
+        for (const std::string& category : categories) {
+            m_impl->counting->addItem(QString::fromStdString(category));
+        }
+        if (wasNone) {
+            m_impl->counting->setCurrentIndex(0);
+        } else {
+            m_impl->counting->setCurrentText(current);
+        }
+    }
+    rebuild();
+}
+
+void AnnotationListPanel::setCountingEnabled(bool enabled)
+{
+    m_impl->counting->setEnabled(enabled);
 }
 
 void AnnotationListPanel::showEvent(QShowEvent* event)
@@ -173,6 +248,16 @@ void AnnotationListPanel::rebuild()
     // can be tested, which leaves it no way to call tr(). Translating the title
     // would mean moving the formatting into this panel.
     setWindowTitle(QString::fromStdString(annotationDockTitle(annotations.size(), rows.size())));
+
+    // Over the whole model, never the filtered rows: a clinical count that moved when someone
+    // typed in the filter box would be a trap.
+    m_impl->tally->clear();
+    for (const CategoryTallyRow& row : categoryTally(annotations, m_impl->categories)) {
+        auto* item = new QTreeWidgetItem(m_impl->tally);
+        item->setText(0, QString::fromStdString(row.category));
+        item->setText(1, QString::number(static_cast<qulonglong>(row.count)));
+        item->setData(0, Qt::UserRole, row.configured);
+    }
     applySelection(m_impl->model->selectedId());
     m_impl->tree->verticalScrollBar()->setValue(scrollValue);
 }

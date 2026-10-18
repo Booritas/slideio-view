@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 class QKeyEvent;
 class QShowEvent;
@@ -40,6 +41,16 @@ public:
     /// restored dock layout can make this panel visible before the call.
     void setAnnotationModel(app::AnnotationModel* model);
 
+    /// The configured category list, as the counting combo offers it and as the
+    /// tally orders its rows. "(none)" is always the combo's first item, and what
+    /// is current survives the rebuild without being re-sent to the model.
+    void setCategories(const std::vector<std::string>& categories);
+
+    /// Gates only the combo. The tally stays visible and correct on a read-only
+    /// slide: it still shows its annotations, and what is there is what a reader
+    /// opening one wants counted.
+    void setCountingEnabled(bool enabled);
+
 signals:
     /// A row was double-clicked. MainWindow routes this to the viewport; this
     /// panel never touches the viewport itself, which is the whole point of
@@ -50,6 +61,12 @@ signals:
     /// app::deleteWithUndo so the deletion is undoable -- removing it here
     /// would produce an edit Ctrl+Z cannot reach.
     void deleteRequested(const std::string& id);
+
+    /// An annotation was added carrying a non-empty classification. MainWindow
+    /// appends it to the stored list if it is not there: a category earns its
+    /// place by having something counted under it, so a typo noticed before the
+    /// first click leaves nothing behind.
+    void categoryUsed(const std::string& category);
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;

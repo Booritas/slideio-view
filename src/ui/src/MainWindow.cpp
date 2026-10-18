@@ -4,6 +4,7 @@
 #include "slideio/viewer/app/AnnotationPersistenceService.h"
 #include "slideio/viewer/app/UndoRedoStack.h"
 #include "slideio/viewer/app/WorkspaceSwitch.h"
+#include "slideio/viewer/core/AnnotationCategories.h"
 #include "slideio/viewer/core/ColorManagement.h"
 #include "slideio/viewer/core/SlideId.h"
 #include "slideio/viewer/infra/JsonAnnotationRepository.h"
@@ -1567,7 +1568,9 @@ bool MainWindow::Impl::openPreferences()
         edited.push_back(entry.toStdString());
     }
     categoryStore->setCategories(edited);
-    annotationPropertiesPanel->setCategories(categoryStore->categories());
+    const std::vector<std::string> stored = categoryStore->categories();
+    annotationPropertiesPanel->setCategories(stored);
+    annotationListPanel->setCategories(stored);
 
     annotationSettings->setUserName(dialog.userName());
     annotations->setDefaultAuthor(annotationSettings->userName().toStdString());
@@ -1743,6 +1746,10 @@ void MainWindow::Impl::applyAnnotationAvailability(bool available, const QString
     if (annotationPropertiesPanel != nullptr) {
         annotationPropertiesPanel->setEditingAllowed(available);
     }
+    // The counting combo only; the tally rows stay visible and correct on a read-only slide.
+    if (annotationListPanel != nullptr) {
+        annotationListPanel->setCountingEnabled(available);
+    }
     // Mirror that disabled state somewhere the user can actually see it. A
     // disabled menu item renders identically to an enabled one, and the
     // transient message below is gone in four seconds -- so without this, a user
@@ -1900,6 +1907,7 @@ MainWindow::MainWindow(QWidget* parent)
     addDockWidget(Qt::RightDockWidgetArea, m_impl->annotationPropertiesPanel);
     m_impl->annotationPropertiesPanel->hide();
     m_impl->annotationPropertiesPanel->setCategories(m_impl->categoryStore->categories());
+    m_impl->annotationListPanel->setCategories(m_impl->categoryStore->categories());
 
     // Create actions and menus
     m_impl->createActions();
@@ -1976,6 +1984,24 @@ MainWindow::MainWindow(QWidget* parent)
                 if (m_impl->viewportWidget != nullptr) {
                     m_impl->viewportWidget->showAnnotation(id);
                 }
+            });
+
+    connect(m_impl->annotationListPanel, &AnnotationListPanel::categoryUsed, this,
+            [this](const std::string& category) {
+                std::vector<std::string> list = m_impl->categoryStore->categories();
+                // normalizeCategoryList is the one rule for "already in the list": appending and
+                // re-normalising drops a case-insensitive duplicate, so there is no second
+                // comparison to keep in step with it.
+                std::vector<std::string> candidate = list;
+                candidate.push_back(category);
+                if (core::normalizeCategoryList(candidate).size() == list.size()) {
+                    return;
+                }
+                list.push_back(category);
+                m_impl->categoryStore->setCategories(list);
+                const std::vector<std::string> stored = m_impl->categoryStore->categories();
+                m_impl->annotationListPanel->setCategories(stored);
+                m_impl->annotationPropertiesPanel->setCategories(stored);
             });
 
     connect(m_impl->annotationListPanel, &AnnotationListPanel::deleteRequested, this,
