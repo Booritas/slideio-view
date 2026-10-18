@@ -2,6 +2,7 @@
 #include "slideio/viewer/app/AnnotationEditing.h"
 #include "slideio/viewer/app/AnnotationModel.h"
 #include "slideio/viewer/app/AnnotationPersistenceService.h"
+#include "slideio/viewer/app/AnnotationRetagCommand.h"
 #include "slideio/viewer/app/UndoRedoStack.h"
 #include "slideio/viewer/app/WorkspaceSwitch.h"
 #include "slideio/viewer/core/AnnotationCategories.h"
@@ -51,6 +52,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QInputDialog>
 #include <QKeySequence>
 #include <QLineEdit>
 #include <QMenuBar>
@@ -67,6 +69,7 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -1998,6 +2001,98 @@ MainWindow::MainWindow(QWidget* parent)
                     return;
                 }
                 list.push_back(category);
+                m_impl->categoryStore->setCategories(list);
+                const std::vector<std::string> stored = m_impl->categoryStore->categories();
+                m_impl->annotationListPanel->setCategories(stored);
+                m_impl->annotationPropertiesPanel->setCategories(stored);
+            });
+
+    connect(m_impl->annotationListPanel, &AnnotationListPanel::renameCategoryRequested, this,
+            [this](const std::string& from) {
+                if (m_impl->annotationPersistence != nullptr && !m_impl->annotationPersistence->isActive()) {
+                    m_impl->statusBarManager->showTransientMessage(
+                        tr("These annotations are open read-only and cannot be changed."));
+                    return;
+                }
+                if (m_impl->undoStack == nullptr) {
+                    return;
+                }
+                bool accepted = false;
+                const QString typed = QInputDialog::getText(
+                    this, tr("Rename Category"), tr("New name for \"%1\":").arg(QString::fromStdString(from)),
+                    QLineEdit::Normal, QString::fromStdString(from), &accepted);
+                if (!accepted) {
+                    return;
+                }
+                const std::string target = typed.trimmed().toStdString();
+                // Checked here as well as in retagClassification, which also returns empty for it:
+                // an empty result is indistinguishable from "nothing matched", and a rename that
+                // silently does nothing reads as a bug.
+                if (target.empty()) {
+                    m_impl->statusBarManager->showTransientMessage(
+                        tr("A category needs a name. Nothing was renamed."));
+                    return;
+                }
+                if (QString::compare(QString::fromStdString(target), QString::fromStdString(from),
+                                     Qt::CaseInsensitive) == 0) {
+                    m_impl->statusBarManager->showTransientMessage(
+                        tr("The name is unchanged. Nothing was renamed."));
+                    return;
+                }
+
+                // The command is recorded AFTER the model has changed, as everywhere else in this
+                // project, so it is executed once here and then pushed. UndoRedoStack::push does
+                // not execute.
+                auto command = app::AnnotationRetagCommand::create(
+                    *m_impl->annotations,
+                    core::retagClassification(m_impl->annotations->annotations(), from, target,
+                                              std::chrono::system_clock::now()),
+                    tr("Rename Category").toStdString());
+                const bool retagged = command != nullptr;
+                if (retagged) {
+                    command->execute();
+                    m_impl->undoStack->push(std::move(command));
+                }
+
+                // Rename the entry in place so it keeps its position. normalizeCategoryList then
+                // folds a case-insensitive duplicate, which is what makes renaming onto an existing
+                // category a merge in the vocabulary as the retag has made it one in the data.
+                std::vector<std::string> list = m_impl->categoryStore->categories();
+                for (std::string& entry : list) {
+                    if (QString::compare(QString::fromStdString(entry), QString::fromStdString(from),
+                                         Qt::CaseInsensitive) == 0) {
+                        entry = target;
+                    }
+                }
+                m_impl->categoryStore->setCategories(list);
+                const std::vector<std::string> stored = m_impl->categoryStore->categories();
+                m_impl->annotationListPanel->setCategories(stored);
+                m_impl->annotationPropertiesPanel->setCategories(stored);
+
+                // Counting continues under the new name without the user re-picking it.
+                if (QString::compare(QString::fromStdString(m_impl->annotations->currentCategory()),
+                                     QString::fromStdString(from), Qt::CaseInsensitive) == 0) {
+                    m_impl->annotationListPanel->setCurrentCategory(target);
+                }
+                if (!retagged) {
+                    m_impl->statusBarManager->showTransientMessage(
+                        tr("No annotation on this slide carries \"%1\"; the list entry was renamed.")
+                            .arg(QString::fromStdString(from)));
+                }
+            });
+
+    connect(m_impl->annotationListPanel, &AnnotationListPanel::removeCategoryRequested, this,
+            [this](const std::string& category) {
+                // Vocabulary only: no annotation is touched, and the current category is left alone
+                // (a value may be current without being configured).
+                std::vector<std::string> list = m_impl->categoryStore->categories();
+                list.erase(std::remove_if(list.begin(), list.end(),
+                                          [&category](const std::string& entry) {
+                                              return QString::compare(QString::fromStdString(entry),
+                                                                      QString::fromStdString(category),
+                                                                      Qt::CaseInsensitive) == 0;
+                                          }),
+                           list.end());
                 m_impl->categoryStore->setCategories(list);
                 const std::vector<std::string> stored = m_impl->categoryStore->categories();
                 m_impl->annotationListPanel->setCategories(stored);

@@ -51,7 +51,20 @@ public:
     /// opening one wants counted.
     void setCountingEnabled(bool enabled);
 
+    /// Makes `category` the one counted under, in the combo and in the model, without going
+    /// through the combo's own handler. Empty selects "(none)". MainWindow calls this after a
+    /// rename, because the combo keeps showing the old text when the list under it changes.
+    void setCurrentCategory(const std::string& category);
+
 signals:
+    /// Rename... was chosen on a tally row. Never emitted for Unclassified. MainWindow does the
+    /// work: it owns the store, the model and the undo stack.
+    void renameCategoryRequested(const std::string& category);
+
+    /// Remove from list was chosen on a configured tally row. Vocabulary only; no annotation is
+    /// touched.
+    void removeCategoryRequested(const std::string& category);
+
     /// A row was double-clicked. MainWindow routes this to the viewport; this
     /// panel never touches the viewport itself, which is the whole point of
     /// moving the model out of it.

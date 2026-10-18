@@ -4,11 +4,13 @@
 #include "slideio/viewer/ui/AnnotationListPolicy.h"
 #include "slideio/viewer/ui/AnnotationShapeName.h"
 
+#include <QAction>
 #include <QComboBox>
 #include <QFormLayout>
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QMenu>
 #include <QScrollBar>
 #include <QShowEvent>
 #include <QSignalBlocker>
@@ -104,6 +106,41 @@ AnnotationListPanel::AnnotationListPanel(QWidget* parent)
         }
     });
 
+    m_impl->tally->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_impl->tally, &QWidget::customContextMenuRequested, this, [this](const QPoint& at) {
+        const QTreeWidgetItem* item = m_impl->tally->itemAt(at);
+        if (item == nullptr) {
+            return;
+        }
+        const QString label = item->text(0);
+        const std::string category = label.toStdString();
+        const bool configured = item->data(0, Qt::UserRole).toBool();
+        // categoryTally guarantees exactly one Unclassified row and that it is never configured;
+        // any real category spelled that way is folded into it, so the label identifies it. Rename
+        // on it would bulk-classify every unclassified annotation on the scene.
+        const bool unclassified =
+            !configured && label.compare(QStringLiteral("Unclassified"), Qt::CaseInsensitive) == 0;
+
+        QMenu menu(m_impl->tally);
+        if (!unclassified) {
+            QAction* renameAction = menu.addAction(tr("Rename..."));
+            connect(renameAction, &QAction::triggered, this,
+                    [this, category]() { emit renameCategoryRequested(category); });
+        }
+        if (configured) {
+            const int count = item->text(1).toInt();
+            const QString removeText = count == 0
+                ? tr("Remove from list")
+                : tr("Remove from list (%n annotation(s) keep it)", "", count);
+            QAction* removeAction = menu.addAction(removeText);
+            connect(removeAction, &QAction::triggered, this,
+                    [this, category]() { emit removeCategoryRequested(category); });
+        }
+        if (!menu.isEmpty()) {
+            menu.exec(m_impl->tally->viewport()->mapToGlobal(at));
+        }
+    });
+
     connect(m_impl->filter, &QLineEdit::textChanged, this, [this](const QString&) { rebuild(); });
     connect(m_impl->sort, qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this](int) { rebuild(); });
@@ -196,6 +233,29 @@ void AnnotationListPanel::setCategories(const std::vector<std::string>& categori
         }
     }
     rebuild();
+}
+
+void AnnotationListPanel::setCurrentCategory(const std::string& category)
+{
+    {
+        // Blocked: the combo's handler would write the same value back, and on an editable combo
+        // setEditText fires it with a half-updated index.
+        const QSignalBlocker blocker(m_impl->counting);
+        if (category.empty()) {
+            m_impl->counting->setCurrentIndex(0);
+        } else {
+            const QString text = QString::fromStdString(category);
+            const int at = m_impl->counting->findText(text, Qt::MatchFixedString);
+            if (at >= 0) {
+                m_impl->counting->setCurrentIndex(at);
+            } else {
+                m_impl->counting->setEditText(text);
+            }
+        }
+    }
+    if (m_impl->model != nullptr) {
+        m_impl->model->setCurrentCategory(category);
+    }
 }
 
 void AnnotationListPanel::setCountingEnabled(bool enabled)
