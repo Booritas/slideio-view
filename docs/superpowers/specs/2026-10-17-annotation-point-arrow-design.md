@@ -387,22 +387,49 @@ in screen pixels.
 No test binary creates a `QApplication`, so placement, painting and every
 routing decision in `ViewportWidget` are unreachable from any suite.
 
-**Not yet run.** The build to run them against is the installed binary at
-`build/install/release/bin/slideio-viewer.exe`, sha256
-`c539ede5312dc9d5fdaa910358e8d01911b47fa4c7925067a10cfebe2ac40755`, commit
-`589c45a`. The hash was compared against `build/build/Release/slideio-viewer.exe`
-and matched — a running viewer turns `cmake --install` into a silent no-op that
-still exits 0, so the artifact is what was checked, not the exit code. Results
-are recorded here afterwards, as groups U through AA were — what was observed,
-not what was intended.
+**Run 2026-10-18 against the installed build (sha256 `3471d563…`, commit
+`4bb744f`): 21/23 passed, AB19 and AB23 not performable — see below.** The
+binary was rebuilt and reinstalled first, and its hash compared against
+`build/build/Release/slideio-viewer.exe` and matched: a running viewer turns
+`cmake --install` into a silent no-op that still exits 0, so the artifact is
+what was checked, not the exit code. The hash recorded here before the run
+(`c539ede5…`) was wrong — the file on disk with an untouched mtime hashed
+differently under two independent tools, so the recorded value, not the file,
+was the error. Record a hash only from the artifact you are about to drive.
 
-AB19 needs a slide whose annotations are not editable, and the tool has to be
-picked first: the drawing tool actions are disabled on such a slide, so select
-the Point tool on an editable slide and then open the read-only one — the
-active tool is deliberately not reset across an open. The cheapest way to
-produce a read-only slide is the one group AA used: point the stored `slideId`
-in the annotation file at a value matching no slide, and resolve the mismatch
-dialog as Open Read-Only.
+The checks were driven from a session rather than by hand: Win32 `SetCursorPos`
+plus `mouse_event`, with the cursor position read back and confirmed before
+every press. That confirmation is not optional — the first pass of AB2 placed
+three of ten markers tens of pixels from the click because the press fired
+before the move had landed, which looks exactly like a placement defect and is
+not one. Where a check could be decided by a number rather than by eye it was:
+marker and arrowhead sizes come from counting the annotation-coloured pixels in
+a screenshot, and placement from the saved JSON, whose slide coordinates are
+exact.
+
+**AB19 and AB23 cannot be performed as written, and the setup note below was
+wrong.** It claimed the active tool is not reset when a slide opens. It is:
+`MainWindow::applyAnnotationAvailability` calls `setActiveTool(AnnotationTool::Pan)`
+whenever a real gate applies (`MainWindow.cpp:1746`), and `m_active` on the
+persistence service only changes in `beginSlide`/`endSlide`, so every transition
+into non-editable is also a transition to the Pan tool. On a read-only slide all
+six drawing-tool actions are disabled, the tool is forced to Pan, and the status
+bar carries a persistent "Annotations disabled" indicator. Both checks were run
+anyway and both produced the outcome they ask for — a click with the Point tool
+and a drag with the Rectangle tool created nothing, the list stayed at 12 and
+the file on disk was unchanged — but neither reached the `annotationsEditable()`
+gate in `commitDrawDrag`, because nothing in the UI can. That gate is defence in
+depth behind two layers that already hold, exactly as `commitPendingShape`'s is.
+It is kept, not removed: it costs one branch, and the layer in front of it is a
+UI decision that a later round could change.
+
+AB19 needs a slide whose annotations are not editable. Producing one is easy and
+was done the way group AA did it: point the stored `slideId` in the annotation
+file at a value matching no slide, and resolve the mismatch dialog as Open
+Read-Only; the file was restored afterwards from a byte-identical backup. What
+is not possible is the second half — having a drawing tool active on it. This
+paragraph used to say the tool survives the open; it does not, and the run above
+records why.
 
 | | Check |
 |---|---|
@@ -429,6 +456,42 @@ dialog as Open Read-Only.
 | AB21 | Place a marker over pale background and over dark tissue: visible against both. |
 | AB22 | Delete a marker, Ctrl+Z, Ctrl+Y: it comes back, then goes again, in one step each. |
 | AB23 | With the read-only slide of AB19 still open, select the **Rectangle** tool and drag: refused with the status-bar message, no rectangle created. This is the pre-existing defect `commitDrawDrag`'s new gate fixes — AB19 exercises the gate through the Point tool, and nothing otherwise drives the path the rectangle and ellipse tools have been using unguarded since persistence landed. The ellipse shares that path; one check covers both. |
+
+**What was observed.** AB1–AB18 and AB20–AB22 passed; AB19 and AB23 are covered
+above. The numbers worth keeping:
+
+- **AB3** — the marker's disc measured 10×10 px with 88 coloured pixels at 1.6x
+  (3.7%), and 10×10 px with 88 coloured pixels at 305.2x (693.7%). A 190-fold
+  zoom range moved neither its size nor its position by a pixel.
+- **AB4** — the grab radius is 6 px exactly: a click 6 px from the centre
+  selects, 7 px does not. The disc is 10 px across plus a 1 px outline, so the
+  target and the glyph share an edge. This is the one thing the parameterised
+  disc radius was for, and it holds by construction rather than by coincidence.
+- **AB2, AB5** — placement and movement are exact in slide coordinates: ten
+  markers 200 screen px apart came out 5450.9 slide units apart every time, and
+  a 200 px drag moved one marker by 5451.0 units with the other axis unchanged.
+- **AB6, AB7** — tail is the press and head is the release, to the unit, in both
+  directions. The right-to-left and bottom-to-top arrow stored `tail` greater
+  than `head` on both axes and still drew its head at the release end: the pair
+  is not normalised, which is the one thing an arrow cannot survive getting
+  wrong.
+- **AB9** — the head tracked the shaft down: 12 px of head at shafts of 1902,
+  735, 284, 111 and 44 px; 8 px at a shaft of 18; 2 px at a shaft of 8. The
+  fixed size governs until half the shaft falls below it and the fraction takes
+  over, and the head never exceeded half the shaft at any zoom.
+- **AB14, AB15** — a marker reads type Point, length 0.00 µm, no area; an arrow
+  reads type Arrow, length 2.77 mm, no area, and the row is labelled Length, not
+  Perimeter.
+- **AB16** — the marker landed on the viewport centre to within a pixel and the
+  zoom read 4.2x before and 4.2x after.
+- **AB17, AB18** — close and reopen returned all twelve annotations with every
+  arrow's direction intact, and the file on disk was byte-identical before and
+  after the reopen, `schemaVersion` 1.
+
+**One defect found, outside this round's code.** `"&Point Marker"` and
+`"&Preferences..."` both declare `P` as their mnemonic in the Tools menu, and
+both render with `P` underlined. `"P&olygon"` avoids the clash deliberately;
+the new action did not. `"Point &Marker"` fixes it.
 
 ---
 
