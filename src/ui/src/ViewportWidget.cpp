@@ -1554,8 +1554,11 @@ struct ViewportWidget::Impl
     std::optional<core::BoxHandle> resizingHandle;
     std::optional<core::Annotation> boxResizeOriginal;
     // The box as it was when the handle was picked up. Every frame resizes
-    // THIS rather than the previous frame's output, so the drag cannot drift,
-    // and the grab offset is not lost.
+    // THIS rather than the previous frame's output, so the drag cannot drift.
+    // Keeping the grab offset is a separate matter and a separate function:
+    // the drag applies the press delta through core::withBoxHandleDragged,
+    // and this member alone never did that -- the claim that it did stood
+    // here, untrue, from the box-resize round until 2026-10-18.
     core::RectF boxResizeAnchorBox;
     // The box this drag last wrote. If the shape is not where we left it,
     // something else rewrote the geometry mid-drag -- an undo is the reachable
@@ -4972,9 +4975,16 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event)
             // Resize the ANCHOR box, not the current one: every frame
             // transforms a pristine original rather than the previous frame's
             // output, the rule 5.2 of the geometry-widening spec sets.
-            const core::RectF resized =
-                core::withBoxHandleAt(m_impl->boxResizeAnchorBox, *m_impl->resizingHandle,
-                                      core::PointF{slideX, slideY});
+            //
+            // Dragged BY the press delta, not moved TO the cursor. The press
+            // may land anywhere within nearestBoxHandle's tolerance of the
+            // handle, so withBoxHandleAt with the raw cursor would snap the
+            // edge across that offset on the first mouse-move -- see
+            // core::withBoxHandleDragged. The vertex drag below has always
+            // done this; box resize did not until 2026-10-18.
+            const core::RectF resized = core::withBoxHandleDragged(
+                m_impl->boxResizeAnchorBox, *m_impl->resizingHandle, m_impl->movePressSlide,
+                core::PointF{slideX, slideY});
             if (const auto geometry = core::withBoxReplaced(current->geometry(), resized)) {
                 m_impl->annotations->setGeometry(id, *geometry);
                 m_impl->boxResizeLastApplied = core::boundingBox(*geometry);

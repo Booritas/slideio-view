@@ -288,3 +288,74 @@ TEST_CASE("a resized rectangle and ellipse round-trip through the serializer",
         REQUIRE(before.height == after.height);
     }
 }
+
+TEST_CASE("withBoxHandleDragged moves the handle by the drag, not to the cursor",
+          "[core][BoxResize]")
+{
+    // The press lands 5 units inside the Right handle rather than exactly on
+    // it -- nearestBoxHandle accepts anything within its tolerance -- and then
+    // the cursor moves 30 to the right. The edge must travel 30, not snap the
+    // 5 away first.
+    const PointF pressed{105.0, 40.0};
+    const PointF cursor{135.0, 40.0};
+
+    const RectF dragged = withBoxHandleDragged(box(), BoxHandle::Right, pressed, cursor);
+
+    REQUIRE(dragged.x == 10.0);
+    REQUIRE(dragged.width == 130.0);
+    REQUIRE(dragged.y == 20.0);
+    REQUIRE(dragged.height == 40.0);
+}
+
+TEST_CASE("withBoxHandleDragged leaves the box alone when the cursor has not moved",
+          "[core][BoxResize]")
+{
+    // The whole defect in one assertion: a press near a handle followed by no
+    // movement must not resize anything. Snapping to the cursor would shift
+    // the edge by the grab offset and record an undo step for a click.
+    const PointF pressed{105.0, 40.0};
+
+    const RectF dragged = withBoxHandleDragged(box(), BoxHandle::Right, pressed, pressed);
+
+    REQUIRE(dragged.x == box().x);
+    REQUIRE(dragged.y == box().y);
+    REQUIRE(dragged.width == box().width);
+    REQUIRE(dragged.height == box().height);
+}
+
+TEST_CASE("withBoxHandleDragged drags a corner on both axes", "[core][BoxResize]")
+{
+    const PointF pressed{8.0, 23.0};   // Near TopLeft (10, 20), not on it.
+    const PointF cursor{18.0, 13.0};   // Moved +10 x, -10 y.
+
+    const RectF dragged = withBoxHandleDragged(box(), BoxHandle::TopLeft, pressed, cursor);
+
+    REQUIRE(dragged.x == 20.0);
+    REQUIRE(dragged.y == 10.0);
+    REQUIRE(dragged.width == 90.0);
+    REQUIRE(dragged.height == 50.0);
+}
+
+TEST_CASE("withBoxHandleDragged still flips a box dragged past its opposite edge",
+          "[core][BoxResize]")
+{
+    // The flip freedom withBoxHandleAt documents must survive the offset.
+    const PointF pressed{110.0, 40.0};
+    const PointF cursor{0.0, 40.0};
+
+    const RectF dragged = withBoxHandleDragged(box(), BoxHandle::Right, pressed, cursor);
+
+    REQUIRE(dragged.width == -10.0);
+}
+
+TEST_CASE("nearestBoxHandle refuses a non-finite point", "[core][BoxResize]")
+{
+    // distance comes back NaN, and `distance > tolerance` is FALSE for NaN, so
+    // the old range test let it through and answered TopLeft -- a resize armed
+    // on a coordinate that does not exist.
+    const double nan = std::nan("");
+
+    REQUIRE_FALSE(nearestBoxHandle(box(), PointF{nan, 40.0}, 6.0).has_value());
+    REQUIRE_FALSE(nearestBoxHandle(box(), PointF{60.0, nan}, 6.0).has_value());
+    REQUIRE_FALSE(nearestBoxHandle(box(), PointF{nan, nan}, 6.0).has_value());
+}

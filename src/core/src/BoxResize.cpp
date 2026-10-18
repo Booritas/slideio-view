@@ -32,7 +32,11 @@ std::optional<BoxHandle> nearestBoxHandle(const RectF& box, PointF point,
     double bestDistance = 0.0;
     for (std::size_t i = 0; i < handles.size(); ++i) {
         const double distance = std::hypot(point.x - handles[i].x, point.y - handles[i].y);
-        if (distance > tolerance) {
+        // Written as the negation of "is in range" rather than as
+        // "distance > tolerance" so that a NaN distance is refused too. NaN
+        // fails every comparison, so the positive form let a non-finite point
+        // through and armed a resize on a coordinate that does not exist.
+        if (!(distance <= tolerance)) {
             continue;
         }
         // Strictly nearer, so a tie keeps the earlier enumerator and a
@@ -125,6 +129,17 @@ RectF withBoxHandleAt(const RectF& box, BoxHandle handle, PointF position)
     // Extents may come out negative. See the header: that is the flip, not a
     // bug, and normalising here would stop the shape flipping at all.
     return RectF{left, top, right - left, bottom - top};
+}
+
+RectF withBoxHandleDragged(const RectF& box, BoxHandle handle, PointF pressPoint,
+                           PointF cursorPoint)
+{
+    // Where the handle actually sat when it was grabbed, which is not where
+    // the press landed: see the header.
+    const PointF origin = boxHandlePositions(box)[static_cast<std::size_t>(handle)];
+    const PointF moved{origin.x + (cursorPoint.x - pressPoint.x),
+                       origin.y + (cursorPoint.y - pressPoint.y)};
+    return withBoxHandleAt(box, handle, moved);
 }
 
 std::optional<AnnotationGeometry> withBoxReplaced(const AnnotationGeometry& geom, const RectF& box)

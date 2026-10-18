@@ -52,6 +52,24 @@ enum class BoxHandle
 /// instead of flipping. Design spec 6.4.
 [[nodiscard]] RectF withBoxHandleAt(const RectF& box, BoxHandle handle, PointF position);
 
+/// `box` with `handle` moved BY the drag from `pressPoint` to `cursorPoint`,
+/// rather than moved TO the cursor.
+///
+/// This is what a drag means, and withBoxHandleAt alone is not it.
+/// nearestBoxHandle accepts a press up to its tolerance away from the handle,
+/// so the press point is usually not the handle point: handing the raw cursor
+/// to withBoxHandleAt snaps the edge across that grab offset on the first
+/// mouse-move. A press five pixels inside a handle followed by a one-pixel
+/// twitch would then resize the shape, record an undo step and autosave it --
+/// a measured region changed by a gesture the user read as a click, and at low
+/// zoom those pixels are many microns of slide.
+///
+/// The vertex drag has always applied its press delta for the same reason.
+/// `box` is the box as it was when the handle was picked up, so every frame
+/// transforms the pristine original and the drag cannot accumulate error.
+[[nodiscard]] RectF withBoxHandleDragged(const RectF& box, BoxHandle handle, PointF pressPoint,
+                                         PointF cursorPoint);
+
 /// `geom` rebuilt around `box`, preserving its type; absent for a shape that
 /// is not box-defined.
 ///
