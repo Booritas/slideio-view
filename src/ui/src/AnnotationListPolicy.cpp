@@ -1,5 +1,7 @@
 #include "slideio/viewer/ui/AnnotationListPolicy.h"
 
+#include "slideio/viewer/core/AnnotationCategories.h"
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -144,8 +146,6 @@ std::string annotationDockTitle(std::size_t total, std::size_t shown)
 std::vector<CategoryTallyRow> categoryTally(const std::vector<core::Annotation>& annotations,
                                             const std::vector<std::string>& categories)
 {
-    const std::string unclassifiedKey = "unclassified";
-
     std::vector<CategoryTallyRow> rows;
     std::vector<std::string> keys;  // Parallel to rows, lowercased for matching.
     for (const std::string& category : categories) {
@@ -154,7 +154,7 @@ std::vector<CategoryTallyRow> categoryTally(const std::vector<core::Annotation>&
             continue;
         }
         const std::string key = toLower(clean);
-        if (key == unclassifiedKey) {
+        if (core::isUnclassifiedCategory(clean)) {
             continue;
         }
         if (std::find(keys.begin(), keys.end(), key) != keys.end()) {
@@ -167,7 +167,7 @@ std::vector<CategoryTallyRow> categoryTally(const std::vector<core::Annotation>&
     std::size_t unclassified = 0;
     for (const core::Annotation& annotation : annotations) {
         const std::string clean = trimmedText(annotation.properties().classification);
-        if (clean.empty() || toLower(clean) == unclassifiedKey) {
+        if (clean.empty() || core::isUnclassifiedCategory(clean)) {
             ++unclassified;
             continue;
         }
