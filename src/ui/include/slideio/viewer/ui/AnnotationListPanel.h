@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+class QEvent;
 class QKeyEvent;
 class QShowEvent;
 
@@ -82,6 +83,11 @@ signals:
     void categoryUsed(const std::string& category);
 
 protected:
+    /// Watches the counting combo and its line edit so the stepping keys and the
+    /// wheel cannot reassign the counting category. The decision is
+    /// countingComboSwallowsKey/Wheel, which a test can reach; this does nothing
+    /// but ask it and consume the event. See AC26.
+    bool eventFilter(QObject* watched, QEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void showEvent(QShowEvent* event) override;
 

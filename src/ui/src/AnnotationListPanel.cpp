@@ -4,6 +4,7 @@
 #include "slideio/viewer/ui/AnnotationListPolicy.h"
 #include "slideio/viewer/ui/AnnotationShapeName.h"
 
+#include <QAbstractItemView>
 #include <QAction>
 #include <QComboBox>
 #include <QFormLayout>
@@ -65,6 +66,13 @@ AnnotationListPanel::AnnotationListPanel(QWidget* parent)
     m_impl->counting->setInsertPolicy(QComboBox::NoInsert);
     m_impl->counting->setToolTip(tr("New point markers are counted under this category"));
     m_impl->counting->addItem(tr("(none)"));
+    // Both the combo and its line edit: an editable combo gives focus to the line
+    // edit, which ignores the stepping keys so they propagate up to the combo.
+    // Filtering at both ends means neither route reaches QComboBox::keyPressEvent.
+    m_impl->counting->installEventFilter(this);
+    if (QLineEdit* countingEdit = m_impl->counting->lineEdit(); countingEdit != nullptr) {
+        countingEdit->installEventFilter(this);
+    }
 
     m_impl->tally = new QTreeWidget(contents);
     m_impl->tally->setColumnCount(2);
@@ -360,6 +368,28 @@ void AnnotationListPanel::applySelection(const std::string& id)
             return;
         }
     }
+}
+
+bool AnnotationListPanel::eventFilter(QObject* watched, QEvent* event)
+{
+    const bool onCounting = m_impl->counting != nullptr &&
+                            (watched == m_impl->counting || watched == m_impl->counting->lineEdit());
+    if (onCounting) {
+        // Asked of the view rather than remembered: the popup opens and closes
+        // without telling this panel, and a stale flag here would either break
+        // keyboard selection or let the accident back in.
+        const QAbstractItemView* popup = m_impl->counting->view();
+        const bool popupVisible = popup != nullptr && popup->isVisible();
+        if (event->type() == QEvent::KeyPress) {
+            const auto* keyEvent = static_cast<QKeyEvent*>(event);
+            if (countingComboSwallowsKey(keyEvent->key(), popupVisible)) {
+                return true;
+            }
+        } else if (event->type() == QEvent::Wheel && countingComboSwallowsWheel(popupVisible)) {
+            return true;
+        }
+    }
+    return QDockWidget::eventFilter(watched, event);
 }
 
 void AnnotationListPanel::keyPressEvent(QKeyEvent* event)

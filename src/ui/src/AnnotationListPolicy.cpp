@@ -2,6 +2,8 @@
 
 #include "slideio/viewer/core/AnnotationCategories.h"
 
+#include <QtCore/qnamespace.h>
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -186,6 +188,27 @@ std::vector<CategoryTallyRow> categoryTally(const std::vector<core::Annotation>&
         rows.push_back(CategoryTallyRow{"Unclassified", unclassified, false, true});
     }
     return rows;
+}
+
+bool countingComboSwallowsKey(int key, bool popupVisible)
+{
+    if (popupVisible) {
+        return false;
+    }
+    switch (key) {
+    case Qt::Key_Up:
+    case Qt::Key_Down:
+    case Qt::Key_PageUp:
+    case Qt::Key_PageDown:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool countingComboSwallowsWheel(bool popupVisible)
+{
+    return !popupVisible;
 }
 
 } // namespace slideio::viewer::ui

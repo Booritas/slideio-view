@@ -100,4 +100,30 @@ struct CategoryTallyRow
     const std::vector<core::Annotation>& annotations,
     const std::vector<std::string>& categories);
 
+/// Whether the counting combo must swallow this key press rather than let
+/// QComboBox act on it. `key` is a Qt::Key value; `popupVisible` says whether
+/// the dropdown is open.
+///
+/// A CLOSED editable QComboBox treats Up, Down, PageUp and PageDown as "step to
+/// the next item", replacing whatever the line edit holds. On this combo that
+/// silently reassigns the clinical counting category. Group AC26 found it: a
+/// category was typed, a marker counted under it, Down was pressed, and the
+/// next marker was counted under a different category with nothing announcing
+/// the change. The user of a several-hundred-click pass reads the slide and the
+/// tally, not the combo, so every click after the bump is miscounted -- and the
+/// tally, being correct about what was stored, agrees with the mistake.
+///
+/// With the popup OPEN the same keys only move the highlight and commit nothing
+/// until Enter, so deliberate keyboard selection is untouched: F4 or Alt+Down
+/// opens the list, the arrows walk it, Enter picks. That is the gesture this
+/// keeps while removing the accident, and it is why the predicate needs to know
+/// whether the popup is up rather than refusing the keys outright.
+[[nodiscard]] bool countingComboSwallowsKey(int key, bool popupVisible);
+
+/// The same rule for a wheel event: a wheel over a CLOSED combo steps its items
+/// exactly as an arrow key does, and a hand resting on a trackpad while the
+/// cursor sits over the strip is at least as likely as a bumped arrow key.
+/// Over an open popup the wheel scrolls the list and commits nothing.
+[[nodiscard]] bool countingComboSwallowsWheel(bool popupVisible);
+
 } // namespace slideio::viewer::ui

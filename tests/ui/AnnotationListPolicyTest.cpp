@@ -2,6 +2,8 @@
 
 #include "slideio/viewer/ui/AnnotationListPolicy.h"
 
+#include <QtCore/qnamespace.h>
+
 #include <chrono>
 #include <string>
 #include <utility>
@@ -498,4 +500,52 @@ TEST_CASE("categoryTally flags only the appended Unclassified row as synthetic",
     }
     REQUIRE(rows.back().category == "Unclassified");
     REQUIRE(rows.back().synthetic);
+}
+
+// The counting combo's key and wheel rule. Group AC26 found that a closed
+// editable combo steps its item list on an arrow key, silently reassigning the
+// clinical counting category; these pin the predicate that stops it.
+
+TEST_CASE("countingComboSwallowsKey swallows the stepping keys while the popup is closed",
+          "[ui][CountingCombo]")
+{
+    REQUIRE(ui::countingComboSwallowsKey(Qt::Key_Down, false));
+    REQUIRE(ui::countingComboSwallowsKey(Qt::Key_Up, false));
+    REQUIRE(ui::countingComboSwallowsKey(Qt::Key_PageDown, false));
+    REQUIRE(ui::countingComboSwallowsKey(Qt::Key_PageUp, false));
+}
+
+TEST_CASE("countingComboSwallowsKey leaves the stepping keys alone while the popup is open",
+          "[ui][CountingCombo]")
+{
+    // Deliberate keyboard selection -- F4, arrows, Enter -- must keep working;
+    // inside an open popup the arrows only move the highlight and commit
+    // nothing until Enter.
+    REQUIRE_FALSE(ui::countingComboSwallowsKey(Qt::Key_Down, true));
+    REQUIRE_FALSE(ui::countingComboSwallowsKey(Qt::Key_Up, true));
+    REQUIRE_FALSE(ui::countingComboSwallowsKey(Qt::Key_PageDown, true));
+    REQUIRE_FALSE(ui::countingComboSwallowsKey(Qt::Key_PageUp, true));
+}
+
+TEST_CASE("countingComboSwallowsKey passes every editing key through", "[ui][CountingCombo]")
+{
+    // Typing a new category is the feature AC11 covers; the fix must not touch
+    // it. Home and End are text navigation on an editable combo, not item
+    // stepping, so they pass too.
+    for (const int key : {Qt::Key_A, Qt::Key_Backspace, Qt::Key_Delete, Qt::Key_Left,
+                          Qt::Key_Right, Qt::Key_Home, Qt::Key_End, Qt::Key_Return,
+                          Qt::Key_Enter, Qt::Key_Escape, Qt::Key_Tab}) {
+        REQUIRE_FALSE(ui::countingComboSwallowsKey(key, false));
+        REQUIRE_FALSE(ui::countingComboSwallowsKey(key, true));
+    }
+}
+
+TEST_CASE("countingComboSwallowsWheel swallows the wheel only while the popup is closed",
+          "[ui][CountingCombo]")
+{
+    // A wheel over a closed combo steps its items exactly as an arrow key
+    // does, and a hand resting on a trackpad during a counting pass is at
+    // least as likely as a bumped arrow key.
+    REQUIRE(ui::countingComboSwallowsWheel(false));
+    REQUIRE_FALSE(ui::countingComboSwallowsWheel(true));
 }
