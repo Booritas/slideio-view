@@ -2,6 +2,8 @@
 
 #include "slideio/viewer/infra/QSettingsAnnotationCategoryStore.h"
 
+#include <QSettings>
+#include <QStringList>
 #include <QTemporaryDir>
 
 #include <string>
@@ -68,4 +70,24 @@ TEST_CASE("An explicitly empty category list is kept, not replaced by the defaul
     const QSettingsAnnotationCategoryStore reopened(ini);
 
     REQUIRE(reopened.categories().empty());
+}
+
+TEST_CASE("The store normalises a hand-edited list on read", "[infra][CategoryStore]")
+{
+    // The value is a plain QSettings entry, editable in the INI file or
+    // registry, so it can hold what setCategories would never have written.
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const std::string ini = dir.filePath("categories.ini").toStdString();
+
+    {
+        QSettings raw(QString::fromStdString(ini), QSettings::IniFormat);
+        raw.setValue("annotations/categories",
+                     QStringList{"  Mitosis ", "", "MITOSIS", "Unclassified", "Lymphocyte"});
+        raw.sync();
+    }
+
+    const QSettingsAnnotationCategoryStore store(ini);
+
+    REQUIRE(store.categories() == std::vector<std::string>{"Mitosis", "Lymphocyte"});
 }

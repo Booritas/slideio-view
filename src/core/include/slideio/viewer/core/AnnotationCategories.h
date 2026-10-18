@@ -21,7 +21,10 @@ inline const std::vector<std::string> kDefaultAnnotationCategories{
 /// The user's category list, cleaned up for storage and display.
 ///
 /// Trims each entry, drops entries that are empty once trimmed, and removes
-/// case-insensitive duplicates keeping the FIRST spelling seen. Order is
+/// case-insensitive duplicates keeping the FIRST spelling seen. Also drops
+/// "Unclassified" in any case: it is the absence of a value, not a category, and
+/// a configured one would collide with the synthetic row categoryTally appends
+/// for annotations with no classification. Order is
 /// otherwise preserved and is never sorted: categoryTally() displays tallies in
 /// list order, and a list that sorted itself would reorder the counting rows
 /// behind the user mid-count.
@@ -39,7 +42,8 @@ struct RetagChange
 /// Every annotation whose classification equals `from` (case-insensitively),
 /// paired with the state it should take.
 ///
-/// `to` is trimmed; renaming a category to itself, or to the same word in a
+/// `to` is trimmed; an empty or blank `to` is refused (it would bulk-unclassify
+/// every match as one undo step), as is renaming a category to itself, or to the same word in a
 /// different case, yields an EMPTY result, and an empty result means the caller
 /// records no undo step at all -- the rule AnnotationEditCommand::create already
 /// applies when it refuses to build a command that records nothing.

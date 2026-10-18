@@ -41,7 +41,7 @@ std::vector<std::string> QSettingsAnnotationCategoryStore::categories() const
     for (const QString& entry : stored) {
         result.push_back(entry.toStdString());
     }
-    return result;
+    return core::normalizeCategoryList(result);
 }
 
 void QSettingsAnnotationCategoryStore::setCategories(const std::vector<std::string>& categories)

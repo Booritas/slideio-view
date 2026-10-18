@@ -38,6 +38,15 @@ TEST_CASE("normalizeCategoryList on an empty or all-blank list gives an empty li
     REQUIRE(normalizeCategoryList({"", "  ", "\t"}).empty());
 }
 
+TEST_CASE("normalizeCategoryList refuses Unclassified in any case or padding", "[core][Categories]")
+{
+    // "Unclassified" is the absence of a classification, not a category. A
+    // configured one would collide with the synthetic tally row of that name.
+    REQUIRE(normalizeCategoryList({"Unclassified", "unclassified", "  UNCLASSIFIED  "}).empty());
+    REQUIRE(normalizeCategoryList({"Tumor", "Unclassified", "Stroma"})
+            == std::vector<std::string>{"Tumor", "Stroma"});
+}
+
 TEST_CASE("The default category list is FR-ANN-13's five", "[core][Categories]")
 {
     REQUIRE(slideio::viewer::core::kDefaultAnnotationCategories
@@ -122,6 +131,16 @@ TEST_CASE("retagClassification renaming a category to itself changes nothing",
 
     REQUIRE(retagClassification(annotations, "Mitosis", "Mitosis", kStamp).empty());
     REQUIRE(retagClassification(annotations, "Mitosis", "mitosis", kStamp).empty());
+}
+
+TEST_CASE("retagClassification refuses an empty or blank target", "[core][Categories]")
+{
+    // Otherwise a rename to "" would silently unclassify every matching
+    // annotation as one undo step.
+    const std::vector<Annotation> annotations{markerWith("a", "Mitosis")};
+
+    REQUIRE(retagClassification(annotations, "Mitosis", "", kStamp).empty());
+    REQUIRE(retagClassification(annotations, "Mitosis", "   ", kStamp).empty());
 }
 
 TEST_CASE("retagClassification trims its target", "[core][Categories]")

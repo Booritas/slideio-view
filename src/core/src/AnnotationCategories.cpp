@@ -33,7 +33,7 @@ std::vector<std::string> normalizeCategoryList(const std::vector<std::string>& r
     std::vector<std::string> seen;
     for (const std::string& entry : raw) {
         const std::string clean = trimmed(entry);
-        if (clean.empty()) {
+        if (clean.empty() || toLowerAscii(clean) == "unclassified") {
             continue;
         }
         const std::string key = toLowerAscii(clean);
@@ -52,8 +52,10 @@ std::vector<RetagChange> retagClassification(const std::vector<Annotation>& anno
 {
     const std::string target = trimmed(to);
     const std::string fromKey = toLowerAscii(trimmed(from));
-    if (fromKey.empty() || fromKey == toLowerAscii(target)) {
-        // Nothing to do, and nothing to record. Renaming a category to itself
+    if (fromKey.empty() || target.empty() || fromKey == toLowerAscii(target)) {
+        // Nothing to do, and nothing to record. An empty target would silently
+        // unclassify every match as one undo step, so it is refused here, where a
+        // test can reach it. Renaming a category to itself
         // must not leave a step on the undo stack that does nothing.
         return {};
     }
