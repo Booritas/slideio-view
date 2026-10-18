@@ -1,6 +1,6 @@
 # Categorized counting — design
 
-Status: approved in conversation 2026-10-18, not yet implemented.
+Status: implemented in commits `d6dacc7..4980a86`, 2026-10-18. Manual group AC has not been run — see §7.5.
 
 ## 1. Scope
 
@@ -334,6 +334,13 @@ say so once this lands, rather than being quietly falsified.
   Renaming it would mean bulk-classifying every unclassified annotation on the
   scene — the single most destructive thing this feature could offer — from a
   menu item that reads "Rename".
+- **The category list is not on the undo stack.** The list is a global
+  application preference shared by every slide, while the undo stack is
+  per-slide and cleared on a slide change. Putting the vocabulary on it would let
+  an undo on one slide silently revert a change another slide is already using.
+  A rename therefore undoes its annotation changes but not its vocabulary
+  change: after Ctrl+Z the markers carry the old name and the list still holds
+  the new one. This is intended, and is checked by AC28.
 
 ### 6.5 Where it lives, and removal
 
@@ -405,6 +412,14 @@ rather than after: group AB's list found two defects its code review did not,
 and the box-resize round recorded that writing the list after the review was the
 wrong order.
 
+**Group AC has not been run.** The Windows desktop session became disconnected
+partway through implementation, so screen capture fails with "The handle is
+invalid" and no agent could run or pre-run any check. Tasks 7–9's UI wiring was
+therefore gated by code review alone; only Task 7 was verified by eye, before
+the session dropped. Nothing below records an observation. AC25–AC30 were added
+at the end of the round, after review; run the whole group against
+the installed binary and record what is seen here.
+
 | | Check |
 |---|---|
 | AC1 | Preferences shows the five default categories on a profile that has never set them. |
@@ -431,6 +446,12 @@ wrong order.
 | AC22 | On a read-only slide the counting combo is disabled, as the drawing tools already are, and the tally rows still show the correct counts. |
 | AC23 | Place 60 markers, then undo 50: the stack stops at its limit without losing the tally's agreement with the list. |
 | AC24 | Rename the current category: counting continues under the new name with nothing re-picked. Remove the current category from the list: it stays current, and (none) is what clears it. |
+| AC25 | Clear the category list in Preferences, restart the viewer: it stays empty and the five defaults do not come back. (The empty-list round-trip is proven only on the INI backend the tests use; production uses the native registry backend.) |
+| AC26 | Place the first marker under a freshly typed category, then open the counting combo's dropdown, dismiss it with Escape, and press Down then Up: the counting category and the next marker's classification are unchanged. |
+| AC27 | The same as AC26, with a category typed in a different case from a configured one (for example `tumor` against `Tumor`). |
+| AC28 | Rename a category and press Ctrl+Z only, not Ctrl+Y: the annotations revert and the category list stays renamed. This is intended, not a defect (§6.4). |
+| AC29 | Right-click a tally row: the menu appears at the row under the cursor. The keyboard Menu key opens it on the selected row. |
+| AC30 | The transient refusal messages (empty rename target; "Unclassified is not a category") reach the status bar and are legible there. |
 
 ## 8. Deliberate absences
 
