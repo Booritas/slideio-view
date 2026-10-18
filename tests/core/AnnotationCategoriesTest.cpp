@@ -174,3 +174,16 @@ TEST_CASE("retagClassification refuses Unclassified as a target or a source, in 
         CHECK(retagClassification(carrying, name, "Mitosis", kStamp).empty());
     }
 }
+
+TEST_CASE("retagClassification matches a stored classification with surrounding whitespace",
+          "[core][Categories]")
+{
+    const std::vector<Annotation> annotations{markerWith("a", " Mitosis "), markerWith("b", "\tmitosis")};
+
+    const auto changes = retagClassification(annotations, "Mitosis", "Mitotic figure", kStamp);
+
+    REQUIRE(changes.size() == 2);
+    REQUIRE(changes[0].before.properties().classification == " Mitosis ");
+    REQUIRE(changes[0].after.properties().classification == "Mitotic figure");
+    REQUIRE(changes[1].after.properties().classification == "Mitotic figure");
+}

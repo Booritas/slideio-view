@@ -64,6 +64,8 @@ TEST_CASE("A retag of many annotations is one step on the undo stack",
     stack.push(AnnotationRetagCommand::create(model, std::move(changes), "Rename category"));
 
     stack.undo();
+    // Exactly one step: a second step beneath it would leave canUndo() true here.
+    REQUIRE_FALSE(stack.canUndo());
     REQUIRE(model.annotations()[0].properties().classification == "Mitossis");
     REQUIRE(model.annotations()[2].properties().classification == "Mitossis");
 

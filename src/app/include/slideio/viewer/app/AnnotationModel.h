@@ -75,6 +75,10 @@ public:
     /// exists; retagging what exists is AnnotationRetagCommand, which is
     /// explicit and undoable.
     ///
+    /// "Unclassified" (any case, padded or not) is the absence of a value, so it
+    /// is stored as the empty category: stamping it would write a literal that
+    /// categoryTally folds into the synthetic row and Rename refuses.
+    ///
     /// Session state: it deliberately survives clear(), because a study is
     /// often several slides counted the same way.
     void setCurrentCategory(std::string category);

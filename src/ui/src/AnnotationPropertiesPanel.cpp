@@ -226,8 +226,10 @@ void AnnotationPropertiesPanel::setAnnotationModel(app::AnnotationModel* model)
         };
         connect(m_impl->model, &app::AnnotationModel::cleared, this, refreshAfterReset);
         connect(m_impl->model, &app::AnnotationModel::modelReset, this, refreshAfterReset);
-        // A retag changes the classification string of whatever is selected.
-        connect(m_impl->model, &app::AnnotationModel::annotationsBulkChanged, this, refreshAfterReset);
+        // A retag changes the classification string of whatever is selected, but every
+        // annotation still exists and no geometry moved -- so this is an ordinary refresh,
+        // and a field the user has focus in stays theirs.
+        connect(m_impl->model, &app::AnnotationModel::annotationsBulkChanged, this, refresh);
         connect(m_impl->model, &app::AnnotationModel::selectionChanged, this, [this](const std::string& id) {
             // Commit first: Qt does not guarantee focus-out reaches the field
             // before the new selection arrives, and a label typed and then

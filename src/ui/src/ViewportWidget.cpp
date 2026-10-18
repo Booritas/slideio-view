@@ -2208,6 +2208,10 @@ ViewportWidget::ViewportWidget(app::AnnotationModel& model, QWidget* parent)
             repaintOnModelChange);
     connect(m_impl->annotations, &app::AnnotationModel::modelReset, this,
             repaintOnModelChange);
+    // Harmless today only because nothing the painter draws reads classification; a
+    // later round that paints a classification-derived label would otherwise go stale.
+    connect(m_impl->annotations, &app::AnnotationModel::annotationsBulkChanged, this,
+            repaintOnModelChange);
 }
 
 ViewportWidget::~ViewportWidget()

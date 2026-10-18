@@ -1,5 +1,7 @@
 #include "slideio/viewer/ui/AnnotationPropertiesEdit.h"
 
+#include "slideio/viewer/core/AnnotationCategories.h"
+
 #include <algorithm>
 
 namespace slideio::viewer::ui
@@ -20,7 +22,8 @@ std::optional<core::AnnotationProperties> propertiesEdit(
 {
     core::AnnotationProperties edited;
     edited.label = fields.label;
-    edited.classification = fields.classification;
+    // "Unclassified" is the absence of a value, never one a user may store.
+    edited.classification = core::isUnclassifiedCategory(fields.classification) ? std::string{} : fields.classification;
     edited.notes = fields.notes;
     edited.color = fields.color;
     // Clamp lineWidth to 1-5 and fillOpacity to 0-1. NaN inputs are handled

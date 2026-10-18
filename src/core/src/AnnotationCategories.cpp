@@ -61,9 +61,9 @@ std::vector<RetagChange> retagClassification(const std::vector<Annotation>& anno
         || isUnclassifiedCategory(target) || isUnclassifiedCategory(from)) {
         // Nothing to do, and nothing to record. An empty target would silently
         // unclassify every match as one undo step, so it is refused here, where a
-        // test can reach it. "Unclassified" is refused on both sides: as a target it would write a string
-        // categoryTally folds into the synthetic row, and as a source it would miss every empty one.
-        // Renaming a category to itself
+        // test can reach it. "Unclassified" is refused on both sides: as a target
+        // it would write a string categoryTally folds into the synthetic row, and
+        // as a source it would miss every empty one. Renaming a category to itself
         // must not leave a step on the undo stack that does nothing.
         return {};
     }

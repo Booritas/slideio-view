@@ -18,20 +18,21 @@ namespace slideio::viewer::core
 inline const std::vector<std::string> kDefaultAnnotationCategories{
     "Tumor", "Stroma", "Necrosis", "Normal", "Artifact"};
 
+/// True for "Unclassified" in any case, ignoring surrounding whitespace: the
+/// absence of a value, never a category. The one definition core uses to
+/// refuse it.
+[[nodiscard]] bool isUnclassifiedCategory(const std::string& text);
+
 /// The user's category list, cleaned up for storage and display.
 ///
 /// Trims each entry, drops entries that are empty once trimmed, and removes
 /// case-insensitive duplicates keeping the FIRST spelling seen. Also drops
-/// "Unclassified" in any case: it is the absence of a value, not a category, and
-/// a configured one would collide with the synthetic row categoryTally appends
-/// for annotations with no classification. Order is
-/// otherwise preserved and is never sorted: categoryTally() displays tallies in
-/// list order, and a list that sorted itself would reorder the counting rows
-/// behind the user mid-count.
-/// True for "Unclassified" in any case, ignoring surrounding whitespace: the absence of a value,
-/// never a category. The one definition core uses to refuse it.
-[[nodiscard]] bool isUnclassifiedCategory(const std::string& text);
-
+/// "Unclassified" in any case: it is the absence of a value, not a category,
+/// and a configured one would collide with the synthetic row categoryTally
+/// appends for annotations with no classification. Order is otherwise
+/// preserved and is never sorted: categoryTally() displays tallies in list
+/// order, and a list that sorted itself would reorder the counting rows behind
+/// the user mid-count.
 [[nodiscard]] std::vector<std::string> normalizeCategoryList(
     const std::vector<std::string>& raw);
 
@@ -46,11 +47,12 @@ struct RetagChange
 /// Every annotation whose classification equals `from` (case-insensitively),
 /// paired with the state it should take.
 ///
-/// `to` is trimmed; an empty or blank `to` is refused (it would bulk-unclassify
-/// every match as one undo step), as is renaming a category to itself, or to the same word in a
-/// different case, yields an EMPTY result, and an empty result means the caller
-/// records no undo step at all -- the rule AnnotationEditCommand::create already
-/// applies when it refuses to build a command that records nothing.
+/// `to` is trimmed. The result is EMPTY, and the caller records no undo step at
+/// all, when `to` is empty or blank (it would bulk-unclassify every match as one
+/// step), when `from` or `to` is "Unclassified", when `from` is blank, and when
+/// the rename is to itself or to the same word in a different case. That is the
+/// rule AnnotationEditCommand::create already applies when it refuses to build a
+/// command that records nothing.
 ///
 /// `modifiedAt` is a parameter rather than a clock read so this stays pure and
 /// testable, as core::shouldAutosave is, and so `after` is the EXACT final

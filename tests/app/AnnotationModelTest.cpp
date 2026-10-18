@@ -668,3 +668,29 @@ TEST_CASE("Clearing the model for a new slide keeps the current category",
     REQUIRE(model.currentCategory() == "Mitosis");
     REQUIRE(model.find(id)->properties().classification == "Mitosis");
 }
+
+TEST_CASE("Setting the current category to Unclassified means no category", "[app][AnnotationModel]")
+{
+    // "Unclassified" is the absence of a value; stamping it would write a literal that Rename refuses.
+    app::AnnotationModel model;
+
+    for (const char* typed : {"Unclassified", "unclassified", "  UNCLASSIFIED  "}) {
+        model.setCurrentCategory("Mitosis");
+        model.setCurrentCategory(typed);
+
+        const std::string id = model.add(core::PointGeometry{core::PointF{1.0, 2.0}});
+
+        REQUIRE(model.currentCategory().empty());
+        REQUIRE(model.find(id)->properties().classification.empty());
+    }
+}
+
+TEST_CASE("An ordinary current category still stamps after the Unclassified rule", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    model.setCurrentCategory("Unclassified cells");
+
+    const std::string id = model.add(core::PointGeometry{core::PointF{1.0, 2.0}});
+
+    REQUIRE(model.find(id)->properties().classification == "Unclassified cells");
+}

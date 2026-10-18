@@ -248,3 +248,28 @@ TEST_CASE("both style fields changing together is one group",
     after.fillOpacity = 0.5f;
     REQUIRE(ui::propertiesEditDescription(before, after) == "Restyle annotation");
 }
+
+TEST_CASE("typing Unclassified into Classification clears the field", "[ui][AnnotationProperties]")
+{
+    // "Unclassified" is the absence of a value; it must never be stored as one.
+    core::AnnotationProperties current;
+    current.classification = "Mitosis";
+
+    for (const char* typed : {"Unclassified", "unclassified", "  UNCLASSIFIED  "}) {
+        ui::AnnotationFieldValues fields = fieldsFrom(current);
+        fields.classification = typed;
+
+        const auto edited = ui::propertiesEdit(current, fields);
+        REQUIRE(edited.has_value());
+        REQUIRE(edited->classification.empty());
+    }
+}
+
+TEST_CASE("typing Unclassified over an already empty classification is not an edit", "[ui][AnnotationProperties]")
+{
+    const core::AnnotationProperties current;
+    ui::AnnotationFieldValues fields = fieldsFrom(current);
+    fields.classification = "Unclassified";
+
+    REQUIRE_FALSE(ui::propertiesEdit(current, fields).has_value());
+}

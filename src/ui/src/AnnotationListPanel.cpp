@@ -25,6 +25,9 @@ namespace
 {
 constexpr int kIdRole = Qt::UserRole;
 constexpr int kSyntheticRole = Qt::UserRole + 1;
+// The tally is a separate view from the tree, so its role numbers are its own: this
+// one is the same number as kIdRole, which means "the annotation id" on the tree only.
+constexpr int kConfiguredRole = Qt::UserRole;
 }
 
 struct AnnotationListPanel::Impl
@@ -115,7 +118,7 @@ AnnotationListPanel::AnnotationListPanel(QWidget* parent)
         }
         const QString label = item->text(0);
         const std::string category = label.toStdString();
-        const bool configured = item->data(0, Qt::UserRole).toBool();
+        const bool configured = item->data(0, kConfiguredRole).toBool();
         // The policy flags the synthetic row; the label is never compared, so localising it cannot
         // open Rename on Unclassified, which would bulk-classify every unclassified annotation.
         const bool unclassified = item->data(0, kSyntheticRole).toBool();
@@ -223,7 +226,7 @@ void AnnotationListPanel::setCategories(const std::vector<std::string>& categori
             m_impl->counting->setCurrentIndex(0);
         } else {
             // setCurrentText alone leaves currentIndex stale on an editable combo.
-            const int at = m_impl->counting->findText(current);
+            const int at = m_impl->counting->findText(current, Qt::MatchFixedString);
             if (at >= 0) {
                 m_impl->counting->setCurrentIndex(at);
             } else {
@@ -292,6 +295,7 @@ void AnnotationListPanel::rebuild()
     // clear() resets the scroll position; kept so a rebuild does not move the list.
     const int scrollValue = m_impl->tree->verticalScrollBar()->value();
     m_impl->tree->clear();
+    m_impl->tally->clear();
 
     if (m_impl->model == nullptr) {
         setWindowTitle(QString::fromStdString(annotationDockTitle(0, 0)));
@@ -320,12 +324,11 @@ void AnnotationListPanel::rebuild()
 
     // Over the whole model, never the filtered rows: a clinical count that moved when someone
     // typed in the filter box would be a trap.
-    m_impl->tally->clear();
     for (const CategoryTallyRow& row : categoryTally(annotations, m_impl->categories)) {
         auto* item = new QTreeWidgetItem(m_impl->tally);
         item->setText(0, QString::fromStdString(row.category));
         item->setText(1, QString::number(static_cast<qulonglong>(row.count)));
-        item->setData(0, Qt::UserRole, row.configured);
+        item->setData(0, kConfiguredRole, row.configured);
         item->setData(0, kSyntheticRole, row.synthetic);
     }
     applySelection(m_impl->model->selectedId());

@@ -1,5 +1,7 @@
 #include "slideio/viewer/app/AnnotationModel.h"
 
+#include "slideio/viewer/core/AnnotationCategories.h"
+
 #include <QUuid>
 
 #include <algorithm>
@@ -111,7 +113,8 @@ void AnnotationModel::setDefaultAuthor(std::string author)
 
 void AnnotationModel::setCurrentCategory(std::string category)
 {
-    m_currentCategory = std::move(category);
+    // "Unclassified" is the absence of a value, so typing it means (none).
+    m_currentCategory = core::isUnclassifiedCategory(category) ? std::string{} : std::move(category);
 }
 
 const std::string& AnnotationModel::currentCategory() const
