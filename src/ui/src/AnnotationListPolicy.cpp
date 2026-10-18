@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <iterator>
 #include <string>
 #include <utility>
 
@@ -19,6 +20,14 @@ std::string toLower(const std::string& text)
         return static_cast<char>(std::tolower(c));
     });
     return lowered;
+}
+
+std::string trimmedText(const std::string& text)
+{
+    const auto notSpace = [](unsigned char c) { return std::isspace(c) == 0; };
+    const auto first = std::find_if(text.begin(), text.end(), notSpace);
+    const auto last = std::find_if(text.rbegin(), text.rend(), notSpace).base();
+    return first < last ? std::string(first, last) : std::string{};
 }
 
 bool containsFold(const std::string& haystack, const std::string& needleLower)
@@ -130,6 +139,53 @@ std::string annotationDockTitle(std::size_t total, std::size_t shown)
         return "Annotations (" + std::to_string(total) + ")";
     }
     return "Annotations (" + std::to_string(shown) + " of " + std::to_string(total) + ")";
+}
+
+std::vector<CategoryTallyRow> categoryTally(const std::vector<core::Annotation>& annotations,
+                                            const std::vector<std::string>& categories)
+{
+    const std::string unclassifiedKey = "unclassified";
+
+    std::vector<CategoryTallyRow> rows;
+    std::vector<std::string> keys;  // Parallel to rows, lowercased for matching.
+    for (const std::string& category : categories) {
+        const std::string clean = trimmedText(category);
+        if (clean.empty()) {
+            continue;
+        }
+        const std::string key = toLower(clean);
+        if (key == unclassifiedKey) {
+            continue;
+        }
+        if (std::find(keys.begin(), keys.end(), key) != keys.end()) {
+            continue;
+        }
+        keys.push_back(key);
+        rows.push_back(CategoryTallyRow{clean, 0, true});
+    }
+
+    std::size_t unclassified = 0;
+    for (const core::Annotation& annotation : annotations) {
+        const std::string clean = trimmedText(annotation.properties().classification);
+        if (clean.empty() || toLower(clean) == unclassifiedKey) {
+            ++unclassified;
+            continue;
+        }
+        const std::string key = toLower(clean);
+        const auto found = std::find(keys.begin(), keys.end(), key);
+        if (found != keys.end()) {
+            ++rows[static_cast<std::size_t>(std::distance(keys.begin(), found))].count;
+            continue;
+        }
+        // Not configured: it joins the end, keeping the spelling first seen.
+        keys.push_back(key);
+        rows.push_back(CategoryTallyRow{clean, 1, false});
+    }
+
+    if (unclassified > 0) {
+        rows.push_back(CategoryTallyRow{"Unclassified", unclassified, false});
+    }
+    return rows;
 }
 
 } // namespace slideio::viewer::ui

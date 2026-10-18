@@ -26,6 +26,15 @@ std::string testTypeName(core::AnnotationType type)
     return "Shape";
 }
 
+core::Annotation markerWith(const std::string& id, const std::string& classification)
+{
+    core::Annotation annotation(id, core::PointGeometry{core::PointF{1.0, 2.0}});
+    core::AnnotationProperties properties = annotation.properties();
+    properties.classification = classification;
+    annotation.setProperties(std::move(properties));
+    return annotation;
+}
+
 core::AnnotationGeometry rect()
 {
     core::RectangleGeometry geometry;
@@ -338,4 +347,140 @@ TEST_CASE("sorting by type orders rows by type name", "[ui][AnnotationList]")
     REQUIRE(rows[3].type == "Polygon");
     REQUIRE(rows[4].type == "Rectangle");
     REQUIRE(rows[5].type == "Rectangle");
+}
+
+TEST_CASE("categoryTally lists configured categories in order, including zeros",
+          "[ui][CategoryTally]")
+{
+    const std::vector<core::Annotation> annotations{markerWith("a", "Stroma")};
+
+    const auto rows = ui::categoryTally(annotations, {"Tumor", "Stroma"});
+
+    REQUIRE(rows.size() == 2);
+    REQUIRE(rows[0].category == "Tumor");
+    REQUIRE(rows[0].count == 0);
+    REQUIRE(rows[0].configured);
+    REQUIRE(rows[1].category == "Stroma");
+    REQUIRE(rows[1].count == 1);
+}
+
+TEST_CASE("categoryTally puts unconfigured categories after the configured ones, in "
+          "first-appearance order", "[ui][CategoryTally]")
+{
+    const std::vector<core::Annotation> annotations{
+        markerWith("a", "Zeta"), markerWith("b", "Alpha"), markerWith("c", "Tumor")};
+
+    const auto rows = ui::categoryTally(annotations, {"Tumor"});
+
+    REQUIRE(rows.size() == 3);
+    REQUIRE(rows[0].category == "Tumor");
+    REQUIRE(rows[1].category == "Zeta");
+    REQUIRE_FALSE(rows[1].configured);
+    REQUIRE(rows[2].category == "Alpha");
+}
+
+TEST_CASE("categoryTally never orders rows by count", "[ui][CategoryTally]")
+{
+    // A row that jumps while the user is clicking at it is a misclick, and this
+    // is a workflow of several hundred clicks.
+    const std::vector<core::Annotation> annotations{
+        markerWith("a", "Stroma"), markerWith("b", "Stroma"), markerWith("c", "Tumor")};
+
+    const auto rows = ui::categoryTally(annotations, {"Tumor", "Stroma"});
+
+    REQUIRE(rows[0].category == "Tumor");
+    REQUIRE(rows[0].count == 1);
+    REQUIRE(rows[1].category == "Stroma");
+    REQUIRE(rows[1].count == 2);
+}
+
+TEST_CASE("categoryTally counts case-insensitively under the configured spelling",
+          "[ui][CategoryTally]")
+{
+    const std::vector<core::Annotation> annotations{markerWith("a", "mitosis"),
+                                                    markerWith("b", "MITOSIS")};
+
+    const auto rows = ui::categoryTally(annotations, {"Mitosis"});
+
+    REQUIRE(rows.size() == 1);
+    REQUIRE(rows[0].category == "Mitosis");
+    REQUIRE(rows[0].count == 2);
+}
+
+TEST_CASE("categoryTally counts an unconfigured category under its first-seen spelling",
+          "[ui][CategoryTally]")
+{
+    const std::vector<core::Annotation> annotations{markerWith("a", "mitosis"),
+                                                    markerWith("b", "Mitosis")};
+
+    const auto rows = ui::categoryTally(annotations, {});
+
+    REQUIRE(rows.size() == 1);
+    REQUIRE(rows[0].category == "mitosis");
+    REQUIRE(rows[0].count == 2);
+}
+
+TEST_CASE("categoryTally puts Unclassified last and only when it is non-zero",
+          "[ui][CategoryTally]")
+{
+    const std::vector<core::Annotation> withNone{markerWith("a", "Tumor")};
+    REQUIRE(ui::categoryTally(withNone, {"Tumor"}).size() == 1);
+
+    const std::vector<core::Annotation> withSome{markerWith("a", "Tumor"), markerWith("b", "")};
+    const auto rows = ui::categoryTally(withSome, {"Tumor"});
+
+    REQUIRE(rows.size() == 2);
+    REQUIRE(rows[1].category == "Unclassified");
+    REQUIRE(rows[1].count == 1);
+    REQUIRE_FALSE(rows[1].configured);
+}
+
+TEST_CASE("categoryTally treats a whitespace-only classification as Unclassified",
+          "[ui][CategoryTally]")
+{
+    // Review Focus 3: annotation files are hand-editable, and a row labelled
+    // with three spaces is unreadable and unselectable.
+    const std::vector<core::Annotation> annotations{markerWith("a", "   ")};
+
+    const auto rows = ui::categoryTally(annotations, {});
+
+    REQUIRE(rows.size() == 1);
+    REQUIRE(rows[0].category == "Unclassified");
+    REQUIRE(rows[0].count == 1);
+}
+
+TEST_CASE("categoryTally on an empty model still lists the configured categories",
+          "[ui][CategoryTally]")
+{
+    const auto rows = ui::categoryTally({}, {"Tumor", "Stroma"});
+
+    REQUIRE(rows.size() == 2);
+    REQUIRE(rows[0].count == 0);
+    REQUIRE(rows[1].count == 0);
+}
+
+TEST_CASE("categoryTally folds a literal \"Unclassified\" classification into the synthetic row",
+          "[ui][CategoryTally]")
+{
+    const std::vector<core::Annotation> annotations{markerWith("a", "Unclassified"),
+                                                    markerWith("b", "unclassified"),
+                                                    markerWith("c", "")};
+
+    const auto rows = ui::categoryTally(annotations, {});
+
+    REQUIRE(rows.size() == 1);
+    REQUIRE(rows[0].category == "Unclassified");
+    REQUIRE(rows[0].count == 3);
+    REQUIRE_FALSE(rows[0].configured);
+}
+
+TEST_CASE("categoryTally refuses \"Unclassified\" as a configured category",
+          "[ui][CategoryTally]")
+{
+    const std::vector<core::Annotation> annotations{markerWith("a", "Tumor")};
+
+    const auto rows = ui::categoryTally(annotations, {"Tumor", "Unclassified"});
+
+    REQUIRE(rows.size() == 1);
+    REQUIRE(rows[0].category == "Tumor");
 }
