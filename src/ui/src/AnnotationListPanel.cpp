@@ -146,7 +146,11 @@ void AnnotationListPanel::setAnnotationModel(app::AnnotationModel* model)
         connect(m_impl->model, &app::AnnotationModel::annotationAdded, this, [this](const std::string& id) {
             rebuild();
             const core::Annotation* added = m_impl->model->find(id);
-            if (added != nullptr && !added->properties().classification.empty()) {
+            // Markers only, matching the model's own stamping rule. Residual, accepted: undoing the
+            // deletion of a marker re-enters through the same signal (insertAt), and the model cannot
+            // yet tell creation from restoration, so that marker's category is re-offered.
+            if (added != nullptr && added->type() == core::AnnotationType::Point
+                && !added->properties().classification.empty()) {
                 emit categoryUsed(added->properties().classification);
             }
         });
@@ -182,7 +186,13 @@ void AnnotationListPanel::setCategories(const std::vector<std::string>& categori
         if (wasNone) {
             m_impl->counting->setCurrentIndex(0);
         } else {
-            m_impl->counting->setCurrentText(current);
+            // setCurrentText alone leaves currentIndex stale on an editable combo.
+            const int at = m_impl->counting->findText(current);
+            if (at >= 0) {
+                m_impl->counting->setCurrentIndex(at);
+            } else {
+                m_impl->counting->setEditText(current);
+            }
         }
     }
     rebuild();
