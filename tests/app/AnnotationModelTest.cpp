@@ -605,3 +605,66 @@ TEST_CASE("restore emits annotationChanged so the viewport repaints",
     REQUIRE(changed.size() == 1);
     REQUIRE(changed.front() == "a");
 }
+
+TEST_CASE("The current category is stamped onto a new point marker", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    model.setCurrentCategory("Mitosis");
+
+    const std::string id = model.add(core::PointGeometry{core::PointF{1.0, 2.0}});
+
+    REQUIRE(model.find(id) != nullptr);
+    REQUIRE(model.find(id)->properties().classification == "Mitosis");
+}
+
+TEST_CASE("The current category is not stamped onto other geometry types",
+          "[app][AnnotationModel]")
+{
+    // Deliberate: a rectangle drawn for an unrelated reason must not acquire a
+    // clinical classification because the user was counting ten minutes ago.
+    app::AnnotationModel model;
+    model.setCurrentCategory("Mitosis");
+
+    const std::string box = model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{4.0, 4.0}});
+    const std::string arrow =
+        model.add(core::ArrowGeometry{core::PointF{0.0, 0.0}, core::PointF{3.0, 4.0}});
+
+    REQUIRE(model.find(box)->properties().classification.empty());
+    REQUIRE(model.find(arrow)->properties().classification.empty());
+}
+
+TEST_CASE("An empty current category leaves a marker unclassified", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+
+    const std::string id = model.add(core::PointGeometry{core::PointF{1.0, 2.0}});
+
+    REQUIRE(model.find(id)->properties().classification.empty());
+}
+
+TEST_CASE("Changing the current category does not touch existing annotations",
+          "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    model.setCurrentCategory("Mitosis");
+    const std::string first = model.add(core::PointGeometry{core::PointF{1.0, 2.0}});
+
+    model.setCurrentCategory("Lymphocyte");
+
+    REQUIRE(model.find(first)->properties().classification == "Mitosis");
+}
+
+TEST_CASE("Clearing the model for a new slide keeps the current category",
+          "[app][AnnotationModel]")
+{
+    // Review Focus 4: spec 4.4 says the current category survives a slide
+    // switch, and clear() is called on every slide change.
+    app::AnnotationModel model;
+    model.setCurrentCategory("Mitosis");
+
+    model.clear();
+    const std::string id = model.add(core::PointGeometry{core::PointF{1.0, 2.0}});
+
+    REQUIRE(model.currentCategory() == "Mitosis");
+    REQUIRE(model.find(id)->properties().classification == "Mitosis");
+}

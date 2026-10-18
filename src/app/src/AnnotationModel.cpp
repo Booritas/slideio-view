@@ -36,7 +36,13 @@ std::string AnnotationModel::add(core::AnnotationGeometry geometry)
     metadata.createdAt = now;
     metadata.modifiedAt = now;
 
-    m_annotations.emplace_back(id, std::move(geometry), core::AnnotationProperties{}, metadata);
+    core::AnnotationProperties properties;
+    // Markers only: see setCurrentCategory.
+    if (core::typeOf(geometry) == core::AnnotationType::Point) {
+        properties.classification = m_currentCategory;
+    }
+
+    m_annotations.emplace_back(id, std::move(geometry), std::move(properties), metadata);
     emit annotationAdded(id);
     return id;
 }
@@ -101,6 +107,16 @@ void AnnotationModel::replaceAll(std::vector<core::Annotation> annotations)
 void AnnotationModel::setDefaultAuthor(std::string author)
 {
     m_defaultAuthor = std::move(author);
+}
+
+void AnnotationModel::setCurrentCategory(std::string category)
+{
+    m_currentCategory = std::move(category);
+}
+
+const std::string& AnnotationModel::currentCategory() const
+{
+    return m_currentCategory;
 }
 
 bool AnnotationModel::remove(const std::string& id)

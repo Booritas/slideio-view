@@ -66,6 +66,20 @@ public:
     /// Self-asserted and unverified: it identifies, it does not authenticate.
     void setDefaultAuthor(std::string author);
 
+    /// Stamped into the classification of POINT markers created through add(),
+    /// and of nothing else. The test is on the geometry rather than on the
+    /// active tool because the model does not know about tools and should not
+    /// learn: the rule then holds for every path that creates a marker.
+    ///
+    /// Creation only. Changing this never alters an annotation that already
+    /// exists; retagging what exists is AnnotationRetagCommand, which is
+    /// explicit and undoable.
+    ///
+    /// Session state: it deliberately survives clear(), because a study is
+    /// often several slides counted the same way.
+    void setCurrentCategory(std::string category);
+    [[nodiscard]] const std::string& currentCategory() const;
+
     /// False when `id` is unknown. Clears the selection if it named `id`.
     bool remove(const std::string& id);
 
@@ -120,6 +134,7 @@ private:
     std::vector<core::Annotation> m_annotations;
     std::string m_selectedId;
     std::string m_defaultAuthor;
+    std::string m_currentCategory;
 };
 
 } // namespace slideio::viewer::app
