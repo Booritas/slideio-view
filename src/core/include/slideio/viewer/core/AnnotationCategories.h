@@ -1,5 +1,8 @@
 #pragma once
 
+#include "slideio/viewer/core/Annotation.h"
+
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -24,5 +27,29 @@ inline const std::vector<std::string> kDefaultAnnotationCategories{
 /// behind the user mid-count.
 [[nodiscard]] std::vector<std::string> normalizeCategoryList(
     const std::vector<std::string>& raw);
+
+/// One annotation's exact before and after state for a retag.
+struct RetagChange
+{
+    std::string id;
+    Annotation before;
+    Annotation after;
+};
+
+/// Every annotation whose classification equals `from` (case-insensitively),
+/// paired with the state it should take.
+///
+/// `to` is trimmed; renaming a category to itself, or to the same word in a
+/// different case, yields an EMPTY result, and an empty result means the caller
+/// records no undo step at all -- the rule AnnotationEditCommand::create already
+/// applies when it refuses to build a command that records nothing.
+///
+/// `modifiedAt` is a parameter rather than a clock read so this stays pure and
+/// testable, as core::shouldAutosave is, and so `after` is the EXACT final
+/// state. A redo that re-read the clock would produce a different timestamp
+/// from the original action, and undo/redo would stop being exact inverses.
+[[nodiscard]] std::vector<RetagChange> retagClassification(
+    const std::vector<Annotation>& annotations, const std::string& from, const std::string& to,
+    std::chrono::system_clock::time_point modifiedAt);
 
 } // namespace slideio::viewer::core

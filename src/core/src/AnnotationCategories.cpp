@@ -46,4 +46,35 @@ std::vector<std::string> normalizeCategoryList(const std::vector<std::string>& r
     return result;
 }
 
+std::vector<RetagChange> retagClassification(const std::vector<Annotation>& annotations,
+                                             const std::string& from, const std::string& to,
+                                             std::chrono::system_clock::time_point modifiedAt)
+{
+    const std::string target = trimmed(to);
+    const std::string fromKey = toLowerAscii(trimmed(from));
+    if (fromKey.empty() || fromKey == toLowerAscii(target)) {
+        // Nothing to do, and nothing to record. Renaming a category to itself
+        // must not leave a step on the undo stack that does nothing.
+        return {};
+    }
+
+    std::vector<RetagChange> changes;
+    for (const Annotation& source : annotations) {
+        if (toLowerAscii(trimmed(source.properties().classification)) != fromKey) {
+            continue;
+        }
+        AnnotationProperties properties = source.properties();
+        properties.classification = target;
+        AnnotationMetadata metadata = source.metadata();
+        metadata.modifiedAt = modifiedAt;
+        // The four-argument constructor, never setProperties(): that one reads
+        // the system clock and restamps modifiedAt, which would make this
+        // function impure and break the exactness `after` promises.
+        changes.push_back(RetagChange{source.id(), source,
+                                      Annotation{source.id(), source.geometry(),
+                                                 std::move(properties), metadata}});
+    }
+    return changes;
+}
+
 } // namespace slideio::viewer::core
