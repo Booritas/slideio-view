@@ -381,7 +381,7 @@ struct MainWindow::Impl
         // "o". These carry the same WidgetWithChildrenShortcut scope as the
         // five above, for the same reason -- at window scope "m" and "a" would
         // be stolen from every text field in the window.
-        pointToolAction = new QAction("&Point Marker", owner);
+        pointToolAction = new QAction("Point &Marker", owner);
         pointToolAction->setCheckable(true);
         pointToolAction->setShortcut(QKeySequence("M"));
         pointToolAction->setStatusTip(
