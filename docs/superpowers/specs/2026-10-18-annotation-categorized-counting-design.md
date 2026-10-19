@@ -1,6 +1,6 @@
 # Categorized counting — design
 
-Status: implemented in commits `d6dacc7..4980a86`, 2026-10-18. Manual group AC was run in full across 2026-10-18 and 2026-10-19: 28 pass, 1 fail (AC9), 1 performable only in part (AC29) — see §7.5. AC26 failed, was fixed, and re-ran green. The three cosmetic defects the run turned up were fixed on 2026-10-19 and are recorded with their causes in §7.5; AC9 and AC29 remain open because each needs a decision the spec never asked for.
+Status: implemented in commits `d6dacc7..4980a86`, 2026-10-18. Manual group AC was run in full across 2026-10-18 and 2026-10-19: 29 pass, 1 performable only in part (AC29) — see §7.5. AC26 failed, was fixed, and re-ran green. The three cosmetic defects the run turned up were fixed on 2026-10-19 and are recorded with their causes in §7.5. AC9's second clause was struck on 2026-10-19: the project owner confirmed the list should follow the annotation just placed, so the check was asserting an intention the code deliberately does not have. AC29 still needs a decision.
 
 ## 1. Scope
 
@@ -412,8 +412,8 @@ rather than after: group AB's list found two defects its code review did not,
 and the box-resize round recorded that writing the list after the review was the
 wrong order.
 
-**Group AC was run in full, 2026-10-18 and 2026-10-19: 28 pass, 1 fail, 1
-performable only in part.** It took two sittings. The first was cut short when
+**Group AC was run in full, 2026-10-18 and 2026-10-19: 29 pass, 1 performable
+only in part.** It took two sittings. The first was cut short when
 the session's other windows began competing for the viewer's focus, and a
 further run on 2026-10-19 finished the six checks that were left and re-ran
 AC26 against the fixed binary. Every row records what was seen.
@@ -433,7 +433,7 @@ afterwards.
 | AC6 | With a category current, draw a rectangle and an arrow: both are unclassified. | **Pass** |
 | AC7 | Change the current category: the five already placed are unchanged. | **Pass** |
 | AC8 | Select **(none)**, place a marker: it is unclassified and the Unclassified tally row appears. | **Pass** |
-| AC9 | The tally updates as each marker is placed, and the list below neither scrolls nor loses its selection while it does. | **FAIL** — the tally half is right; the list half is not. See below. |
+| AC9 | The tally updates as each marker is placed. (As first written the check also demanded that the list below neither scroll nor lose its selection; that clause was struck 2026-10-19 — see below.) | **Pass** — every count correct throughout, and the list follows the annotation just placed, which is what it is meant to do. |
 | AC10 | Configured categories show rows at zero before counting starts. | **Pass** — seen again on switching to an empty slide, where all four configured rows read 0. |
 | AC11 | Type a category not in the list: it becomes current but does **not** join the list until the first marker is placed under it. | **Pass** — checked against the registry rather than the dialog: after typing `Apoptosis` the stored list was unchanged; after the first marker it held it. |
 | AC12 | After that marker, it appears in Preferences and in the properties combo. | **Pass** — `CD31`, typed during AC26, was listed in Preferences afterwards. |
@@ -491,26 +491,31 @@ and the next marker made it **CD31 2**, with Ki67 and Apoptosis untouched. The
 wheel was checked the same way: four wheel clicks over the closed combo left it
 on Tumor and the next marker counted under Tumor.
 
-#### AC9 — the failure that is still open
+#### AC9 — the check was wrong, not the build
 
-The tally half is right: three markers moved Tumor 5 → 8 and the total 32 → 35,
-every count correct. The list half is not. With the list deliberately scrolled
-up to show `Point 4 … Arrow 11` and **Arrow 6 selected**, placing two markers
-jumped the list to the bottom (`Point 30 … Point 37`) and the selection was
-gone — the properties panel then showed the *new* marker's `Tumor`
-classification, not Arrow 6's empty one.
+The tally clause is right: three markers moved Tumor 5 → 8 and the total
+32 → 35, every count correct. The list clause described something the code
+deliberately does not do. With the list scrolled up to show `Point 4 … Arrow 11`
+and **Arrow 6 selected**, placing two markers jumped the list to the bottom
+(`Point 30 … Point 37`) and the earlier selection was gone — the properties
+panel then showed the *new* marker's `Tumor` classification, not Arrow 6's empty
+one.
 
-So the cause is not the tally rebuilding: **creating an annotation selects it**,
+The cause is not the tally rebuilding: **creating an annotation selects it**,
 and the list scrolls to show its selected row. That behaviour predates this
-round and is reasonable on its own — you may well want to label the shape you
-just drew. It is wrong for *this* workflow, which is the one the round exists
-to serve: a counting pass is several hundred creations, and each one yanks the
-list away from wherever the user put it. Nothing is miscounted and nothing is
-lost, so this is friction rather than a data defect, which is why it is recorded
-here rather than fixed in haste. Fixing it means deciding whether a point marker
-placed under a current category should select at all — the counting gesture is
-arguably a tally increment, not a selection — and that is a design question this
-spec did not ask.
+round, and on **2026-10-19 the project owner confirmed it is correct** — the
+list following the annotation you just placed is what it should do. The second
+clause was therefore written against an intention nobody had, which puts it in
+the same class as AC29, AB19 and AB23: a check that asserts a design decision
+that was never made. It is struck, and AC9 stands on its tally clause alone.
+
+The observation is kept rather than deleted, because it is worth knowing in use:
+a counting pass is several hundred creations and the list moves on every one of
+them. Nothing is miscounted and nothing is lost. Should that ever become a
+complaint, the lever is whether a point marker placed under a current category
+should select at all — a counting gesture is arguably a tally increment rather
+than a selection — but that is a separate design question, and not one this
+round needs answered.
 
 #### AC29 — not performable as written
 
