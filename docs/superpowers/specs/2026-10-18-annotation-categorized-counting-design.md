@@ -1,6 +1,6 @@
 # Categorized counting — design
 
-Status: implemented in commits `d6dacc7..4980a86`, 2026-10-18. Manual group AC was run in full across 2026-10-18 and 2026-10-19: 29 pass, 1 performable only in part (AC29) — see §7.5. AC26 failed, was fixed, and re-ran green. The three cosmetic defects the run turned up were fixed on 2026-10-19 and are recorded with their causes in §7.5. AC9's second clause was struck on 2026-10-19: the project owner confirmed the list should follow the annotation just placed, so the check was asserting an intention the code deliberately does not have. AC29 still needs a decision.
+Status: implemented in commits `d6dacc7..4980a86`, 2026-10-18. Manual group AC was run in full across 2026-10-18 and 2026-10-19 and **all 30 checks now pass** — see §7.5. AC26 failed, was fixed, and re-ran green, and the three cosmetic defects the run turned up were fixed on 2026-10-19; both are recorded with their causes in §7.5. Two checks were struck rather than satisfied, on 2026-10-19 and with reasons recorded: **AC9's** list clause, because the list is meant to follow the annotation just placed, and **AC29's** Menu-key clause, because the tally is a read-out and making it focusable would break the viewport-scoped tool shortcuts. Both asserted an intention the code deliberately does not have — the same class as AB19 and AB23, and the standing cost of writing the check list before the implementation.
 
 ## 1. Scope
 
@@ -412,8 +412,9 @@ rather than after: group AB's list found two defects its code review did not,
 and the box-resize round recorded that writing the list after the review was the
 wrong order.
 
-**Group AC was run in full, 2026-10-18 and 2026-10-19: 29 pass, 1 performable
-only in part.** It took two sittings. The first was cut short when
+**Group AC was run in full, 2026-10-18 and 2026-10-19: 30 of 30 pass**, two of
+them against a clause struck on 2026-10-19 rather than satisfied (AC9, AC29 —
+see below; the reasons are recorded, not waved through). It took two sittings. The first was cut short when
 the session's other windows began competing for the viewer's focus, and a
 further run on 2026-10-19 finished the six checks that were left and re-ran
 AC26 against the fixed binary. Every row records what was seen.
@@ -453,7 +454,7 @@ afterwards.
 | AC26 | Place the first marker under a freshly typed category, then open the counting combo's dropdown, dismiss it with Escape, and press Down then Up: the counting category and the next marker's classification are unchanged. | **Failed on 2026-10-18, fixed, and re-run green on 2026-10-19.** See below. |
 | AC27 | The same as AC26, with a category typed in a different case from a configured one (for example `tumor` against `Tumor`). | **Pass** — both halves. Typed `tumor` corrected itself to the configured `Tumor`, counted there and added no duplicate; two Downs and an Up then left it on Tumor and the next marker counted under Tumor. This is the harder case, since Tumor is a real list item the arrows would otherwise step away from. |
 | AC28 | Rename a category and press Ctrl+Z only, not Ctrl+Y: the annotations revert and the category list stays renamed. This is intended, not a defect (§6.4). | **Pass** — and Lymphocyte came back as an *unconfigured* tally row, which is what §6.4 predicts. |
-| AC29 | Right-click a tally row: the menu appears at the row under the cursor. The keyboard Menu key opens it on the selected row. | **Partial — the mouse half passes; the Menu-key half is not performable as written.** See below. |
+| AC29 | Right-click a tally row: the menu appears at the row under the cursor. (As first written the check also demanded that the keyboard Menu key open it on the selected row; that clause was struck 2026-10-19 — see below.) | **Pass** — the menu appears at the row under the cursor. |
 | AC30 | The transient refusal messages (empty rename target; "Unclassified is not a category") reach the status bar and are legible there. | **Pass** |
 
 #### AC26 — the failure this list existed to catch
@@ -517,21 +518,53 @@ should select at all — a counting gesture is arguably a tally increment rather
 than a selection — but that is a separate design question, and not one this
 round needs answered.
 
-#### AC29 — not performable as written
+#### AC29 — struck, and why the tally stays a read-out
 
-The mouse half passes. The Menu-key half cannot be performed, and the reason is
-in the design rather than the build: the tally is created with
+The mouse half passes. The Menu-key half could not be performed, and the reason
+is in the design rather than the build: the tally is created with
 `setSelectionMode(NoSelection)` and `setFocusPolicy(Qt::NoFocus)`
 (`AnnotationListPanel.cpp:81-82`). A widget that never takes focus never
 receives `Qt::Key_Menu`, and one with no selection has no "selected row" for the
 menu to open on. Sending the key with the viewer focused produced nothing, as
 those two lines predict.
 
-The check assumes a focusable, selectable tally; the strip is deliberately
-neither, because it is a readout rather than a control. This is the same shape
-as group AB19 and AB23 — a check written against an intention the code
-deliberately does not have. Either the tally gains focus and selection, or the
-check should be struck; it should not sit here looking like a defect.
+**The clause was struck on 2026-10-19.** The alternative — making the tally
+focusable and selectable — was costed first, and it is not a small change
+dressed as one. Four things go wrong:
+
+1. **The tool shortcuts die on a click.** `V R E O F M A` are
+   `Qt::WidgetWithChildrenShortcut` scoped to the viewport
+   (`MainWindow.cpp:416-422`), because at window scope they would be stolen from
+   every text field. `Qt::NoFocus` is what currently lets the user click a tally
+   row — including right-clicking it for this very menu — without taking focus
+   off the viewport. Make the strip focusable and one click on it stops `M`
+   placing markers until the user clicks back on the image, with a symptom that
+   points nowhere near the tally.
+2. **The selection would not survive a single marker.** `rebuild()` calls
+   `tally->clear()` on every annotation change, which destroys every item and
+   any selection with it. The list below already pays this tax deliberately: it
+   saves and restores `verticalScrollBar()->value()` across the rebuild. The
+   tally would need the same, and would have to re-select by category *string*,
+   because the items are new objects each time.
+3. **Two rows would claim the menu.** It already works without selection, via
+   `Qt::CustomContextMenu` and `itemAt(at)` — the row under the cursor. Add a
+   selection and the row under the cursor and the selected row disagree whenever
+   the user right-clicks a row that is not selected. The ambiguity is introduced
+   *by* the fix.
+4. **The highlight would promise nothing.** Selecting `Tumor` does not filter
+   the list, set the counting category or select those annotations. A highlight
+   that means nothing invites a click that does nothing.
+
+So the strip stays a read-out, which is what `NoSelection` + `NoFocus` says it
+is, and the menu keeps its complete mouse route. Same disposition as AC9's
+second clause, and the same class as AB19 and AB23.
+
+There is one reading in which a selectable tally would earn its cost: if
+selecting a row **set the counting category** — click `Ki67` in the strip and
+start counting Ki67. That gives the keyboard route something to be for, and
+would require items 1–3 solved on purpose rather than by accident. It is a new
+feature, not this check, and it should be specified rather than arrived at by
+making a read-out focusable.
 
 #### AC20 — why it looked broken the first time
 
