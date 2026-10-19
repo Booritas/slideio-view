@@ -540,7 +540,16 @@ then restored all 37 annotations and the full tally.
 
 Three cosmetic defects fell out of running it, none affecting data. All three
 were fixed on 2026-10-19, after the group was complete; each had a different
-cause, and none of the three was where the symptom pointed.
+cause, and none of the three was where the symptom pointed. **All three were
+then re-run against the installed binary and pass.** The title was read through
+`GetWindowText` rather than judged from a screenshot: `SlideIO Viewer - D:\…\
+Philips-1.tiff` with the slide open, `SlideIO Viewer` after Ctrl+W. The Scenes
+strip went populated → blank on Ctrl+W → populated again on a reopen in the same
+session, which is the sequence that used to leave it blank for good. The stored
+recent-files list repaired itself on the first open, 10 entries to 9: the
+duplicate collapsed, and a *second* entry that happened to carry the backslash
+spelling was normalized as well, which exercises the rewrite-every-entry path
+rather than only the promoted one.
 
 - **The title kept naming a closed slide.** `MainWindow::openSlide` sets the
   title and nothing ever unset it. It is cleared in the Close action's handler
