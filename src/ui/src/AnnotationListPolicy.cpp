@@ -2,11 +2,9 @@
 
 #include "slideio/viewer/core/AnnotationCategories.h"
 
-#include <QString>
 #include <QtCore/qnamespace.h>
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <iterator>
 #include <string>
@@ -20,20 +18,30 @@ namespace
 
 /// Caseless-matching key for a label or classification.
 ///
-/// QString::toCaseFolded rather than std::tolower: the latter folds ASCII
-/// only and is locale-dependent, so a category carrying any non-ASCII letter
-/// produced a different key in each case it was typed -- and the tally showed
-/// one category as two rows, each correct about what it counted and neither
-/// correct about the category. Case folding is what Unicode defines for
-/// caseless comparison; it is deliberately not "lowercasing".
+/// core::caseFoldKey rather than QString::toCaseFolded, although Qt is right
+/// here and available: core folds the vocabulary list and the rename, this
+/// folds the tally and the filter, and the two must answer the same. Folding
+/// here with Qt and there with std::tolower is what made the tally merge two
+/// spellings of one category into a row of eight that a rename of that
+/// category then changed five of. Qt's fold is wider; agreement is worth more
+/// than the width, and the width is only lost outside Latin.
+///
+/// It is deliberately not "lowercasing": case folding is what Unicode defines
+/// for caseless comparison.
 std::string toLower(const std::string& text)
 {
-    return QString::fromStdString(text).toCaseFolded().toStdString();
+    return core::caseFoldKey(text);
 }
 
 std::string trimmedText(const std::string& text)
 {
-    const auto notSpace = [](unsigned char c) { return std::isspace(c) == 0; };
+    // Explicitly ASCII, matching the trim core::caseFoldKey's callers use:
+    // std::isspace reads the global C locale, which under a single-byte one
+    // calls the lead byte of a UTF-8 letter whitespace and trims a letter in
+    // half.
+    const auto notSpace = [](unsigned char c) {
+        return !(c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r');
+    };
     const auto first = std::find_if(text.begin(), text.end(), notSpace);
     const auto last = std::find_if(text.rbegin(), text.rend(), notSpace).base();
     return first < last ? std::string(first, last) : std::string{};

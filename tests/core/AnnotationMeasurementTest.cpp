@@ -500,3 +500,81 @@ TEST_CASE("a zero-length arrow measures length zero",
     REQUIRE(metrics.outlineLength == 0.0);
     REQUIRE_FALSE(metrics.area.has_value());
 }
+
+// --- extreme values --------------------------------------------------------
+//
+// None of these come from a drawing gesture. They come from a hand-edited
+// annotation file, which this format is explicitly meant to be: coordinates
+// large or small enough that the unit conversion in formatLength and
+// formatArea overflows or underflows the double it is applied to.
+
+TEST_CASE("formatLength renders a huge value in full", "[core][Measurement]")
+{
+    // 1e300 m is 1e303 mm: 304 integer digits at no decimals. The buffer used
+    // to be 64 bytes, and snprintf truncated the number in the middle rather
+    // than overrunning -- safe, and unreadable, and still shaped like a
+    // measurement.
+    const std::string text = core::formatLength(1e300, core::MeasurementUnits::Physical);
+
+    REQUIRE(text.size() > 300);
+    REQUIRE(text.substr(text.size() - 3) == " mm");
+    REQUIRE(text.find('.') == std::string::npos);
+}
+
+TEST_CASE("formatLength renders a tiny value as zero to its last place",
+          "[core][Measurement]")
+{
+    // Three significant figures of 1e-300 would ask for 302 decimals. The
+    // decimal count is clamped, so what comes out is a run of zeroes --
+    // honest about the magnitude, and terminated.
+    const std::string text = core::formatLength(1e-300, core::MeasurementUnits::Physical);
+
+    REQUIRE(text.substr(text.size() - 3) == "\xC2\xB5m");
+    REQUIRE(text.find("0.0") == 0);
+    REQUIRE(text.size() < 80);
+}
+
+TEST_CASE("formatArea survives an overflowing unit conversion", "[core][Measurement]")
+{
+    // value * 1e12 is infinity for anything above about 1.8e296, and the
+    // square-micron attempt is made first. log10 of infinity is infinity and
+    // the cast to int was undefined behaviour; the non-finite guard takes it
+    // first and renders "inf", which is then below no threshold, so the
+    // function falls through to square millimetres and reports a finite
+    // number there. The unit promotion is doing the recovering -- the guard
+    // only has to stop the arithmetic from being undefined.
+    const std::string text = core::formatArea(1e300, core::MeasurementUnits::Physical);
+
+    REQUIRE(text.substr(text.size() - 5) == " mm\xC2\xB2");
+    REQUIRE(text.find("inf") == std::string::npos);
+    REQUIRE(text.size() > 300);
+}
+TEST_CASE("formatLength names a NaN rather than printing a number",
+          "[core][Measurement]")
+{
+    const std::string text =
+        core::formatLength(std::nan(""), core::MeasurementUnits::Physical);
+
+    REQUIRE(text.find("nan") != std::string::npos);
+}
+
+TEST_CASE("measure and measureKnown agree for a hand-traced polygon",
+          "[core][Measurement]")
+{
+    // measure() now hands measureOutline the outline it already built for the
+    // self-intersection test instead of letting it build a second one. The two
+    // entry points must still answer identically.
+    const core::AnnotationGeometry geometry = core::PolygonGeometry{
+        {core::PointF{0.0, 0.0}, core::PointF{10.0, 0.0}, core::PointF{10.0, 8.0},
+         core::PointF{0.0, 8.0}},
+        true};
+    const core::PixelSize pixelSize{1e-6, 1e-6};
+
+    const core::ShapeMetrics viaMeasure = core::measure(geometry, pixelSize);
+    const core::ShapeMetrics viaKnown = core::measureKnown(geometry, pixelSize, false);
+
+    REQUIRE(viaMeasure.area == viaKnown.area);
+    REQUIRE(viaMeasure.outlineLength == viaKnown.outlineLength);
+    REQUIRE(viaMeasure.closed == viaKnown.closed);
+    REQUIRE(viaMeasure.selfIntersecting == viaKnown.selfIntersecting);
+}

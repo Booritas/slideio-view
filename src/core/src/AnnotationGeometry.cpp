@@ -14,22 +14,30 @@ namespace
 
 constexpr double kPi = 3.14159265358979323846;
 
+/// The box two opposite corners span, with a non-negative width and height.
+///
+/// A creation drag may run in any direction and a resize handle may be dragged
+/// past its opposite edge, so neither corner is reliably the top-left one.
+/// Rectangle and ellipse share this because they are the same box to everything
+/// that reads it -- the same reason core::withBoxReplaced is one visited
+/// overload set rather than two.
+RectF normalizedCorners(PointF a, PointF b)
+{
+    const double x0 = std::min(a.x, b.x);
+    const double y0 = std::min(a.y, b.y);
+    const double x1 = std::max(a.x, b.x);
+    const double y1 = std::max(a.y, b.y);
+    return RectF{x0, y0, x1 - x0, y1 - y0};
+}
+
 RectF normalized(const RectangleGeometry& rect)
 {
-    const double x0 = std::min(rect.topLeft.x, rect.bottomRight.x);
-    const double y0 = std::min(rect.topLeft.y, rect.bottomRight.y);
-    const double x1 = std::max(rect.topLeft.x, rect.bottomRight.x);
-    const double y1 = std::max(rect.topLeft.y, rect.bottomRight.y);
-    return RectF{x0, y0, x1 - x0, y1 - y0};
+    return normalizedCorners(rect.topLeft, rect.bottomRight);
 }
 
 RectF normalized(const EllipseGeometry& ellipse)
 {
-    const double x0 = std::min(ellipse.topLeft.x, ellipse.bottomRight.x);
-    const double y0 = std::min(ellipse.topLeft.y, ellipse.bottomRight.y);
-    const double x1 = std::max(ellipse.topLeft.x, ellipse.bottomRight.x);
-    const double y1 = std::max(ellipse.topLeft.y, ellipse.bottomRight.y);
-    return RectF{x0, y0, x1 - x0, y1 - y0};
+    return normalizedCorners(ellipse.topLeft, ellipse.bottomRight);
 }
 
 bool hitTestShape(const RectangleGeometry& rect, PointF point, double tolerance)
@@ -65,6 +73,13 @@ AnnotationGeometry translatedShape(const RectangleGeometry& rect, double dx, dou
 RectF normalized(const PolygonGeometry& poly)
 {
     if (poly.vertices.empty()) {
+        // A sentinel, not a box at the origin: an empty polygon has no extent
+        // and no position, and RectF cannot say so. No reachable path produces
+        // one -- the serializer refuses below kMinPolygonVertices on both read
+        // and write, and a pending trace is not an annotation -- so the caller
+        // that would have to tell the two apart does not exist. Returning
+        // std::optional here would make every caller handle a case none of
+        // them can meet.
         return RectF{0.0, 0.0, 0.0, 0.0};
     }
     double x0 = poly.vertices.front().x;
@@ -250,13 +265,11 @@ RectF normalized(const PointGeometry& marker)
     return RectF{marker.position.x, marker.position.y, 0.0, 0.0};
 }
 
+/// The bounding box, which is NOT the arrow: tail and head are ordered, and
+/// only this box-shaped view of them may reorder their coordinates.
 RectF normalized(const ArrowGeometry& arrow)
 {
-    const double x0 = std::min(arrow.tail.x, arrow.head.x);
-    const double y0 = std::min(arrow.tail.y, arrow.head.y);
-    const double x1 = std::max(arrow.tail.x, arrow.head.x);
-    const double y1 = std::max(arrow.tail.y, arrow.head.y);
-    return RectF{x0, y0, x1 - x0, y1 - y0};
+    return normalizedCorners(arrow.tail, arrow.head);
 }
 
 bool hitTestShape(const PointGeometry& marker, PointF point, double tolerance)

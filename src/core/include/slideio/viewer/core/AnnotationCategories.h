@@ -18,6 +18,29 @@ namespace slideio::viewer::core
 inline const std::vector<std::string> kDefaultAnnotationCategories{
     "Tumor", "Stroma", "Necrosis", "Normal", "Artifact"};
 
+/// `text` reduced to a key two spellings of the same category share.
+///
+/// Simple Unicode case folding over ASCII, the Latin-1 Supplement and Latin
+/// Extended-A, applied to UTF-8 bytes; every other byte passes through
+/// unchanged. The key is for comparison only and is never displayed -- what
+/// the user typed is what is stored and shown.
+///
+/// It exists because the fold has to be the SAME ONE on both sides of the
+/// layer boundary. ui::toLower used std::tolower while ui::categoryTally
+/// folded with QString::toCaseFolded, so the tally merged two spellings of a
+/// category carrying an o-diaeresis into one row of eight, while
+/// normalizeCategoryList kept them as two vocabulary entries and
+/// retagClassification renamed only five of the eight. A tally that counts
+/// what a rename then misses is worse than either rule alone, so both layers
+/// call this one function.
+///
+/// Coverage stops where the mapping stops being regular: Greek, Cyrillic and
+/// the Turkish dotless i fold to themselves, which is what the ASCII-only
+/// version did for them as well. Narrower than QString::toCaseFolded, never
+/// wider, and identical in core and ui. Eszett folds to itself here, as it
+/// does in Qt's simple folding.
+[[nodiscard]] std::string caseFoldKey(const std::string& text);
+
 /// True for "Unclassified" in any case, ignoring surrounding whitespace: the
 /// absence of a value, never a category. The one definition core uses to
 /// refuse it.

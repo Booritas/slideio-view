@@ -47,6 +47,13 @@ std::optional<ScreenDecoration> decorationFor(const ArrowGeometry& arrow, double
     // arrow or at low zoom; proportional alone disappears. A zero-length arrow
     // -- which the tool refuses but the parser accepts from disk -- gives 0
     // here rather than a direction that cannot be normalised.
+    //
+    // A NaN shaft length -- which the serializer refuses, so it takes a
+    // caller passing a NaN viewportScale -- makes the comparison inside
+    // std::min false and returns the fixed size. That is the benign answer and
+    // it is now the stated one: the glyph draws at its nominal size instead of
+    // vanishing or growing without bound. std::max below then has nothing left
+    // to clamp, since the fixed size is positive.
     const double size =
         std::min(kArrowHeadScreenPixels, shaftScreenPixels * kArrowHeadMaxShaftFraction);
     return ScreenDecoration{ScreenDecoration::Kind::ArrowHead, arrow.head, std::max(0.0, size)};

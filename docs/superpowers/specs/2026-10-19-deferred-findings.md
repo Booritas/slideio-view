@@ -1,8 +1,9 @@
 # Deferred minor findings — recovered index
 
-Status: recovered 2026-10-19 from the session transcript; 15 of 117 triaged, 4 fixed. **The full text of
-these findings is lost.** What is here is each one's opening clause, enough to
-identify it and re-derive it against the code, and nothing more.
+Status: recovered 2026-10-19 from the session transcript; split into seven
+batches, B1 done; 27 of 117 triaged, 8 fixed. **The full text of these findings
+is lost.** What is here is each one's opening clause, enough to identify it and
+re-derive it against the code, and nothing more.
 
 ## Why this file exists, and what went wrong
 
@@ -36,10 +37,12 @@ one, so they collide.
 
 ## Triage so far
 
-**Fifteen of the 117 have been looked at, on 2026-10-19.** Of those, **nine
-were already closed** by later rounds, **four were live and are now fixed**, one
-is partly fixed and one is live and accepted. The index is therefore mostly
-historical — but not entirely, and the four live ones were worth having.
+**Twenty-seven of the 117 have been looked at, on 2026-10-19** -- fifteen in a
+first pass, then twelve more as batch B1, whose results are under "The batches"
+below. Of the first fifteen, **nine were already closed** by later rounds,
+**four were live and are now fixed**, one is partly fixed and one is live and
+accepted. The index is therefore mostly historical — but not entirely, and the
+live ones were worth having.
 
 Fixed on 2026-10-19 (entries 25, 34, 106, 107):
 
@@ -89,6 +92,90 @@ the combo connects `activated` (user-only in Qt) and `editingFinished`, neither
 of which a programmatic `clear()`/`addItem()`/`setCurrentText()` emits. It is
 latent, and becomes real the day someone connects `currentTextChanged`.
 
+## The batches
+
+The 117 are split into seven batches, each one area of the code, so a round can
+be worked and built and reviewed as a unit. Every untriaged entry is in exactly
+one batch. The numbers are the entry numbers in the list below.
+
+| Batch | Area | Entries | Count | State |
+|---|---|---|---|---|
+| B1 | core geometry, measurement and numerics | 8, 14, 21, 29, 42, 44, 46, 57, 65, 70, 72, 104 | 12 | **done 2026-10-19** |
+| B2 | AnnotationModel, undo/redo, app services | 3, 5, 6, 10, 16, 19 | 6 | not started |
+| B3 | viewport interaction and drag state | 1, 7, 11, 33, 43, 58, 60, 62, 71, 76, 84, 88, 112 | 13 | not started |
+| B4 | panels, categories, preferences | 13, 15, 18, 28, 32, 61, 64, 67, 69, 81, 83, 85, 86, 109 | 14 | not started |
+| B5 | persistence, paths, workspace, serialization | 12, 22, 23, 31, 36, 38, 39, 40, 59, 94, 96, 99, 100, 114, 117 | 15 | not started |
+| B6 | documentation and comments | 4, 17, 20, 35, 41, 48, 63, 74, 75, 78, 79, 80, 90, 92, 95, 108, 113 | 17 | not started |
+| B7 | test quality: weak, missing or vacuous cases | 26, 45, 47, 49, 50, 51, 52, 53, 54, 55, 56, 77, 82, 87, 89, 91, 93, 97, 98, 101, 102, 103, 105, 115 | 24 | not started |
+
+Already resolved outside the batches, in the first triage pass: 2, 9, 24, 25,
+27, 30, 34, 37, 66, 68, 73, 106, 107, 110, 111, 116.
+
+B6 and B7 are last on purpose. A comment that drifted and a test that is weaker
+than it looks are both worth fixing, but neither can produce a wrong number on
+a slide, and the stems in those two batches are the most truncated — several
+will have to be re-derived from the code rather than read.
+
+### B1 — core geometry, measurement and numerics (2026-10-19)
+
+Twelve entries. Two were already closed by later work, four were live and are
+fixed, and five are live-and-accepted or benign with the reasoning now written
+down where the code is.
+
+The one that mattered: **entry 72 was the core half of entry 106**, and fixing
+106 alone on 2026-10-18 had left the two layers disagreeing. `ui::categoryTally`
+folded case with `QString::toCaseFolded` while `core::normalizeCategoryList` and
+`core::retagClassification` folded with `std::tolower`, which is ASCII-only. A
+category typed once with an o-diaeresis and once in capitals was therefore **one
+row of eight in the tally and two entries in the vocabulary, and renaming it
+changed five of the eight** -- a count that is right about what it counted, and
+a rename that silently misses a third of it. One fix cannot land on one side of
+a layer boundary when both sides compare the same strings.
+
+`core::caseFoldKey` is now the single fold, and ui calls it rather than Qt. It
+covers ASCII, the Latin-1 Supplement and Latin Extended-A, applied to UTF-8
+bytes; everything else passes through. That is narrower than
+`QString::toCaseFolded` -- Greek, Cyrillic and the Turkish dotless i fold to
+themselves -- and the narrowing was chosen deliberately: agreement across the
+boundary is worth more than width, and the width is only lost where the ASCII
+version had already lost it. `std::tolower` and `std::isspace` are gone from
+both files for the same reason they were wrong: they read the global C locale,
+and under a single-byte one they rewrite or trim the lead byte of a UTF-8
+letter depending on whether something else in the process had called
+`setlocale`.
+
+The other three fixes:
+
+- **Entry 104 was undefined behaviour, not just an ugly number.**
+  `threeSignificantFigures` cast `std::floor(std::log10(magnitude))` to `int`,
+  and for an infinite magnitude that cast is UB. `formatArea` reaches it: the
+  conversion to square microns is `value * 1e12`, which overflows to infinity
+  for any area above about 1.8e296 -- a finite double in the file, an infinite
+  one here. A non-finite guard now runs first. The unit promotion then does the
+  recovering on its own and the area still reports finitely in mm².
+- **Entry 70**, the same site: the 64-byte buffer truncated rather than
+  overran, so an extreme value produced a severed number that still looked like
+  a measurement. The buffer is sized for `%.0f` of `DBL_MAX` and the decimal
+  count is clamped.
+- **Entry 42**: `measure()` built the outline for its self-intersection test and
+  `measureKnown()` built an identical one immediately after. That path is
+  exactly the shapes that are not `hasWellDefinedArea` -- the hand-traced
+  polygons and freehand lines, which carry more vertices than anything else in
+  the application. `measureOutline` now takes the one that was already built.
+- **Entry 8**: `normalized()` was duplicated verbatim for rectangle and ellipse.
+  Both, and the arrow's bounding box, call `normalizedCorners` now.
+
+Accepted with reasons recorded rather than changed: 14 (the empty-polygon
+sentinel, unreachable), 21 (the dangerous direction is already a compile
+error), 29 (an epsilon would make collinearity depend on coordinate magnitude,
+so panning a shape could change its self-intersection answer), 44 (the NaN path
+returns the fixed arrowhead size, which is the benign answer), 65 (nothing
+clamps an annotation to the slide extent, and nothing should -- a trace running
+off the tissue edge is a real gesture).
+
+Closed by earlier work: 46 (`inClosedRange` calls `std::isfinite`) and 57
+(`ViewportController.cpp:99` clamps the scale straight after `fitToRect`).
+
 ## The findings
 
 1. #10 moveOriginalGeometry's unguarded `if (picked)` could
@@ -98,20 +185,20 @@ latent, and becomes real the day someone connects `currentTextChanged`.
 5. #5 an invalid command is rejected by convention at the call
 6. #6 ~MainWindow nulls the persistence pointer but not
 7. #6 preview omits withMinimumExtent that the commit
-8. #7 normalized(EllipseGeometry) duplicates the
+8. #7 normalized(EllipseGeometry) duplicates the **[FIXED 2026-10-19 - normalizedCorners(PointF, PointF) is shared by rectangle, ellipse and the arrow box]**
 9. #8 the pi literal is repeated three times in **[CLOSED - single constexpr kPi at AnnotationGeometry.cpp:15]**
 10. #8 undoing a create clears an unrelated selection -- exactly
 11. a 1-pixel jitter counts as a pan and suppresses
 12. a hand-edited file carrying fillOpacity 0.333 quantises and
 13. accepting Preferences writes the category store even when
-14. an empty polygon's boundingBox is {0,0,0,0} — a real rect at
+14. an empty polygon's boundingBox is {0,0,0,0} — a real rect at **[ACCEPTED 2026-10-19 - documented as a sentinel at AnnotationGeometry.cpp:76; no reachable path builds an empty polygon, so std::optional would make every caller handle a case none can meet]**
 15. an empty/whitespace-only `to` retags to an empty
 16. AnnotationEditing.cpp uses std::nullopt with only an
 17. AnnotationGeometry.h header comment 
 18. AnnotationPropertiesPanel.cpp:304 dereferences widget()->layout()
 19. annotationsBulkChanged -> refreshAfterReset forces stored
 20. AnnotationShapeName.cpp breaks alphabetical order in
-21. AnnotationType and the geometry variant are independent
+21. AnnotationType and the geometry variant are independent **[ACCEPTED 2026-10-19 - the dangerous direction is a compile error: a new variant alternative with no typeOfShape overload will not build. The reverse leaves an unreachable enumerator]**
 22. bad_alloc from the outer catch is reported as
 23. beginSlide's file read is on the UI thread; a
 24. categories() does not normalise on read, so a hand-edited **[CLOSED - categories() calls core::normalizeCategoryList on read, QSettingsAnnotationCategoryStore.cpp:44]**
@@ -119,7 +206,7 @@ latent, and becomes real the day someone connects `currentTextChanged`.
 26. ceiling test 2 is vacuous on MSVC and libc++ — its
 27. CLAUDE.md claims the ui layer links slideio-viewer-app; it **[appears CLOSED 2026-10-19 - CMake and CLAUDE.md agree today]**
 28. clearing the user name (setUserName(
-29. collinearity is exact (d == 0.0), no epsilon. Correct and
+29. collinearity is exact (d == 0.0), no epsilon. Correct and **[ACCEPTED 2026-10-19 - an epsilon would make "collinear" depend on coordinate magnitude, so a shape would change its self-intersection answer by being panned]**
 30. core::nearestBoxHandle treats a NaN distance as in **[CLOSED - BoxResize.cpp:35-39 refuses NaN deliberately]**
 31. currentSlideId() recomputes the content-size walk that
 32. displacedProfileNote takes a const SlideInfo&, so
@@ -132,11 +219,11 @@ latent, and becomes real the day someone connects `currentTextChanged`.
 39. M5 — `result.asked` is set before the resolver check,
 40. M6 — Cancel re-enters beginSlide, which re-runs the
 41. MainWindow.cpp now 1191 lines; mirrors its existing pattern
-42. measure() calls outline(geometry) and then measureKnown calls
+42. measure() calls outline(geometry) and then measureKnown calls **[FIXED 2026-10-19 - measureOutline takes the outline measure() already built; the double build fell on freehand traces, the shapes with the most vertices]**
 43. move rebuilds geometry as RectangleGeometry from the
-44. NaN behaviour is benign but accidental. std::min(NaN, 5.0f)
+44. NaN behaviour is benign but accidental. std::min(NaN, 5.0f) **[ACCEPTED 2026-10-19 - benign and now stated: AnnotationDecoration.cpp returns the fixed head size, so the glyph draws nominally rather than vanishing]**
 45. NaN geometry inputs untested
-46. NaN in lineWidth/fillOpacity always compares unequal, so it
+46. NaN in lineWidth/fillOpacity always compares unequal, so it **[CLOSED - inClosedRange calls std::isfinite first, AnnotationSerialization.cpp:103, so NaN is refused on both read and write]**
 47. new #includes/usings sit mid-file in the test, against the
 48. new isUnclassifiedCategory declaration was inserted between
 49. new test names start lowercase; the file's existing cases start
@@ -147,7 +234,7 @@ latent, and becomes real the day someone connects `currentTextChanged`.
 54. no test pins that a stored classification with surrounding
 55. no test that an unset store leaves the file unwritten, nor
 56. no tests for case-duplicate or whitespace-padded CONFIGURED
-57. no upper bound on scale — a sub-pixel bounding box yields a
+57. no upper bound on scale — a sub-pixel bounding box yields a **[CLOSED - ViewportController.cpp:99 clamps to kMinScale..kMaxScale right after fitToRect, with a comment saying core knows nothing of the limits]**
 58. nothing resets dragOwner when a slide closes mid-drag;
 59. openAuxImage has no live caller today (associated images go via
 60. paintAnnotations has no per-type geometry dispatch; needed
@@ -155,14 +242,14 @@ latent, and becomes real the day someone connects `currentTextChanged`.
 62. preview rectangle repeats the screenRect conversion.
 63. ragged comment line-wrapping left by the edits
 64. rebuild() runs on every annotationChanged. If a move-drag
-65. rectangles are not clamped to the slide extent. Recorded as
+65. rectangles are not clamped to the slide extent. Recorded as **[LIVE, ACCEPTED 2026-10-19 - no clamp exists. A trace running off the tissue edge is a real gesture and the slide extent is not a clinical boundary; clamping would move a vertex the user placed]**
 66. rename is refused entirely on a read-only slide including the
 67. rename with no slide open reports 
 68. resizableBoxGeometry computes boundingBox before the **[STILL LIVE - ViewportWidget.cpp:1641 vs :1645]**
 69. setAnnotationModel(nullptr) on an already-null model returns
-70. snprintf buffer truncation rather than overrun for extreme
+70. snprintf buffer truncation rather than overrun for extreme **[FIXED 2026-10-19 - kNumberBufferSize is 352, enough for %.0f of DBL_MAX; see 104]**
 71. Space held + left click with no movement clears the
-72. std::tolower/std::isspace are locale-dependent where the
+72. std::tolower/std::isspace are locale-dependent where the **[FIXED 2026-10-19 - core::caseFoldKey replaces both, and ui now calls it too; this was the core half of 106]**
 73. tally not cleared when the model goes null (unreachable today). **[CLOSED - rebuildTally() clears before the null check]**
 74. task-2-report.md per-case assertion breakdown lists cases
 75. task-3-report.md file-size table reports 66/65/108 lines
@@ -194,7 +281,7 @@ latent, and becomes real the day someone connects `currentTextChanged`.
 101. the tie-break tests depend on std::sort actually reordering
 102. the unchanged-edit test's modifiedAt equality could pass
 103. the zero-translation identity test asserts x and y but not
-104. threeSignificantFigures can ask for ~302 decimals at a
+104. threeSignificantFigures can ask for ~302 decimals at a **[FIXED 2026-10-19 - decimals clamped to kMaxDecimals, and a non-finite guard added: log10(inf) cast to int was undefined behaviour]**
 105. tolerance on a degenerate rectangle untested
 106. toLower is ASCII-only, so non-ASCII case variants split rows **[FIXED 2026-10-19 - toLower uses QString::toCaseFolded; test uses an O-diaeresis pair]**
 107. toLower(clean) computed twice per non-empty classification. **[FIXED 2026-10-19 - the key is computed after the refusals that discard it]**

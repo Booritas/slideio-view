@@ -27,9 +27,33 @@ bool withinSpan(PointF a, PointF b, PointF c)
            && std::min(a.y, b.y) <= c.y && c.y <= std::max(a.y, b.y);
 }
 
+/// Enough for "%.0f" of the largest finite double -- 309 integer digits -- plus
+/// a sign, a point, kMaxDecimals and a terminator. snprintf truncates rather
+/// than overruns, so an undersized buffer was never unsafe; it silently
+/// returned a severed number, which for a measurement is worse than a wrong
+/// one because it still looks like a measurement.
+constexpr std::size_t kNumberBufferSize = 352;
+
+/// Three significant figures of a value below 1e-57 needs more decimals than
+/// any reader of a slide measurement can use. The digits past this point are
+/// all zeroes before the first significant one, so clamping here prints the
+/// honest "0.000...", not a truncation.
+constexpr int kMaxDecimals = 60;
+
 /// `value` rendered with three significant figures and no exponent.
 std::string threeSignificantFigures(double value)
 {
+    // Infinity and NaN leave before the exponent arithmetic. log10(inf) is
+    // inf, and static_cast<int> of that is undefined behaviour -- reachable
+    // from a hand-edited file, where coordinates large enough to overflow the
+    // unit conversion in formatArea (value * 1e12) arrive as a finite double
+    // and leave as inf. snprintf renders both by name.
+    if (!std::isfinite(value)) {
+        char buffer[kNumberBufferSize];
+        std::snprintf(buffer, sizeof(buffer), "%f", value);
+        return std::string(buffer);
+    }
+
     const double magnitude = std::abs(value);
 
     // Zero has no significant figures. Give it the shape a single-digit value
@@ -50,7 +74,7 @@ std::string threeSignificantFigures(double value)
         if (rounded >= std::pow(10.0, exponent + 1)) {
             ++exponent;
         }
-        decimals = std::max(0, 2 - exponent);
+        decimals = std::max(0, std::min(2 - exponent, kMaxDecimals));
 
         // The ROUNDED magnitude, not the raw value. Above 999 the format asks
         // for no decimals, and printing the raw value then keeps every integer
@@ -59,7 +83,7 @@ std::string threeSignificantFigures(double value)
         shown = std::copysign(rounded, value);
     }
 
-    char buffer[64];
+    char buffer[kNumberBufferSize];
     std::snprintf(buffer, sizeof(buffer), "%.*f", decimals, shown);
     return std::string(buffer);
 }
@@ -67,11 +91,10 @@ std::string threeSignificantFigures(double value)
 /// `value` with no decimals at all, for pixel counts.
 std::string wholeNumber(double value)
 {
-    char buffer[64];
+    char buffer[kNumberBufferSize];
     std::snprintf(buffer, sizeof(buffer), "%.0f", value);
     return std::string(buffer);
 }
-
 /// `shape` with every vertex scaled into physical units.
 ///
 /// A negative scale would mirror the shape and a NaN would poison every sum.
@@ -123,6 +146,17 @@ bool segmentsIntersect(PointF a, PointF b, PointF c, PointF d)
     return false;
 }
 
+/// The body of both measure() and measureKnown(), over an outline the caller
+/// has already built.
+///
+/// It takes the outline rather than the geometry so measure() can hand over
+/// the one it had to build for the self-intersection test instead of asking
+/// for a second identical copy. That path is the hand-traced shapes -- the
+/// ones that are not hasWellDefinedArea -- and a freehand line carries more
+/// vertices than anything else in the application, so it was the worst shape
+/// to build twice.
+ShapeMetrics measureOutline(const Outline& shape, PixelSize pixelSize, bool selfIntersecting);
+
 } // namespace
 
 ShapeMetrics measure(const AnnotationGeometry& geometry, PixelSize pixelSize)
@@ -134,7 +168,7 @@ ShapeMetrics measure(const AnnotationGeometry& geometry, PixelSize pixelSize)
     // that is plainly zero. Skipping is therefore more correct here, not just
     // cheaper.
     if (hasWellDefinedArea(geometry)) {
-        return measureKnown(geometry, pixelSize, false);
+        return measureOutline(outline(geometry), pixelSize, false);
     }
     // The expensive question, asked once, then delegated. An open path never
     // needs it: its area is absent either way, and open freehand traces carry
@@ -148,7 +182,7 @@ ShapeMetrics measure(const AnnotationGeometry& geometry, PixelSize pixelSize)
     // area is missing -- a stated reason that is false, which is worse than
     // stating none.
     const bool crosses = shape.closed && isSelfIntersecting(shape);
-    return measureKnown(geometry, pixelSize, crosses);
+    return measureOutline(shape, pixelSize, crosses);
 }
 
 ShapeMetrics measureKnown(const AnnotationGeometry& geometry, PixelSize pixelSize,
@@ -159,7 +193,15 @@ ShapeMetrics measureKnown(const AnnotationGeometry& geometry, PixelSize pixelSiz
     // same box hitTest uses and paintAnnotations strokes. Measuring from it is
     // what keeps the number, the painted region and the hit-tested region in
     // agreement, and means a new geometry type needs no change here.
-    const Outline scaled = scaledOutline(outline(geometry), pixelSize);
+    return measureOutline(outline(geometry), pixelSize, selfIntersecting);
+}
+
+namespace
+{
+
+ShapeMetrics measureOutline(const Outline& shape, PixelSize pixelSize, bool selfIntersecting)
+{
+    const Outline scaled = scaledOutline(shape, pixelSize);
 
     ShapeMetrics metrics;
     metrics.closed = scaled.closed;
@@ -218,6 +260,8 @@ ShapeMetrics measureKnown(const AnnotationGeometry& geometry, PixelSize pixelSiz
     metrics.area = std::abs(twiceSigned) / 2.0;
     return metrics;
 }
+
+} // namespace
 
 std::string formatLength(double value, MeasurementUnits units)
 {

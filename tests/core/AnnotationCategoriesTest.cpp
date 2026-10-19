@@ -2,6 +2,7 @@
 
 #include "slideio/viewer/core/AnnotationCategories.h"
 
+using slideio::viewer::core::caseFoldKey;
 using slideio::viewer::core::normalizeCategoryList;
 
 TEST_CASE("normalizeCategoryList trims and drops blanks", "[core][Categories]")
@@ -186,4 +187,87 @@ TEST_CASE("retagClassification matches a stored classification with surrounding 
     REQUIRE(changes[0].before.properties().classification == " Mitosis ");
     REQUIRE(changes[0].after.properties().classification == "Mitotic figure");
     REQUIRE(changes[1].after.properties().classification == "Mitotic figure");
+}
+
+// --- caseFoldKey -----------------------------------------------------------
+//
+// Every non-ASCII literal below is written as explicit UTF-8 bytes. Spelling
+// them as characters would make the test depend on how the compiler reads this
+// file's encoding, which is the one thing these cases must not be sensitive to.
+
+TEST_CASE("caseFoldKey folds ASCII", "[core][Categories]")
+{
+    REQUIRE(caseFoldKey("Mitosis") == "mitosis");
+    REQUIRE(caseFoldKey("MITOSIS") == "mitosis");
+    REQUIRE(caseFoldKey("") == "");
+}
+
+TEST_CASE("caseFoldKey folds the Latin-1 Supplement", "[core][Categories]")
+{
+    // "Zellkoerper" with an o-diaeresis: U+00D6 is \xC3\x96, U+00F6 is \xC3\xB6.
+    // Two spellings of one German category must produce one key, or the tally
+    // shows two rows and a rename of one of them misses the other's
+    // annotations.
+    const std::string upper = "ZELLK\xC3\x96RPER";
+    const std::string lower = "Zellk\xC3\xB6rper";
+
+    REQUIRE(caseFoldKey(upper) == caseFoldKey(lower));
+    REQUIRE(caseFoldKey(upper) == "zellk\xC3\xB6rper");
+}
+
+TEST_CASE("caseFoldKey leaves the multiplication sign alone", "[core][Categories]")
+{
+    // U+00D7 sits inside the Latin-1 letter run but is not a letter. Shifting
+    // it by 0x20 would turn it into the division sign.
+    REQUIRE(caseFoldKey("\xC3\x97") == "\xC3\x97");
+}
+
+TEST_CASE("caseFoldKey folds Latin Extended-A across all three stretches",
+          "[core][Categories]")
+{
+    REQUIRE(caseFoldKey("\xC4\x80") == "\xC4\x81"); // U+0100 -> U+0101, even/odd
+    REQUIRE(caseFoldKey("\xC5\x81") == "\xC5\x82"); // U+0141 -> U+0142, odd/even
+    REQUIRE(caseFoldKey("\xC5\xB9") == "\xC5\xBA"); // U+0179 -> U+017A, odd/even
+}
+
+TEST_CASE("caseFoldKey handles the two codepoints that leave their stretch",
+          "[core][Categories]")
+{
+    REQUIRE(caseFoldKey("\xC5\xB8") == "\xC3\xBF"); // U+0178 -> U+00FF, backwards
+    REQUIRE(caseFoldKey("\xC5\xBF") == "s");        // U+017F long s -> ASCII s
+}
+
+TEST_CASE("caseFoldKey leaves eszett alone", "[core][Categories]")
+{
+    // Simple folding, as Qt's toCaseFolded does it: eszett is its own fold, so
+    // "STRASSE" and the eszett spelling are two categories, not one.
+    REQUIRE(caseFoldKey("\xC3\x9F") == "\xC3\x9F");
+}
+
+TEST_CASE("caseFoldKey passes through what it cannot fold", "[core][Categories]")
+{
+    // Cyrillic: outside the table, so it folds to itself -- narrower than
+    // Qt, and identical on both sides of the layer boundary, which is the
+    // property that matters.
+    const std::string cyrillic = "\xD0\x9C\xD0\xB8";
+    REQUIRE(caseFoldKey(cyrillic) == cyrillic);
+
+    // A lone continuation byte is not valid UTF-8 at all. It must come back
+    // unchanged rather than be decoded as if it were a letter.
+    REQUIRE(caseFoldKey("A\x96") == "a\x96");
+
+    // A truncated two-byte sequence at the very end of the string: the lead is
+    // in the Latin range but there is no continuation byte to pair it with.
+    REQUIRE(caseFoldKey("x\xC3") == "x\xC3");
+}
+
+TEST_CASE("normalizeCategoryList deduplicates a non-ASCII case pair", "[core][Categories]")
+{
+    // The defect this exists for: before caseFoldKey, these were two
+    // vocabulary entries while the tally -- folding with Qt -- showed them as
+    // one row.
+    const std::vector<std::string> out =
+        normalizeCategoryList({"Zellk\xC3\xB6rper", "ZELLK\xC3\x96RPER"});
+
+    REQUIRE(out == std::vector<std::string>{"Zellk\xC3\xB6rper"});
 }
