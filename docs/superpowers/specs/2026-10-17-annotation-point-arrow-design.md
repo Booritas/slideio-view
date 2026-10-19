@@ -388,7 +388,9 @@ No test binary creates a `QApplication`, so placement, painting and every
 routing decision in `ViewportWidget` are unreachable from any suite.
 
 **Run 2026-10-18 against the installed build (sha256 `3471d563…`, commit
-`4bb744f`): 21/23 passed, AB19 and AB23 not performable — see below.** The
+`4bb744f`): 23/23 produced their stated outcome. AB19 and AB23 reached it
+through a layer in front of the gate they were aimed at rather than through the
+gate itself, which is not reachable from the UI — see below.** The
 binary was rebuilt and reinstalled first, and its hash compared against
 `build/build/Release/slideio-viewer.exe` and matched: a running viewer turns
 `cmake --install` into a silent no-op that still exits 0, so the artifact is
@@ -407,29 +409,49 @@ marker and arrowhead sizes come from counting the annotation-coloured pixels in
 a screenshot, and placement from the saved JSON, whose slide coordinates are
 exact.
 
-**AB19 and AB23 cannot be performed as written, and the setup note below was
-wrong.** It claimed the active tool is not reset when a slide opens. It is:
-`MainWindow::applyAnnotationAvailability` calls `setActiveTool(AnnotationTool::Pan)`
-whenever a real gate applies (`MainWindow.cpp:1746`), and `m_active` on the
-persistence service only changes in `beginSlide`/`endSlide`, so every transition
-into non-editable is also a transition to the Pan tool. On a read-only slide all
-six drawing-tool actions are disabled, the tool is forced to Pan, and the status
-bar carries a persistent "Annotations disabled" indicator. Both checks were run
-anyway and both produced the outcome they ask for — a click with the Point tool
-and a drag with the Rectangle tool created nothing, the list stayed at 12 and
-the file on disk was unchanged — but neither reached the `annotationsEditable()`
-gate in `commitDrawDrag`, because nothing in the UI can. That gate is defence in
-depth behind two layers that already hold, exactly as `commitPendingShape`'s is.
-It is kept, not removed: it costs one branch, and the layer in front of it is a
-UI decision that a later round could change.
+**AB19 and AB23 produced the outcome they ask for, but not by the route they
+assume — and the unreachability they ran into is the result worth keeping.**
+Both were run: a click with the Point tool and a drag with the Rectangle tool
+created nothing, the list stayed at 12 and the file on disk was unchanged.
+Neither reached `commitDrawDrag`'s `annotationsEditable()` gate, because nothing
+in the UI can. **Do not re-attempt the setup.** Three independent layers stand
+in front of that gate on a read-only slide, and each alone is sufficient:
 
-AB19 needs a slide whose annotations are not editable. Producing one is easy and
-was done the way group AA did it: point the stored `slideId` in the annotation
-file at a value matching no slide, and resolve the mismatch dialog as Open
-Read-Only; the file was restored afterwards from a byte-identical backup. What
-is not possible is the second half — having a drawing tool active on it. This
-paragraph used to say the tool survives the open; it does not, and the run above
-records why.
+1. **The actions are disabled.** `applyAnnotationAvailability` turns off all six
+   drawing-tool actions (`MainWindow.cpp:1766-1771`). There is no toolbar, so
+   the Tools menu is the only mouse route and it is dead.
+2. **The keyboard route is dead with them**, which is the layer that is easy to
+   miss. A disabled `QAction` is removed from Qt's shortcut map, so `R`, `E`,
+   `O`, `F`, `M` and `A` never fire. (The same mechanism, seen from the other
+   side, is why the Undo action must stay enabled during a live multi-click
+   trace.)
+3. **Arming the tool first does not help.** The obvious workaround — select
+   Point while the slide is still editable, then make it read-only — is closed
+   by `applyAnnotationAvailability` calling
+   `setActiveTool(AnnotationTool::Pan)` whenever a real gate applies
+   (`MainWindow.cpp:1797`). Since `m_active` on the persistence service changes
+   only in `beginSlide`/`endSlide`, **every** transition into non-editable
+   passes through that line. No ordering leaves a drawing tool active over a
+   slide that refuses edits.
+
+The gate is therefore defence in depth behind two layers that already hold,
+exactly as `commitPendingShape`'s is. It is kept, not removed: it costs one
+branch, and the layer in front of it is a UI decision a later round could
+change. Verified by inspection, which is the only instrument that reaches it —
+no suite can, since no test creates a `QApplication`.
+
+An earlier draft of this section claimed the active tool survives the open and
+that the checks were therefore performable. That was wrong, and attempting the
+setup is what disproved it. Worth noting what the attempt bought: the
+2026-10-17 claim that `commitDrawDrag`'s missing gate was reachable from the UI
+was also wrong, and these two checks are what established it. A check that
+cannot be performed is not automatically a wasted check.
+
+Producing the read-only slide itself is easy, and was done the way group AA did
+it: point the stored `slideId` in the annotation file at a value matching no
+slide, and resolve the mismatch dialog as **Open Read-Only**; restore the file
+afterwards from a byte-identical backup. It is the second half — a drawing tool
+active on it — that has no route.
 
 | | Check |
 |---|---|
@@ -451,14 +473,15 @@ records why.
 | AB16 | Use the show-annotation action on a marker: the view **recentres without changing zoom**. |
 | AB17 | Place a marker and an arrow, save, close the slide, reopen: both come back, the arrow's direction preserved. |
 | AB18 | Open the saved file in a text editor: `schemaVersion` still reads 1. |
-| AB19 | On a read-only slide, click with the Point tool: refused with the status-bar message, no marker created. |
+| AB19 | On a read-only slide, click with the Point tool: refused with the status-bar message, no marker created. (The tool cannot be armed on such a slide, so this is answered by the disabled actions and the forced Pan tool, never by the gate it was aimed at — see above.) |
 | AB20 | Escape with the Point tool active: reverts to the Pan tool, as other tools do. |
 | AB21 | Place a marker over pale background and over dark tissue: visible against both. |
 | AB22 | Delete a marker, Ctrl+Z, Ctrl+Y: it comes back, then goes again, in one step each. |
-| AB23 | With the read-only slide of AB19 still open, select the **Rectangle** tool and drag: refused with the status-bar message, no rectangle created. This is the pre-existing defect `commitDrawDrag`'s new gate fixes — AB19 exercises the gate through the Point tool, and nothing otherwise drives the path the rectangle and ellipse tools have been using unguarded since persistence landed. The ellipse shares that path; one check covers both. |
+| AB23 | With the read-only slide of AB19 still open, select the **Rectangle** tool and drag: refused with the status-bar message, no rectangle created. This is the pre-existing defect `commitDrawDrag`'s new gate fixes — AB19 exercises the gate through the Point tool, and nothing otherwise drives the path the rectangle and ellipse tools have been using unguarded since persistence landed. The ellipse shares that path; one check covers both. (As with AB19, the Rectangle tool cannot be armed on a read-only slide, so the gate is reached by inspection rather than by this check — see above.) |
 
-**What was observed.** AB1–AB18 and AB20–AB22 passed; AB19 and AB23 are covered
-above. The numbers worth keeping:
+**What was observed.** AB1–AB18 and AB20–AB22 passed. AB19 and AB23 produced
+their stated outcome through the layers in front of the gate they name, which is
+unreachable from the UI — covered above. The numbers worth keeping:
 
 - **AB3** — the marker's disc measured 10×10 px with 88 coloured pixels at 1.6x
   (3.7%), and 10×10 px with 88 coloured pixels at 305.2x (693.7%). A 190-fold
