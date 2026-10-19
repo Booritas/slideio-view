@@ -23,6 +23,8 @@
 #include "slideio/viewer/ui/ColorProfilePolicy.h"
 #include "slideio/viewer/ui/DriverFilters.h"
 #include "slideio/viewer/ui/LoadingOverlay.h"
+#include "slideio/viewer/ui/PathDisplay.h"
+#include "slideio/viewer/ui/RecentFiles.h"
 #include "slideio/viewer/ui/SceneThumbnailPanel.h"
 #include "slideio/viewer/ui/ShortcutPolicy.h"
 #include "slideio/viewer/ui/SlidePropertiesPanel.h"
@@ -78,6 +80,11 @@ namespace
 {
 constexpr int kMaxRecentFiles = 10;
 const QString kRecentFilesKey = "recentFiles";
+
+// The window title names the slide that is open; with none open it names the
+// application alone. Held in one place because three sites say it.
+const QString kApplicationTitle = QStringLiteral("SlideIO Viewer");
+
 constexpr auto kDefaultProfileKey = "color/defaultSourceProfile";
 constexpr auto kColorManagementKey = "view/colorManagement";
 
@@ -570,12 +577,26 @@ struct MainWindow::Impl
             // listener above, which closeSlide() emits before it flushes.
             viewportWidget->closeSlide();
             closeAction->setEnabled(false);
+            // Nothing is open now, so the title stops naming a slide. Done here
+            // and not from the slideClosed signal, which also fires at the start
+            // of every open: openSlide() sets the title before the viewport
+            // closes the previous slide, so clearing there would blank it for
+            // every open instead of only for a close. A stale title cost a whole
+            // session of group AC -- a correctly closed viewer read as a failed
+            // reopen.
+            owner->setWindowTitle(kApplicationTitle);
             // Reset the tool here rather than on the slideClosed signal, which
             // also fires at the start of every open. Putting the viewer away is
             // the one case where returning to Navigate is what the user meant.
             viewportWidget->setActiveTool(AnnotationTool::Pan);
             sceneThumbnailPanel->clear();
             associatedImagesPanel->clear();
+            // Both panels are empty now, so the memo of which file they hold
+            // has to go with them. The slideOpened handler skips the rebuild
+            // when the file has not changed -- without this, reopening the slide
+            // just closed left the Scenes panel blank for the rest of the
+            // session.
+            lastOpenedFilePath.clear();
             // Dock panel visibility intentionally preserved — user-controlled.
         });
 
@@ -979,6 +1000,10 @@ struct MainWindow::Impl
 
         QObject::connect(viewportWidget, &ViewportWidget::errorOccurred, owner,
             [this](const std::string& message) {
+                // openSlide() sets the title before the open is attempted, and
+                // the only thing that emits this is an open that failed, so the
+                // title is naming a slide that is not there.
+                owner->setWindowTitle(kApplicationTitle);
                 QMessageBox::critical(owner, "Error", QString::fromStdString(message));
             });
 
@@ -1149,15 +1174,15 @@ struct MainWindow::Impl
     void addToRecentFiles(const std::string& filePath)
     {
         QSettings settings;
-        QStringList files = settings.value(kRecentFilesKey).toStringList();
-        QString path = QString::fromStdString(filePath);
-
-        files.removeAll(path);
-        files.prepend(path);
-
-        while (files.size() > kMaxRecentFiles) {
-            files.removeLast();
-        }
+        // The whole rule -- normalize, promote, de-duplicate, truncate -- is in
+        // recentFilesWithPathPromoted, where a test can reach it. An exact
+        // string match was not enough: the shell gives backslashes where the
+        // file dialog gives forward slashes, and the menu labels an entry with
+        // its last component alone, so one slide was listed twice under one
+        // name.
+        const QStringList files = recentFilesWithPathPromoted(
+            settings.value(kRecentFilesKey).toStringList(),
+            QString::fromStdString(filePath), kMaxRecentFiles);
 
         settings.setValue(kRecentFilesKey, files);
         updateRecentFilesMenu();
@@ -1182,7 +1207,9 @@ struct MainWindow::Impl
 
         for (int i = 0; i < files.size(); ++i) {
             const QString& filePath = files[i];
-            QString label = QString("&%1  %2").arg(i + 1).arg(QFileInfo(filePath).fileName());
+            // slideDisplayName, not QFileInfo::fileName: a DICOM study is a
+            // folder, and fileName() on one labels the entry with nothing at all.
+            QString label = QString("&%1  %2").arg(i + 1).arg(slideDisplayName(filePath));
             QAction* action = recentFilesMenu->addAction(label);
             action->setData(filePath);
             action->setStatusTip(filePath);
@@ -1832,7 +1859,7 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->overrideStore = std::make_unique<infra::QSettingsColorProfileOverrideStore>();
     m_impl->categoryStore = std::make_unique<infra::QSettingsAnnotationCategoryStore>();
 
-    setWindowTitle("SlideIO Viewer");
+    setWindowTitle(kApplicationTitle);
     setAcceptDrops(true);
 
     // Apply dark theme — do NOT style QMainWindow background directly,
@@ -2202,7 +2229,7 @@ void MainWindow::openSlide(const std::string& path, const std::string& driverId)
     // Don't clear the scene/aux panels here — the slideOpened handler will
     // rebuild them when (and only when) the file actually changes. Clearing
     // eagerly would flash empty panels for the duration of the load.
-    setWindowTitle(QString("SlideIO Viewer - %1").arg(QString::fromStdString(path)));
+    setWindowTitle(QStringLiteral("%1 - %2").arg(kApplicationTitle, QString::fromStdString(path)));
     m_impl->addToRecentFiles(path);
 
     // openSlide is async: it kicks off background work and returns immediately.

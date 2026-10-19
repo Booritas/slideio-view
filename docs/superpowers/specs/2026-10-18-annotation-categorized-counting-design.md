@@ -1,6 +1,6 @@
 # Categorized counting — design
 
-Status: implemented in commits `d6dacc7..4980a86`, 2026-10-18. Manual group AC was run in full across 2026-10-18 and 2026-10-19: 28 pass, 1 fail (AC9), 1 performable only in part (AC29) — see §7.5. AC26 failed, was fixed, and re-ran green.
+Status: implemented in commits `d6dacc7..4980a86`, 2026-10-18. Manual group AC was run in full across 2026-10-18 and 2026-10-19: 28 pass, 1 fail (AC9), 1 performable only in part (AC29) — see §7.5. AC26 failed, was fixed, and re-ran green. The three cosmetic defects the run turned up were fixed on 2026-10-19 and are recorded with their causes in §7.5; AC9 and AC29 remain open because each needs a decision the spec never asked for.
 
 ## 1. Scope
 
@@ -532,22 +532,43 @@ check should be struck; it should not sit here looking like a defect.
 
 On 2026-10-18 this read as a failure: after Ctrl+W and a reopen the panel showed
 **Annotations (0)** while the file held 27. The reopen was never the problem.
-**The window title does not clear when a slide is closed** — after Ctrl+W it
+**The window title did not clear when a slide was closed** — after Ctrl+W it
 still read `SlideIO Viewer - …\Philips-1.tiff`, so a correctly closed viewer
 looked like a viewer that had failed to reopen. The File menu settles it: with
 the slide closed, `Close  Ctrl+W` is greyed out. Reopening from Recent Files
 then restored all 37 annotations and the full tally.
 
-Two cosmetic defects fell out of running it, neither affecting data:
+Three cosmetic defects fell out of running it, none affecting data. All three
+were fixed on 2026-10-19, after the group was complete; each had a different
+cause, and none of the three was where the symptom pointed.
 
-- **The title keeps naming a closed slide.** It should clear, or say so; as it
-  stands the window claims to be showing a file it is not.
-- **The Scenes panel does not repopulate its thumbnail strip after a
-  close-and-reopen within one session.** It populates on a fresh start and on a
-  slide switch, so this is specific to the reopen path.
-
-A third, smaller: Recent Files listed `Philips-1.tiff` twice, at positions 1
-and 3.
+- **The title kept naming a closed slide.** `MainWindow::openSlide` sets the
+  title and nothing ever unset it. It is cleared in the Close action's handler
+  and after a failed open — deliberately *not* from the `slideClosed` signal,
+  which also fires at the start of every open: the title is set before the
+  viewport closes the previous slide, so clearing there would blank it on every
+  open rather than only on a close.
+- **The Scenes panel did not repopulate after a close-and-reopen within one
+  session.** The `slideOpened` handler skips the panel rebuild when the file has
+  not changed, so that clicking a scene thumbnail does not clear the strip it
+  was clicked in. The Close action emptied both panels but left
+  `lastOpenedFilePath` naming the file it had just emptied them of, so reopening
+  that same slide took the skip and left them empty. Clearing the memo beside
+  the panels restores the invariant: it names the file the panels hold, and they
+  hold nothing.
+- **Recent Files listed `Philips-1.tiff` twice**, at positions 1 and 3. The two
+  entries were the same file in two spellings — `D:\…\Philips-1.tiff` from the
+  shell's command line (`main.cpp` passes `argv[1]` through unchanged) and
+  `D:/…/Philips-1.tiff` from the file dialog — and the menu labels an entry with
+  its last component alone, so one slide read as two. De-duplication was an
+  exact `QStringList::removeAll`, which the two spellings slipped past. The rule
+  moved into `ui::recentFilesWithPathPromoted`, where a test can reach it: it
+  normalizes separators, promotes, de-duplicates and truncates, and normalizes
+  the stored entries on the way through, so a list that already holds both
+  spellings is repaired the next time it is written rather than needing a
+  migration. Separator style and case fold only on Windows — on a
+  case-sensitive platform a backslash is an ordinary file-name character, and
+  folding either would rewrite a stored path into one that no longer opens.
 
 #### Notes for whoever runs this again
 
