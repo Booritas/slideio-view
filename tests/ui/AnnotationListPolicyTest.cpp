@@ -549,3 +549,76 @@ TEST_CASE("countingComboSwallowsWheel swallows the wheel only while the popup is
     REQUIRE(ui::countingComboSwallowsWheel(false));
     REQUIRE_FALSE(ui::countingComboSwallowsWheel(true));
 }
+
+TEST_CASE("sorting by label ignores case, as the filter does", "[ui][AnnotationList]")
+{
+    // The filter folds case; byte-order sorting does not, so every capitalised
+    // label used to collect above every lowercase one -- "Zebra" before
+    // "apple". A list the user filters case-insensitively and reads in a case-
+    // sensitive order is the same list disagreeing with itself.
+    std::vector<core::Annotation> annotations;
+    annotations.push_back(annotation("1", "Zebra", ""));
+    annotations.push_back(annotation("2", "apple", ""));
+    annotations.push_back(annotation("3", "Mitosis", ""));
+
+    const auto rows = ui::annotationRows(annotations, "", ui::AnnotationSortKey::Label,
+                                         testTypeName);
+
+    REQUIRE(rows.size() == 3);
+    REQUIRE(rows[0].label == "apple");
+    REQUIRE(rows[1].label == "Mitosis");
+    REQUIRE(rows[2].label == "Zebra");
+}
+
+TEST_CASE("labels differing only in case keep creation order", "[ui][AnnotationList]")
+{
+    // Folding case makes these equal, so the tie-break must still be creation
+    // order -- otherwise two rows swap places between rebuilds, which is the
+    // misclick categoryTally's ordering rule exists to prevent.
+    std::vector<core::Annotation> annotations;
+    annotations.push_back(annotation("first", "tumor", ""));
+    annotations.push_back(annotation("second", "Tumor", ""));
+
+    const auto rows = ui::annotationRows(annotations, "", ui::AnnotationSortKey::Label,
+                                         testTypeName);
+
+    REQUIRE(rows.size() == 2);
+    REQUIRE(rows[0].id == "first");
+    REQUIRE(rows[1].id == "second");
+}
+
+TEST_CASE("sorting by classification ignores case", "[ui][AnnotationList]")
+{
+    std::vector<core::Annotation> annotations;
+    annotations.push_back(annotation("1", "", "Zebra"));
+    annotations.push_back(annotation("2", "", "apoptosis"));
+
+    const auto rows = ui::annotationRows(annotations, "",
+                                         ui::AnnotationSortKey::Classification, testTypeName);
+
+    REQUIRE(rows.size() == 2);
+    REQUIRE(rows[0].classification == "apoptosis");
+    REQUIRE(rows[1].classification == "Zebra");
+}
+
+TEST_CASE("case folding is Unicode-aware, so one category stays one row", "[ui][AnnotationList]")
+{
+    // The same category in two cases, with a non-ASCII letter. std::tolower
+    // folds only ASCII, so these produced two keys and the tally showed two
+    // rows for one category -- a clinical count split in half, each half
+    // correct about what it counted and neither correct about the category.
+    // Written as explicit UTF-8 bytes so the test does not depend on the
+    // compiler's source-encoding assumptions.
+    const std::string upper = "ZELLK\xC3\x96RPER";  // O with diaeresis
+    const std::string lower = "zellk\xC3\xB6rper";
+
+    std::vector<core::Annotation> annotations;
+    annotations.push_back(markerWith("1", upper));
+    annotations.push_back(markerWith("2", lower));
+
+    const auto tally = ui::categoryTally(annotations, {});
+
+    REQUIRE(tally.size() == 1);
+    REQUIRE(tally[0].count == 2);
+    REQUIRE(tally[0].category == upper);  // the spelling first seen
+}

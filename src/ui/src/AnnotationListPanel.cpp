@@ -151,9 +151,13 @@ AnnotationListPanel::AnnotationListPanel(QWidget* parent)
         }
     });
 
-    connect(m_impl->filter, &QLineEdit::textChanged, this, [this](const QString&) { rebuild(); });
+    // rebuildRows, not rebuild: neither control can change a tally count, and
+    // categoryTally walks every annotation in the scene. Asking it per
+    // keystroke produced a strip identical to the one already on screen.
+    connect(m_impl->filter, &QLineEdit::textChanged, this,
+            [this](const QString&) { rebuildRows(); });
     connect(m_impl->sort, qOverload<int>(&QComboBox::currentIndexChanged), this,
-            [this](int) { rebuild(); });
+            [this](int) { rebuildRows(); });
 
     connect(m_impl->tree, &QTreeWidget::itemSelectionChanged, this, [this]() {
         if (m_impl->model == nullptr) {
@@ -291,6 +295,12 @@ void AnnotationListPanel::showEvent(QShowEvent* event)
 
 void AnnotationListPanel::rebuild()
 {
+    rebuildRows();
+    rebuildTally();
+}
+
+void AnnotationListPanel::rebuildRows()
+{
     // Hidden docks skip the work: a drag in the viewport emits annotationChanged
     // per mouse-move, and rebuilding (clear, N items, a sort) for each would be
     // paid by a panel nobody can see. showEvent() catches up. The title goes
@@ -303,7 +313,6 @@ void AnnotationListPanel::rebuild()
     // clear() resets the scroll position; kept so a rebuild does not move the list.
     const int scrollValue = m_impl->tree->verticalScrollBar()->value();
     m_impl->tree->clear();
-    m_impl->tally->clear();
 
     if (m_impl->model == nullptr) {
         setWindowTitle(QString::fromStdString(annotationDockTitle(0, 0)));
@@ -330,17 +339,38 @@ void AnnotationListPanel::rebuild()
     // would mean moving the formatting into this panel.
     setWindowTitle(QString::fromStdString(annotationDockTitle(annotations.size(), rows.size())));
 
+    applySelection(m_impl->model->selectedId());
+    m_impl->tree->verticalScrollBar()->setValue(scrollValue);
+}
+
+void AnnotationListPanel::rebuildTally()
+{
+    // Separate from the rows because the two have different inputs, and the
+    // filter and sort controls change only the rows. categoryTally walks every
+    // annotation in the scene; running it on each keystroke of the filter box
+    // paid that walk per character to produce an identical strip. The counts
+    // cannot move when the filter moves -- that is the rule the function is
+    // built around -- so recomputing them there was work whose result was
+    // guaranteed to be the one already on screen.
+    if (!isVisible()) {
+        return;
+    }
+
+    m_impl->tally->clear();
+    if (m_impl->model == nullptr) {
+        return;
+    }
+
     // Over the whole model, never the filtered rows: a clinical count that moved when someone
     // typed in the filter box would be a trap.
-    for (const CategoryTallyRow& row : categoryTally(annotations, m_impl->categories)) {
+    for (const CategoryTallyRow& row : categoryTally(m_impl->model->annotations(),
+                                                     m_impl->categories)) {
         auto* item = new QTreeWidgetItem(m_impl->tally);
         item->setText(0, QString::fromStdString(row.category));
         item->setText(1, QString::number(static_cast<qulonglong>(row.count)));
         item->setData(0, kConfiguredRole, row.configured);
         item->setData(0, kSyntheticRole, row.synthetic);
     }
-    applySelection(m_impl->model->selectedId());
-    m_impl->tree->verticalScrollBar()->setValue(scrollValue);
 }
 
 void AnnotationListPanel::applySelection(const std::string& id)

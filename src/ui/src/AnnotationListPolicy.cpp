@@ -2,6 +2,7 @@
 
 #include "slideio/viewer/core/AnnotationCategories.h"
 
+#include <QString>
 #include <QtCore/qnamespace.h>
 
 #include <algorithm>
@@ -17,13 +18,17 @@ namespace slideio::viewer::ui
 namespace
 {
 
+/// Caseless-matching key for a label or classification.
+///
+/// QString::toCaseFolded rather than std::tolower: the latter folds ASCII
+/// only and is locale-dependent, so a category carrying any non-ASCII letter
+/// produced a different key in each case it was typed -- and the tally showed
+/// one category as two rows, each correct about what it counted and neither
+/// correct about the category. Case folding is what Unicode defines for
+/// caseless comparison; it is deliberately not "lowercasing".
 std::string toLower(const std::string& text)
 {
-    std::string lowered = text;
-    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    return lowered;
+    return QString::fromStdString(text).toCaseFolded().toStdString();
 }
 
 std::string trimmedText(const std::string& text)
@@ -89,30 +94,43 @@ std::vector<AnnotationRow> annotationRows(const std::vector<core::Annotation>& a
         return a.creationIndex < b.creationIndex;
     };
 
+    // Case-folded, because the filter above is: a list filtered without regard
+    // to case and ordered with regard to it disagrees with itself, and every
+    // capitalised label collected above every lowercase one -- "Zebra" before
+    // "apple". Folding makes two spellings equal rather than ordered, so each
+    // sort below still falls through to byCreation, which is what keeps rows
+    // from swapping places between rebuilds.
+    const auto foldedLess = [](const std::string& a, const std::string& b) {
+        return toLower(a) < toLower(b);
+    };
+    const auto foldedEqual = [](const std::string& a, const std::string& b) {
+        return toLower(a) == toLower(b);
+    };
+
     switch (sort) {
     case AnnotationSortKey::CreationOrder:
         std::sort(indexed.begin(), indexed.end(), byCreation);
         break;
     case AnnotationSortKey::Label:
         std::sort(indexed.begin(), indexed.end(), [&](const IndexedRow& a, const IndexedRow& b) {
-            if (a.row.label != b.row.label) {
-                return a.row.label < b.row.label;
+            if (!foldedEqual(a.row.label, b.row.label)) {
+                return foldedLess(a.row.label, b.row.label);
             }
             return byCreation(a, b);
         });
         break;
     case AnnotationSortKey::Classification:
         std::sort(indexed.begin(), indexed.end(), [&](const IndexedRow& a, const IndexedRow& b) {
-            if (a.row.classification != b.row.classification) {
-                return a.row.classification < b.row.classification;
+            if (!foldedEqual(a.row.classification, b.row.classification)) {
+                return foldedLess(a.row.classification, b.row.classification);
             }
             return byCreation(a, b);
         });
         break;
     case AnnotationSortKey::Type:
         std::sort(indexed.begin(), indexed.end(), [&](const IndexedRow& a, const IndexedRow& b) {
-            if (a.row.type != b.row.type) {
-                return a.row.type < b.row.type;
+            if (!foldedEqual(a.row.type, b.row.type)) {
+                return foldedLess(a.row.type, b.row.type);
             }
             return byCreation(a, b);
         });
@@ -155,10 +173,12 @@ std::vector<CategoryTallyRow> categoryTally(const std::vector<core::Annotation>&
         if (clean.empty()) {
             continue;
         }
-        const std::string key = toLower(clean);
         if (core::isUnclassifiedCategory(clean)) {
             continue;
         }
+        // After the refusals, not before: an Unclassified entry is discarded
+        // here, and lowercasing it first was work thrown away.
+        const std::string key = toLower(clean);
         if (std::find(keys.begin(), keys.end(), key) != keys.end()) {
             continue;
         }

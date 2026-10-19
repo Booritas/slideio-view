@@ -1,6 +1,6 @@
 # Deferred minor findings — recovered index
 
-Status: recovered 2026-10-19 from the session transcript. **The full text of
+Status: recovered 2026-10-19 from the session transcript; 15 of 117 triaged, 4 fixed. **The full text of
 these findings is lost.** What is here is each one's opening clause, enough to
 identify it and re-derive it against the code, and nothing more.
 
@@ -34,9 +34,37 @@ They are sorted alphabetically because round attribution did not survive either.
 The `#n` prefixes on the first ten are each round's own numbering, not a global
 one, so they collide.
 
-**Nothing here has been triaged.** Four were spot-checked on 2026-10-19 to test
-whether the index is usable, and the sample suggests a meaningful fraction is
-already closed:
+## Triage so far
+
+**Fifteen of the 117 have been looked at, on 2026-10-19.** Of those, **nine
+were already closed** by later rounds, **four were live and are now fixed**, one
+is partly fixed and one is live and accepted. The index is therefore mostly
+historical — but not entirely, and the four live ones were worth having.
+
+Fixed on 2026-10-19 (entries 25, 34, 106, 107):
+
+- **The list sorts folded no case while the filter did**, so every capitalised
+  label collected above every lowercase one — `Zebra` before `apple` — in a
+  list the user filters case-insensitively. The three sorts now fold, and still
+  fall through to creation order so rows cannot swap between rebuilds.
+- **Case folding was ASCII-only and locale-dependent** (`std::tolower`), so a
+  category carrying any non-ASCII letter made a separate tally row for each
+  case it was typed in — one clinical count split in two, each half correct
+  about what it counted and neither correct about the category. `toLower` now
+  uses `QString::toCaseFolded`, which is what Unicode defines for caseless
+  matching.
+- **`categoryTally` ran on every keystroke in the filter box.** It walks every
+  annotation in the scene and its counts cannot move when the filter moves —
+  that is the rule it is built around — so each keystroke paid for a strip
+  identical to the one already on screen. `rebuild()` is split, and the filter
+  and sort controls call `rebuildRows()`.
+- **A tally key was lowercased before the checks that discard it.**
+
+Still live and accepted: entry 68, `resizableBoxGeometry` computing
+`boundingBox` before the test that may discard it — the box is what the
+authority has to be *asked* with, which is the design the finding is weighing.
+
+The nine found already closed are marked inline below. The spot-check sample:
 
 - *"core::nearestBoxHandle treats a NaN distance as in[-range]"* — **closed.**
   `BoxResize.cpp:35-39` now writes the test as `!(distance <= tolerance)`
@@ -64,14 +92,14 @@ latent, and becomes real the day someone connects `currentTextChanged`.
 ## The findings
 
 1. #10 moveOriginalGeometry's unguarded `if (picked)` could
-2. #11 the front-trim loop erases one element at a time, O(n)
+2. #11 the front-trim loop erases one element at a time, O(n) **[CLOSED - UndoRedoStack.cpp:39-46 is one range erase, with the reasoning in a comment]**
 3. #4 setSelected() unconditional after an insert() that can drop
 4. #4 Shift+Ctrl squares the box (code correct, plan
 5. #5 an invalid command is rejected by convention at the call
 6. #6 ~MainWindow nulls the persistence pointer but not
 7. #6 preview omits withMinimumExtent that the commit
 8. #7 normalized(EllipseGeometry) duplicates the
-9. #8 the pi literal is repeated three times in
+9. #8 the pi literal is repeated three times in **[CLOSED - single constexpr kPi at AnnotationGeometry.cpp:15]**
 10. #8 undoing a create clears an unrelated selection -- exactly
 11. a 1-pixel jitter counts as a pan and suppresses
 12. a hand-edited file carrying fillOpacity 0.333 quantises and
@@ -86,8 +114,8 @@ latent, and becomes real the day someone connects `currentTextChanged`.
 21. AnnotationType and the geometry variant are independent
 22. bad_alloc from the outer catch is reported as
 23. beginSlide's file read is on the UI thread; a
-24. categories() does not normalise on read, so a hand-edited
-25. categoryTally recomputes on every filter keystroke though
+24. categories() does not normalise on read, so a hand-edited **[CLOSED - categories() calls core::normalizeCategoryList on read, QSettingsAnnotationCategoryStore.cpp:44]**
+25. categoryTally recomputes on every filter keystroke though **[FIXED 2026-10-19 - rebuild() split; the filter and sort combos call rebuildRows(), which does not touch the tally]**
 26. ceiling test 2 is vacuous on MSVC and libc++ — its
 27. CLAUDE.md claims the ui layer links slideio-viewer-app; it **[appears CLOSED 2026-10-19 - CMake and CLAUDE.md agree today]**
 28. clearing the user name (setUserName(
@@ -96,10 +124,10 @@ latent, and becomes real the day someone connects `currentTextChanged`.
 31. currentSlideId() recomputes the content-size walk that
 32. displacedProfileNote takes a const SlideInfo&, so
 33. Escape is accepted unconditionally, blocking any parent
-34. filter folds case but the Label/Classification/Type sorts
+34. filter folds case but the Label/Classification/Type sorts **[FIXED 2026-10-19 - the three sorts fold case, tests in AnnotationListPolicyTest.cpp]**
 35. formatIso8601Utc's header comment names only the 9999
 36. if DocumentsLocation resolves empty (rare Linux), the
-37. item->setData(0, Qt::UserRole, row.configured) is a dead
+37. item->setData(0, Qt::UserRole, row.configured) is a dead **[CLOSED - no such call remains]**
 38. M3 — `previousWorkspace` captures the resolved path, so
 39. M5 — `result.asked` is set before the resolver check,
 40. M6 — Cancel re-enters beginSlide, which re-runs the
@@ -135,7 +163,7 @@ latent, and becomes real the day someone connects `currentTextChanged`.
 70. snprintf buffer truncation rather than overrun for extreme
 71. Space held + left click with no movement clears the
 72. std::tolower/std::isspace are locale-dependent where the
-73. tally not cleared when the model goes null (unreachable today).
+73. tally not cleared when the model goes null (unreachable today). **[CLOSED - rebuildTally() clears before the null check]**
 74. task-2-report.md per-case assertion breakdown lists cases
 75. task-3-report.md file-size table reports 66/65/108 lines
 76. that condition is now DUPLICATED between the preview
@@ -168,12 +196,12 @@ latent, and becomes real the day someone connects `currentTextChanged`.
 103. the zero-translation identity test asserts x and y but not
 104. threeSignificantFigures can ask for ~302 decimals at a
 105. tolerance on a degenerate rectangle untested
-106. toLower is ASCII-only, so non-ASCII case variants split rows
-107. toLower(clean) computed twice per non-empty classification.
+106. toLower is ASCII-only, so non-ASCII case variants split rows **[FIXED 2026-10-19 - toLower uses QString::toCaseFolded; test uses an O-diaeresis pair]**
+107. toLower(clean) computed twice per non-empty classification. **[FIXED 2026-10-19 - the key is computed after the refusals that discard it]**
 108. trailing whitespace on the loadFailure line in load().
 109. two hand-written QStringList<->vector<string> conversion
-110. ui uses QString case-insensitive comparison where core uses
-111. unused <QSettings> include in the test file.
+110. ui uses QString case-insensitive comparison where core uses **[PARTLY FIXED 2026-10-19 - ui now folds case the Unicode way; core still folds ASCII, which is sufficient for its ASCII-only comparand]**
+111. unused <QSettings> include in the test file. **[CLOSED - QSettings is used at QSettingsAnnotationCategoryStoreTest.cpp:84]**
 112. updateCursor has no DragOwner::MoveVertex case, so a
 113. Viewport.h's doc comment does not mention the [0, 0.45]
 114. while the service is null the two emissions are

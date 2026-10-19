@@ -92,10 +92,16 @@ protected:
     void showEvent(QShowEvent* event) override;
 
 private:
-    /// Rebuilds every row from the model. Called on every model signal except
-    /// selectionChanged.
+    /// Rebuilds the list and the tally from the model. Called on every model
+    /// signal except selectionChanged.
     /// A no-op while the dock is hidden; showEvent() catches up.
     void rebuild();
+    /// The list alone. What the filter box and the sort combo change: neither
+    /// can move a tally count, so neither pays for recomputing one.
+    void rebuildRows();
+    /// The tally alone, over every annotation in the scene rather than the
+    /// filtered rows.
+    void rebuildTally();
     /// Moves the highlight to `id` without emitting, so it is not mistaken for
     /// the user clicking a row.
     void applySelection(const std::string& id);
