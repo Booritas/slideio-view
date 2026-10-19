@@ -1,6 +1,6 @@
 # Categorized counting — design
 
-Status: implemented in commits `d6dacc7..4980a86`, 2026-10-18. Manual group AC was run the same day: 20 pass, 1 fail, 3 partial, 6 not reached — see §7.5. The one failure, AC26, is fixed.
+Status: implemented in commits `d6dacc7..4980a86`, 2026-10-18. Manual group AC was run in full across 2026-10-18 and 2026-10-19: 28 pass, 1 fail (AC9), 1 performable only in part (AC29) — see §7.5. AC26 failed, was fixed, and re-ran green.
 
 ## 1. Scope
 
@@ -412,30 +412,31 @@ rather than after: group AB's list found two defects its code review did not,
 and the box-resize round recorded that writing the list after the review was the
 wrong order.
 
-**Group AC was run 2026-10-18 against the installed binary: 20 passed, 1 failed,
-3 passed in part, 6 were not reached.** The desktop session that had blocked the
-whole group came back, so the checks were driven for real; what each row records
-is what was seen, not what was intended. The run stopped short of six checks
-because the session's other windows began appearing over the viewer and the
-results would no longer have been attributable — see the note after the table.
+**Group AC was run in full, 2026-10-18 and 2026-10-19: 28 pass, 1 fail, 1
+performable only in part.** It took two sittings. The first was cut short when
+the session's other windows began competing for the viewer's focus, and a
+further run on 2026-10-19 finished the six checks that were left and re-ran
+AC26 against the fixed binary. Every row records what was seen.
 
-Conditions: `Philips-1.tiff`, workspace `D:/tmp/third`, configured categories
-`Tumor | Apoptosis | Ki67`, 27 annotations on the scene.
+Conditions: `Philips-1.tiff` (27 annotations) and `S1303802-11-HE-DX1.svs`
+(empty, used for AC22 and AC23), workspace `D:/tmp/third`, configured categories
+`Tumor | Apoptosis | Ki67`. The fixtures and the configured list were restored
+afterwards.
 
 | | Check | Result |
 |---|---|---|
 | AC1 | Preferences shows the five default categories on a profile that has never set them. | **Pass** |
-| AC2 | Edit the list in Preferences, reopen the dialog: the edit persisted. Restart the application: still persisted. | **Partial** — the dialog-reopen half passed; the restart half was not reached. |
+| AC2 | Edit the list in Preferences, reopen the dialog: the edit persisted. Restart the application: still persisted. | **Pass** — both halves; the restart half was confirmed on 2026-10-19 with `Tumor, Apoptosis, Ki67` surviving an application restart. |
 | AC3 | A list entered with blank lines, surrounding spaces and a duplicate differing only in case comes back trimmed, de-duplicated and in the order typed. | **Pass** — `  Mitosis  / Lymphocyte / (blank) / MITOSIS /   Tumor  ` came back as exactly `Mitosis, Lymphocyte, Tumor`: trimmed, blank dropped, case-duplicate removed keeping the first spelling, order preserved. |
 | AC4 | The properties panel's Classification combo offers the same list as the counting combo, not the old hardcoded five. | **Pass** |
 | AC5 | Pick a category, place five markers: all five carry it, in the list's Classification column and in the properties panel. | **Pass** |
 | AC6 | With a category current, draw a rectangle and an arrow: both are unclassified. | **Pass** |
 | AC7 | Change the current category: the five already placed are unchanged. | **Pass** |
 | AC8 | Select **(none)**, place a marker: it is unclassified and the Unclassified tally row appears. | **Pass** |
-| AC9 | The tally updates as each marker is placed, and the list below neither scrolls nor loses its selection while it does. | Not reached. |
-| AC10 | Configured categories show rows at zero before counting starts. | **Pass** |
+| AC9 | The tally updates as each marker is placed, and the list below neither scrolls nor loses its selection while it does. | **FAIL** — the tally half is right; the list half is not. See below. |
+| AC10 | Configured categories show rows at zero before counting starts. | **Pass** — seen again on switching to an empty slide, where all four configured rows read 0. |
 | AC11 | Type a category not in the list: it becomes current but does **not** join the list until the first marker is placed under it. | **Pass** — checked against the registry rather than the dialog: after typing `Apoptosis` the stored list was unchanged; after the first marker it held it. |
-| AC12 | After that marker, it appears in Preferences and in the properties combo. | **Pass** |
+| AC12 | After that marker, it appears in Preferences and in the properties combo. | **Pass** — `CD31`, typed during AC26, was listed in Preferences afterwards. |
 | AC13 | Undo that marker: the category stays in the list and its tally row stays, reading zero. | **Pass** |
 | AC14 | Type into the list's filter box: the tally rows do not change. | **Pass** — every count held while the list below filtered down. |
 | AC15 | Count under two categories, then rename one onto the other: the rows merge and the sum is right. | **Pass** — Lymphocyte (5) renamed onto Mitosis (3) gave one row, **Mitosis 8**. |
@@ -443,19 +444,19 @@ Conditions: `Philips-1.tiff`, workspace `D:/tmp/third`, configured categories
 | AC17 | Rename with an empty target is refused, and says why. | **Pass** |
 | AC18 | Unclassified offers no Rename. | **Pass** — and separately, renaming a real category *to* "Unclassified" is refused with "Unclassified is not a category. Nothing was renamed." with the stored list untouched. That is the round's one Critical finding, confirmed fixed in the running application. |
 | AC19 | Remove from list on a category in use: the menu item states the count, the suggestion disappears, the annotations and their tally row remain. | **Pass** |
-| AC20 | Close the slide and reopen: every category comes back from the file, tallies rebuild, `schemaVersion` still reads 1. | **Not completed — anomaly, see below.** |
-| AC21 | Switch to another slide: the current category is still selected. Restart the application: it is not. | Not reached. |
-| AC22 | On a read-only slide the counting combo is disabled, as the drawing tools already are, and the tally rows still show the correct counts. | Not reached. |
-| AC23 | Place 60 markers, then undo 50: the stack stops at its limit without losing the tally's agreement with the list. | Not reached. |
+| AC20 | Close the slide and reopen: every category comes back from the file, tallies rebuild, `schemaVersion` still reads 1. | **Pass** — Ctrl+W then reopen from Recent Files brought back all 37 annotations with the tally rebuilt (10+1+1+2+8+15), and the file still read `"schemaVersion": 1`. See the note below on what made this look broken the first time. |
+| AC21 | Switch to another slide: the current category is still selected. Restart the application: it is not. | **Pass** — both halves. Switching from the TIFF to the SVS kept `Tumor` current; after a restart the combo read **(none)**. |
+| AC22 | On a read-only slide the counting combo is disabled, as the drawing tools already are, and the tally rows still show the correct counts. | **Pass** — set up by the box-resize spec's recipe (point the stored `slideId` at a value matching no slide, answer the mismatch dialog Open Read-Only). The status bar read "Annotations disabled", the tally still read Tumor 10, and the combo refused both focus and typing: clicking it produced no caret and `ZZZ` did not reach it. |
+| AC23 | Place 60 markers, then undo 50: the stack stops at its limit without losing the tally's agreement with the list. | **Pass** — 60 markers all counted under Tumor; 50 undos left exactly 10, tally and list agreeing; four further undos changed nothing, so the stack stopped at its limit rather than running past it. |
 | AC24 | Rename the current category: counting continues under the new name with nothing re-picked. Remove the current category from the list: it stays current, and (none) is what clears it. | **Pass** |
-| AC25 | Clear the category list in Preferences, restart the viewer: it stays empty and the five defaults do not come back. (The empty-list round-trip is proven only on the INI backend the tests use; production uses the native registry backend.) | Not reached — and still the check most likely to find something, since nothing yet exercises an empty list on the registry backend. |
-| AC26 | Place the first marker under a freshly typed category, then open the counting combo's dropdown, dismiss it with Escape, and press Down then Up: the counting category and the next marker's classification are unchanged. | **FAIL** — fixed, see below. |
-| AC27 | The same as AC26, with a category typed in a different case from a configured one (for example `tumor` against `Tumor`). | **Partial** — the case half passed: lowercase `tumor` against configured `Tumor` corrected itself, counted under Tumor and added no duplicate entry. The arrow-key half failed with AC26 and is fixed with it. |
+| AC25 | Clear the category list in Preferences, restart the viewer: it stays empty and the five defaults do not come back. (The empty-list round-trip is proven only on the INI backend the tests use; production uses the native registry backend.) | **Pass**, and this is the one the final reviewer most expected to fail. Clearing the field wrote `categories` to the registry as an empty `String[]`, and after a restart Preferences was still empty and the combo offered only **(none)**. Decisively, the tally then showed *only* unconfigured rows in first-appearance order — Mitosis 8, Ki67 1, Apoptosis 1, Tumor 10, CD31 2, Unclassified 15 — with no zero rows at all, which is what the defaults coming back would have produced. The empty-list round-trip now holds on the real backend. |
+| AC26 | Place the first marker under a freshly typed category, then open the counting combo's dropdown, dismiss it with Escape, and press Down then Up: the counting category and the next marker's classification are unchanged. | **Failed on 2026-10-18, fixed, and re-run green on 2026-10-19.** See below. |
+| AC27 | The same as AC26, with a category typed in a different case from a configured one (for example `tumor` against `Tumor`). | **Pass** — both halves. Typed `tumor` corrected itself to the configured `Tumor`, counted there and added no duplicate; two Downs and an Up then left it on Tumor and the next marker counted under Tumor. This is the harder case, since Tumor is a real list item the arrows would otherwise step away from. |
 | AC28 | Rename a category and press Ctrl+Z only, not Ctrl+Y: the annotations revert and the category list stays renamed. This is intended, not a defect (§6.4). | **Pass** — and Lymphocyte came back as an *unconfigured* tally row, which is what §6.4 predicts. |
-| AC29 | Right-click a tally row: the menu appears at the row under the cursor. The keyboard Menu key opens it on the selected row. | **Partial** — the mouse half passed; the Menu key was not reached. |
+| AC29 | Right-click a tally row: the menu appears at the row under the cursor. The keyboard Menu key opens it on the selected row. | **Partial — the mouse half passes; the Menu-key half is not performable as written.** See below. |
 | AC30 | The transient refusal messages (empty rename target; "Unclassified is not a category") reach the status bar and are legible there. | **Pass** |
 
-#### AC26 — the one failure, and why it matters
+#### AC26 — the failure this list existed to catch
 
 After typing a category and counting one marker under it, opening the dropdown
 and pressing Down changed the combo, and the next marker was counted under the
@@ -471,8 +472,7 @@ correct for a combo and wrong for this one, because this combo's value is a
 clinical counting category and nothing announces that it moved. The user of a
 several-hundred-click pass reads the slide and the tally, not the combo, and the
 tally — correct about what was actually stored — agrees with the mistake. No
-reviewer would have flagged the behaviour as wrong, and no test could reach it;
-this is precisely the class of defect the manual list exists for.
+reviewer would have flagged the behaviour as wrong, and no test could reach it.
 
 Fixed by `ui::countingComboSwallowsKey` and `ui::countingComboSwallowsWheel`
 (`AnnotationListPolicy.h`), asked by an event filter on the combo and its line
@@ -485,34 +485,85 @@ trackpad while the cursor sits over the strip is at least as likely as a bumped
 arrow key. The decision is two pure predicates because the widget is unreachable
 from any suite; the filter does nothing but ask them.
 
-#### AC20 — unresolved, and worth reproducing by hand
+**Re-run 2026-10-19 against the fixed binary:** typed `CD31`, counted one marker
+(CD31 1), opened the dropdown, Escape, Down, Up — the combo still read `CD31`
+and the next marker made it **CD31 2**, with Ki67 and Apoptosis untouched. The
+wheel was checked the same way: four wheel clicks over the closed combo left it
+on Tumor and the next marker counted under Tumor.
 
-`Ctrl+W` followed by a reopen from Recent Files showed **Annotations (0)** while
-the file on disk still held all 27. The data was not harmed: the file was
-verified byte-intact, because persistence had gone inactive rather than
-overwriting it, which is the designed protection — "a file we could not parse is
-never a file we write to". But the viewport rendered nothing, the Scenes
-thumbnail was blank, the status bar read `X: 0 Y: 0 / 100.0%`, and no
-"Annotations disabled" indicator appeared.
+#### AC9 — the failure that is still open
 
-It was **not** established whether this is a defect in the reopen path or an
-artifact of driving the GUI: the log recorded nothing at all for the attempt,
-and by then the session's windows were competing for focus. The same shape was
-seen once during group AB. It is recorded here rather than resolved, and it is
-the first thing to try by hand.
+The tally half is right: three markers moved Tumor 5 → 8 and the total 32 → 35,
+every count correct. The list half is not. With the list deliberately scrolled
+up to show `Point 4 … Arrow 11` and **Arrow 6 selected**, placing two markers
+jumped the list to the bottom (`Point 30 … Point 37`) and the selection was
+gone — the properties panel then showed the *new* marker's `Tumor`
+classification, not Arrow 6's empty one.
 
-#### Notes for whoever runs the rest
+So the cause is not the tally rebuilding: **creating an annotation selects it**,
+and the list scrolls to show its selected row. That behaviour predates this
+round and is reasonable on its own — you may well want to label the shape you
+just drew. It is wrong for *this* workflow, which is the one the round exists
+to serve: a counting pass is several hundred creations, and each one yanks the
+list away from wherever the user put it. Nothing is miscounted and nothing is
+lost, so this is friction rather than a data defect, which is why it is recorded
+here rather than fixed in haste. Fixing it means deciding whether a point marker
+placed under a current category should select at all — the counting gesture is
+arguably a tally increment, not a selection — and that is a design question this
+spec did not ask.
+
+#### AC29 — not performable as written
+
+The mouse half passes. The Menu-key half cannot be performed, and the reason is
+in the design rather than the build: the tally is created with
+`setSelectionMode(NoSelection)` and `setFocusPolicy(Qt::NoFocus)`
+(`AnnotationListPanel.cpp:81-82`). A widget that never takes focus never
+receives `Qt::Key_Menu`, and one with no selection has no "selected row" for the
+menu to open on. Sending the key with the viewer focused produced nothing, as
+those two lines predict.
+
+The check assumes a focusable, selectable tally; the strip is deliberately
+neither, because it is a readout rather than a control. This is the same shape
+as group AB19 and AB23 — a check written against an intention the code
+deliberately does not have. Either the tally gains focus and selection, or the
+check should be struck; it should not sit here looking like a defect.
+
+#### AC20 — why it looked broken the first time
+
+On 2026-10-18 this read as a failure: after Ctrl+W and a reopen the panel showed
+**Annotations (0)** while the file held 27. The reopen was never the problem.
+**The window title does not clear when a slide is closed** — after Ctrl+W it
+still read `SlideIO Viewer - …\Philips-1.tiff`, so a correctly closed viewer
+looked like a viewer that had failed to reopen. The File menu settles it: with
+the slide closed, `Close  Ctrl+W` is greyed out. Reopening from Recent Files
+then restored all 37 annotations and the full tally.
+
+Two cosmetic defects fell out of running it, neither affecting data:
+
+- **The title keeps naming a closed slide.** It should clear, or say so; as it
+  stands the window claims to be showing a file it is not.
+- **The Scenes panel does not repopulate its thumbnail strip after a
+  close-and-reopen within one session.** It populates on a fresh start and on a
+  slide switch, so this is specific to the reopen path.
+
+A third, smaller: Recent Files listed `Philips-1.tiff` twice, at positions 1
+and 3.
+
+#### Notes for whoever runs this again
 
 - The Preferences dialog warps the cursor out of its own text box to a fixed
-  point when driven by synthetic mouse events; drive that dialog from the
-  keyboard instead.
-- Non-focusing synthetic keystrokes can miss the application entirely. One such
-  miss produced a false "undo does not work", disproved by opening the Edit menu
-  and reading "Undo Draw Point" enabled with Redo greyed. Confirm through the
-  menu before believing a keyboard-driven negative.
-- The run left the stored category list at `Tumor | Apoptosis | Ki67` and 27 test
-  annotations in the `D:/tmp/third` workspace. AC25 clears the list anyway.
-
+  point when driven by synthetic mouse events. Drive that dialog from the
+  keyboard: Tab three times from the workspace field reaches the categories box.
+- Non-focusing synthetic keystrokes can miss the application entirely, and will
+  land in whatever window holds the foreground. One such miss produced a false
+  "undo does not work", disproved by opening the Edit menu and reading "Undo
+  Draw Point" enabled with Redo greyed. Confirm through the menu before
+  believing a keyboard-driven negative, and check the foreground window before
+  sending keys at all.
+- AC22 needs `annotationsEditable()` false. The cheapest route is the box-resize
+  spec's: edit the stored `slideId` to a value matching no slide, reopen, and
+  answer the mismatch dialog **Open Read-Only**. Restore the file from a
+  byte-identical backup afterwards.
 ## 8. Deliberate absences
 
 - **Export or report of counts.** The obvious next round, and the one a
