@@ -12,6 +12,8 @@ Annotation persistence is **in regular use and its documented checks are covered
 
 **No test suite creates a `QApplication`**, so no widget can be constructed in a test and nothing in `ViewportWidget` is reachable from any suite. That is why a manual list exists at all. It also means a claim about runtime behaviour in this file is only as good as the last time somebody ran it: **do not infer from silence here that a path has never been exercised** — earlier drafts of this file and of item 0 did exactly that, asserted the subsystem had never been run, and were wrong. Ask the project owner, who tests this application regularly.
 
+**Minor review findings that were raised but not acted on are indexed in `docs/superpowers/specs/2026-10-19-deferred-findings.md`** — 117 of them, from fourteen rounds. Recovered, and only as each finding's opening clause: the ledgers they lived in were under `.superpowers/sdd/`, which is gitignored and now empty, so the full text is gone. Treat an entry as a pointer to re-derive from, never as a specification. **Append new deferred findings to that tracked file, not only to a round's ledger** — a finding nobody acted on still has to survive a `git clone`.
+
 `documents/` holds the original design, much of which is still ahead of the code. Treat it as the plan, not a description of what is there; `documents/implementation-stages.md` tracks which stages have landed. Where a design document and the code disagree, the code is the truth — several design details turned out to be unimplementable as written.
 
 **Not built yet:** the text shape, the annotation layers panel, import/export, advisory file locking, cases, bookmarks, split view, remote slides, the plugin system, and Python scripting.
