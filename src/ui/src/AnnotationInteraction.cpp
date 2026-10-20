@@ -208,4 +208,24 @@ std::optional<MoveEdit> moveEdit(const core::Annotation& original,
     return MoveEdit{original, moved};
 }
 
+
+core::AnnotationGeometry boxToolGeometry(AnnotationTool tool, const core::RectF& box)
+{
+    const core::PointF topLeft{box.x, box.y};
+    const core::PointF bottomRight{box.x + box.width, box.y + box.height};
+    if (tool == AnnotationTool::Ellipse) {
+        return core::EllipseGeometry{topLeft, bottomRight};
+    }
+    return core::RectangleGeometry{topLeft, bottomRight};
+}
+
+bool releaseSelectsAnnotation(bool leftButton, bool movingAnnotation, bool panningFromSpace,
+                              double travelPixels, double tolerancePixels)
+{
+    if (!leftButton || movingAnnotation || panningFromSpace) {
+        return false;
+    }
+    return travelPixels < tolerancePixels;
+}
+
 } // namespace slideio::viewer::ui

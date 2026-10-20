@@ -3147,12 +3147,7 @@ bool ViewportWidget::commitDrawDrag()
     // rather than the gesture being discarded -- the user dragged deliberately
     // and must get something back.
     const core::RectF box = withMinimumExtent(shapeBox, screenToleranceToSlide(1.0, toolScale));
-    const core::PointF topLeft{box.x, box.y};
-    const core::PointF bottomRight{box.x + box.width, box.y + box.height};
-    const core::AnnotationGeometry geometry =
-        m_impl->activeTool == AnnotationTool::Ellipse
-            ? core::AnnotationGeometry{core::EllipseGeometry{topLeft, bottomRight}}
-            : core::AnnotationGeometry{core::RectangleGeometry{topLeft, bottomRight}};
+    const core::AnnotationGeometry geometry = boxToolGeometry(m_impl->activeTool, box);
     const std::string id = m_impl->annotations->add(geometry);
     pushCreateCommand(id);
     m_impl->annotations->setSelected(id);
@@ -3623,32 +3618,23 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         painter.drawLine(toScreen(m_impl->drawAnchorSlide),
                          toScreen(m_impl->drawCurrentSlide));
     } else if (m_impl->drawing && m_impl->activeTool != AnnotationTool::Point) {
-        const core::RectF box = m_impl->pendingDragBox();
-        const core::PointF topLeft{box.x, box.y};
-        const core::PointF bottomRight{box.x + box.width, box.y + box.height};
+        // The same function the release will commit through, and the same
+        // core::outline the committed shape will be painted from -- so the
+        // dashed preview cannot be a different shape from what lands in the
+        // model. It used to choose between an ellipse path and drawRect here
+        // while commitDrawDrag chose between the two geometries sixty lines
+        // away, and the ellipse branch hand-rolled the point-by-point path
+        // that screenPath already builds.
+        //
+        // withMinimumExtent is deliberately NOT applied here: the preview
+        // shows the gesture, and the one-screen-pixel widen is what the commit
+        // does to a gesture that has collapsed on one axis. A zero-height
+        // preview paints as the line the user is in fact drawing.
+        const core::AnnotationGeometry geometry =
+            boxToolGeometry(m_impl->activeTool, m_impl->pendingDragBox());
         painter.setPen(QPen(QColor(0xE6, 0x7E, 0x22), 2.0, Qt::DashLine));
         painter.setBrush(Qt::NoBrush);
-        if (m_impl->activeTool == AnnotationTool::Ellipse) {
-            // Stroked from core::outline rather than drawEllipse, so the preview
-            // is the same 512-gon the release will commit -- design spec 6.1.
-            const core::Outline shape =
-                core::outline(core::EllipseGeometry{topLeft, bottomRight});
-            QPainterPath path;
-            bool first = true;
-            for (const core::PointF& vertex : shape.points) {
-                const QPointF screen = toScreen(vertex);
-                if (first) {
-                    path.moveTo(screen);
-                    first = false;
-                } else {
-                    path.lineTo(screen);
-                }
-            }
-            path.closeSubpath();
-            painter.drawPath(path);
-        } else {
-            painter.drawRect(QRectF(toScreen(topLeft), toScreen(bottomRight)).normalized());
-        }
+        painter.drawPath(screenPath(core::outline(geometry)));
     }
 
     // The polygon or freehand line being traced, likewise not in the model yet.
@@ -4846,12 +4832,14 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
     }
 
     // Spec §6: a press that did not become a shape is a selection click. The
-    // test is the press-to-release screen distance, not "did any move event
-    // arrive" -- Qt delivers one for a single pixel, which made deselecting by
-    // clicking empty tissue work only if the mouse never twitched.
-    if (m_impl->controller && m_impl->dragOwner != DragOwner::MoveAnnotation
-        && event->button() == Qt::LeftButton
-        && (event->pos() - m_impl->pressPos).manhattanLength() < kHitToleranceScreenPixels) {
+    // decision is releaseSelectsAnnotation, which a test can reach; this does
+    // nothing but ask it.
+    if (m_impl->controller
+        && releaseSelectsAnnotation(event->button() == Qt::LeftButton,
+                                    m_impl->dragOwner == DragOwner::MoveAnnotation,
+                                    m_impl->spaceHeld,
+                                    (event->pos() - m_impl->pressPos).manhattanLength(),
+                                    kHitToleranceScreenPixels)) {
         double slideX = 0.0;
         double slideY = 0.0;
         m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);

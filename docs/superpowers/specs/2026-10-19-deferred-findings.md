@@ -1,7 +1,7 @@
 # Deferred minor findings — recovered index
 
 Status: recovered 2026-10-19 from the session transcript; split into seven
-batches, B1 and B2 done; 33 of 117 triaged, 9 fixed. **The full text of these
+batches, B1 to B3 done; 46 of 117 triaged, 12 fixed. **The full text of these
 findings is lost.** What is here is each one's opening clause, enough to identify
 it and re-derive it against the code, and nothing more.
 
@@ -102,7 +102,7 @@ one batch. The numbers are the entry numbers in the list below.
 |---|---|---|---|---|
 | B1 | core geometry, measurement and numerics | 8, 14, 21, 29, 42, 44, 46, 57, 65, 70, 72, 104 | 12 | **done 2026-10-19** |
 | B2 | AnnotationModel, undo/redo, app services | 3, 5, 6, 10, 16, 19 | 6 | **done 2026-10-20** |
-| B3 | viewport interaction and drag state | 1, 7, 11, 33, 43, 58, 60, 62, 71, 76, 84, 88, 112 | 13 | not started |
+| B3 | viewport interaction and drag state | 1, 7, 11, 33, 43, 58, 60, 62, 71, 76, 84, 88, 112 | 13 | **done 2026-10-20** |
 | B4 | panels, categories, preferences | 13, 15, 18, 28, 32, 61, 64, 67, 69, 81, 83, 85, 86, 109 | 14 | not started |
 | B5 | persistence, paths, workspace, serialization | 12, 22, 23, 31, 36, 38, 39, 40, 59, 94, 96, 99, 100, 114, 117 | 15 | not started |
 | B6 | documentation and comments | 4, 17, 20, 35, 41, 48, 63, 74, 75, 78, 79, 80, 90, 92, 95, 108, 113 | 17 | not started |
@@ -201,19 +201,62 @@ nothing was wrong at runtime -- but the next reader to decide whether a signal
 should move a count would have read the name and got the opposite answer. It is
 `rebuildAll` now. The split was right; leaving the old name beside it was not.
 
+### B3 — viewport interaction and drag state (2026-10-20)
+
+Thirteen entries, **eight already closed** -- and this is the batch where that
+is most informative, because seven of the eight are closed by a comment
+standing exactly where the finding pointed, naming the hazard it named.
+`moveOriginal` is reset in the `else` branch; `updateCursor` has its
+`MoveVertex` case; `endToolDrag` returns early unless the drag is the tool's;
+`resetAnnotationState` clears every captured original; Escape falls through to
+`QOpenGLWidget::keyPressEvent` with nothing in flight; the move applies
+`core::translated`; `paintAnnotations` dispatches through `core::outline` and
+`core::screenDecoration`. These were not fixed *because* of the index -- they
+were fixed by later rounds that never struck them off it.
+
+**Nothing here is reachable from a test**, which is why the two fixes are both
+extractions rather than edits in place. The viewport cannot be constructed in
+any suite; a rule left inside it is a rule nothing will ever check again.
+
+- **Entries 62 and 76 are one defect: the preview and the commit each decided
+  on their own what shape a box drag was going to be.** The painter chose
+  between an ellipse path and `drawRect`; `commitDrawDrag` chose between
+  `EllipseGeometry` and `RectangleGeometry` sixty lines away. Two places
+  deciding that can disagree, and the way the user finds out is a dashed
+  ellipse that releases into a rectangle. `ui::boxToolGeometry` is the one
+  decision now, asked by both, and the preview paints it through the same
+  `core::outline` and `screenPath` the committed shape is painted from -- so
+  the preview is the shape by construction. The hand-rolled ellipse path loop
+  (entry 62) went with it.
+- **Entry 71 was real and small: holding Space and clicking cleared the
+  selection.** Space is the user saying they are navigating, and a press under
+  it becomes a pan; releasing without moving then ran the selection test
+  anyway, in the one mode entered specifically to avoid touching the work.
+  `ui::releaseSelectsAnnotation` refuses it. The care needed was in what NOT to
+  exclude: a read-only slide converts a press on an annotation into a pan too,
+  and clicking a mark to read its properties is the only way a reader has to
+  select one. So the test is held Space, not "was this a pan".
+
+Accepted: entry 7 (the preview omits the commit's `withMinimumExtent`, and
+should -- the preview shows the gesture, and the one-pixel widen is what the
+commit does to a gesture that collapsed on an axis; this is now stated where
+the preview is painted) and entry 88 (the n-point tool hint is transient, but
+`setActiveTool` has no early return, so re-pressing the tool key brings it
+back; making it persist for the length of a trace is a design decision).
+
 ## The findings
 
-1. #10 moveOriginalGeometry's unguarded `if (picked)` could
+1. #10 moveOriginalGeometry's unguarded `if (picked)` could **[CLOSED - the else branch resets moveOriginal, ViewportWidget.cpp:4675, so a capture from an earlier drag cannot be restored onto this annotation]**
 2. #11 the front-trim loop erases one element at a time, O(n) **[CLOSED - UndoRedoStack.cpp:39-46 is one range erase, with the reasoning in a comment]**
 3. #4 setSelected() unconditional after an insert() that can drop **[CLOSED - AnnotationModel::setSelected refuses an id the model does not hold, and AnnotationEditCommand::apply says so at the call: a dropped insert leaves the previous selection standing]**
 4. #4 Shift+Ctrl squares the box (code correct, plan
 5. #5 an invalid command is rejected by convention at the call **[CLOSED - AnnotationEditCommand::create rejects a command recording neither state, centrally, so a push site added later cannot forget]**
 6. #6 ~MainWindow nulls the persistence pointer but not **[CLOSED - the three Qt-owned widgets are deleted and nulled explicitly, after saveState; every app and infra service is a unique_ptr in Impl and dies with it]**
-7. #6 preview omits withMinimumExtent that the commit
+7. #6 preview omits withMinimumExtent that the commit **[ACCEPTED 2026-10-20 - and now stated where the preview is painted: the preview shows the gesture, and the one-screen-pixel widen is what the commit does to a gesture collapsed on one axis]**
 8. #7 normalized(EllipseGeometry) duplicates the **[FIXED 2026-10-19 - normalizedCorners(PointF, PointF) is shared by rectangle, ellipse and the arrow box]**
 9. #8 the pi literal is repeated three times in **[CLOSED - single constexpr kPi at AnnotationGeometry.cpp:15]**
 10. #8 undoing a create clears an unrelated selection -- exactly **[CLOSED - AnnotationModel::remove clears the selection only when the removed id IS the selected one, AnnotationModel.cpp:140]**
-11. a 1-pixel jitter counts as a pan and suppresses
+11. a 1-pixel jitter counts as a pan and suppresses **[CLOSED - the selection test is the press-to-release distance, not whether a move event arrived; now in ui::releaseSelectsAnnotation]**
 12. a hand-edited file carrying fillOpacity 0.333 quantises and
 13. accepting Preferences writes the category store even when
 14. an empty polygon's boundingBox is {0,0,0,0} — a real rect at **[ACCEPTED 2026-10-19 - documented as a sentinel at AnnotationGeometry.cpp:76; no reachable path builds an empty polygon, so std::optional would make every caller handle a case none can meet]**
@@ -235,7 +278,7 @@ should move a count would have read the name and got the opposite answer. It is
 30. core::nearestBoxHandle treats a NaN distance as in **[CLOSED - BoxResize.cpp:35-39 refuses NaN deliberately]**
 31. currentSlideId() recomputes the content-size walk that
 32. displacedProfileNote takes a const SlideInfo&, so
-33. Escape is accepted unconditionally, blocking any parent
+33. Escape is accepted unconditionally, blocking any parent **[CLOSED - with nothing in flight it falls through to QOpenGLWidget::keyPressEvent, ViewportWidget.cpp:5266]**
 34. filter folds case but the Label/Classification/Type sorts **[FIXED 2026-10-19 - the three sorts fold case, tests in AnnotationListPolicyTest.cpp]**
 35. formatIso8601Utc's header comment names only the 9999
 36. if DocumentsLocation resolves empty (rare Linux), the
@@ -245,7 +288,7 @@ should move a count would have read the name and got the opposite answer. It is
 40. M6 — Cancel re-enters beginSlide, which re-runs the
 41. MainWindow.cpp now 1191 lines; mirrors its existing pattern
 42. measure() calls outline(geometry) and then measureKnown calls **[FIXED 2026-10-19 - measureOutline takes the outline measure() already built; the double build fell on freehand traces, the shapes with the most vertices]**
-43. move rebuilds geometry as RectangleGeometry from the
+43. move rebuilds geometry as RectangleGeometry from the **[CLOSED - the move applies core::translated to the captured geometry, ViewportWidget.cpp:4925]**
 44. NaN behaviour is benign but accidental. std::min(NaN, 5.0f) **[ACCEPTED 2026-10-19 - benign and now stated: AnnotationDecoration.cpp returns the fixed head size, so the glyph draws nominally rather than vanishing]**
 45. NaN geometry inputs untested
 46. NaN in lineWidth/fillOpacity always compares unequal, so it **[CLOSED - inClosedRange calls std::isfinite first, AnnotationSerialization.cpp:103, so NaN is refused on both read and write]**
@@ -260,11 +303,11 @@ should move a count would have read the name and got the opposite answer. It is
 55. no test that an unset store leaves the file unwritten, nor
 56. no tests for case-duplicate or whitespace-padded CONFIGURED
 57. no upper bound on scale — a sub-pixel bounding box yields a **[CLOSED - ViewportController.cpp:99 clamps to kMinScale..kMaxScale right after fitToRect, with a comment saying core knows nothing of the limits]**
-58. nothing resets dragOwner when a slide closes mid-drag;
+58. nothing resets dragOwner when a slide closes mid-drag; **[CLOSED - resetAnnotationState clears dragOwner, dragButton and every captured original, then calls updateCursor]**
 59. openAuxImage has no live caller today (associated images go via
-60. paintAnnotations has no per-type geometry dispatch; needed
+60. paintAnnotations has no per-type geometry dispatch; needed **[CLOSED - it paints from core::outline and core::screenDecoration, so the dispatch is in core where the variant is]**
 61. parallel `rows`/`keys` vectors could desynchronise if a
-62. preview rectangle repeats the screenRect conversion.
+62. preview rectangle repeats the screenRect conversion. **[FIXED 2026-10-20 - the preview draws screenPath(core::outline(...)); the hand-rolled ellipse path loop is gone]**
 63. ragged comment line-wrapping left by the edits
 64. rebuild() runs on every annotationChanged. If a move-drag
 65. rectangles are not clamped to the slide extent. Recorded as **[LIVE, ACCEPTED 2026-10-19 - no clamp exists. A trace running off the tissue edge is a real gesture and the slide extent is not a clinical boundary; clamping would move a vertex the user placed]**
@@ -273,12 +316,12 @@ should move a count would have read the name and got the opposite answer. It is
 68. resizableBoxGeometry computes boundingBox before the **[STILL LIVE - ViewportWidget.cpp:1641 vs :1645]**
 69. setAnnotationModel(nullptr) on an already-null model returns
 70. snprintf buffer truncation rather than overrun for extreme **[FIXED 2026-10-19 - kNumberBufferSize is 352, enough for %.0f of DBL_MAX; see 104]**
-71. Space held + left click with no movement clears the
+71. Space held + left click with no movement clears the **[FIXED 2026-10-20 - ui::releaseSelectsAnnotation refuses a click made under held Space; a pan the user did not ask for, such as a read-only slide's, still selects]**
 72. std::tolower/std::isspace are locale-dependent where the **[FIXED 2026-10-19 - core::caseFoldKey replaces both, and ui now calls it too; this was the core half of 106]**
 73. tally not cleared when the model goes null (unreachable today). **[CLOSED - rebuildTally() clears before the null check]**
 74. task-2-report.md per-case assertion breakdown lists cases
 75. task-3-report.md file-size table reports 66/65/108 lines
-76. that condition is now DUPLICATED between the preview
+76. that condition is now DUPLICATED between the preview **[FIXED 2026-10-20 - ui::boxToolGeometry is the one place deciding whether a box drag is an ellipse or a rectangle; preview and commit both ask it]**
 77. the 0.45 margin clamp has no test of its own.
 78. the 720->900px widen + resizeColumnsToContents judged JUSTIFIED,
 79. the ambiguity fix was correct and test-only; no production change
@@ -286,11 +329,11 @@ should move a count would have read the name and got the opposite answer. It is
 81. the context-menu handler is correct only because nothing reads
 82. the cross-session persistence test would pass with
 83. the dedup `seen` vector is searched linearly (O(n^2)); fine
-84. the dragOwner reset in commitPendingShape is unconditional, so
+84. the dragOwner reset in commitPendingShape is unconditional, so **[CLOSED - endToolDrag returns early unless dragOwner == Tool, so a pan stays alive across a commit, a cancel or a tool change]**
 85. the empty state clears the measurement VALUES but does not
 86. the file-pick+validate block in onSetSlideColorProfile duplicates
 87. the first Annotation test is also weak against a
-88. the hint is transient and set on activeToolChanged, so a
+88. the hint is transient and set on activeToolChanged, so a **[LIVE, ACCEPTED 2026-10-20 - setActiveTool has no early return, so re-pressing the tool key re-shows it. Making it persist for the length of a trace is a design decision, not a defect fix]**
 89. the inverted-rectangle outline test asserts corners 0 and 2
 90. the movePressSlide comment's 
 91. the negative test covers rectangle and arrow only; an
@@ -314,7 +357,7 @@ should move a count would have read the name and got the opposite answer. It is
 109. two hand-written QStringList<->vector<string> conversion
 110. ui uses QString case-insensitive comparison where core uses **[PARTLY FIXED 2026-10-19 - ui now folds case the Unicode way; core still folds ASCII, which is sufficient for its ASCII-only comparand]**
 111. unused <QSettings> include in the test file. **[CLOSED - QSettings is used at QSettingsAnnotationCategoryStoreTest.cpp:84]**
-112. updateCursor has no DragOwner::MoveVertex case, so a
+112. updateCursor has no DragOwner::MoveVertex case, so a **[CLOSED - the case exists at ViewportWidget.cpp:3862 with the reasoning beside it]**
 113. Viewport.h's doc comment does not mention the [0, 0.45]
 114. while the service is null the two emissions are
 115. whitespace asymmetry in the (none) test — 

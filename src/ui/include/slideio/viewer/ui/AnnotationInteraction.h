@@ -277,6 +277,42 @@ constexpr double kTrailMinScreenPixels = 2.0;
 [[nodiscard]] bool moveExceedsDragThreshold(core::PointF pressSlide, core::PointF cursorSlide,
                                             double viewportScale);
 
+
+/// The geometry a box-shaped drawing tool makes from `box`.
+///
+/// One function, because the preview and the commit were each deciding it from
+/// `activeTool` on their own: the painter chose between an ellipse outline and
+/// a rectangle, and commitDrawDrag chose between EllipseGeometry and
+/// RectangleGeometry sixty lines away. Two places deciding what shape a drag
+/// is can disagree, and the way the user would find out is a dashed ellipse
+/// that releases into a rectangle.
+///
+/// Any tool that is not Ellipse gets a rectangle. That is the existing
+/// behaviour made explicit rather than a new rule -- the box-drag path is only
+/// reached for Rectangle and Ellipse, because Point has no drag, Arrow has its
+/// own preview, and the n-point tools do not come through here at all.
+[[nodiscard]] core::AnnotationGeometry boxToolGeometry(AnnotationTool tool,
+                                                       const core::RectF& box);
+
+/// Whether a mouse release should be read as a click that changes the
+/// selection, rather than as the end of a drag.
+///
+/// `travelPixels` is the press-to-release screen distance, not whether a move
+/// event arrived: Qt delivers one for a single pixel, which made deselecting
+/// by clicking empty tissue work only if the mouse never twitched.
+///
+/// `panningFromSpace` is the one that is easy to miss. Holding Space is the
+/// user saying "I am navigating, leave my work alone", and a press under it
+/// becomes a pan. Releasing it without moving then ran the selection test and
+/// cleared whatever was selected -- in a mode entered precisely to avoid
+/// touching anything. A pan the user did not ask for by holding Space, such as
+/// the one a read-only slide converts an annotation press into, is NOT
+/// excluded: clicking a mark to read its properties is the only way a reader
+/// has to select one.
+[[nodiscard]] bool releaseSelectsAnnotation(bool leftButton, bool movingAnnotation,
+                                            bool panningFromSpace, double travelPixels,
+                                            double tolerancePixels);
+
 /// The annotation as it was picked up and as it was put down.
 struct MoveEdit
 {

@@ -767,3 +767,85 @@ TEST_CASE("a zero-length arrow is still margined by its ring",
     REQUIRE(annotationPaintMarginScreenPixels(arrow, 2.0, 1.0)
             == kSelectionRingGapScreenPixels + kSelectionRingPenScreenPixels / 2.0);
 }
+
+// --- boxToolGeometry -------------------------------------------------------
+
+TEST_CASE("boxToolGeometry makes an ellipse for the ellipse tool", "[ui][AnnotationInteraction]")
+{
+    const core::AnnotationGeometry geometry =
+        boxToolGeometry(AnnotationTool::Ellipse, core::RectF{10.0, 20.0, 30.0, 40.0});
+
+    REQUIRE(core::typeOf(geometry) == core::AnnotationType::Ellipse);
+    REQUIRE(core::boundingBox(geometry).x == 10.0);
+    REQUIRE(core::boundingBox(geometry).width == 30.0);
+}
+
+TEST_CASE("boxToolGeometry makes a rectangle for every other box tool", "[ui][AnnotationInteraction]")
+{
+    // The preview and the commit both ask this, so the two cannot disagree
+    // about what shape the drag in progress is going to become.
+    REQUIRE(core::typeOf(boxToolGeometry(AnnotationTool::Rectangle,
+                                             core::RectF{0.0, 0.0, 5.0, 5.0}))
+            == core::AnnotationType::Rectangle);
+    REQUIRE(core::typeOf(boxToolGeometry(AnnotationTool::Pan,
+                                             core::RectF{0.0, 0.0, 5.0, 5.0}))
+            == core::AnnotationType::Rectangle);
+}
+
+TEST_CASE("boxToolGeometry keeps a collapsed axis collapsed", "[ui][AnnotationInteraction]")
+{
+    // withMinimumExtent is the commit's job, not this function's: the preview
+    // asks the same question and must paint the gesture as it stands.
+    const core::RectF box = core::boundingBox(
+        boxToolGeometry(AnnotationTool::Rectangle, core::RectF{3.0, 7.0, 12.0, 0.0}));
+
+    REQUIRE(box.height == 0.0);
+}
+
+// --- releaseSelectsAnnotation ----------------------------------------------
+
+TEST_CASE("releaseSelectsAnnotation accepts a still left click", "[ui][AnnotationInteraction]")
+{
+    REQUIRE(releaseSelectsAnnotation(true, false, false, 0.0, 6.0));
+    REQUIRE(releaseSelectsAnnotation(true, false, false, 5.9, 6.0));
+}
+
+TEST_CASE("releaseSelectsAnnotation refuses a release that travelled", "[ui][AnnotationInteraction]")
+{
+    // The press-to-release distance, not "did a move event arrive": Qt
+    // delivers one for a single pixel.
+    REQUIRE_FALSE(releaseSelectsAnnotation(true, false, false, 6.0, 6.0));
+    REQUIRE_FALSE(releaseSelectsAnnotation(true, false, false, 40.0, 6.0));
+}
+
+TEST_CASE("releaseSelectsAnnotation refuses anything but a left release",
+          "[ui][AnnotationInteraction]")
+{
+    REQUIRE_FALSE(releaseSelectsAnnotation(false, false, false, 0.0, 6.0));
+}
+
+TEST_CASE("releaseSelectsAnnotation refuses the end of an annotation move",
+          "[ui][AnnotationInteraction]")
+{
+    // A move that ended where it began is still a move, not a click on
+    // whatever happens to be under the cursor.
+    REQUIRE_FALSE(releaseSelectsAnnotation(true, true, false, 0.0, 6.0));
+}
+
+TEST_CASE("releaseSelectsAnnotation refuses a click made under held Space",
+          "[ui][AnnotationInteraction]")
+{
+    // Holding Space is the user saying they are navigating. A still click in
+    // that mode used to clear the selection -- in the one mode entered
+    // specifically to avoid touching the work.
+    REQUIRE_FALSE(releaseSelectsAnnotation(true, false, true, 0.0, 6.0));
+}
+
+TEST_CASE("releaseSelectsAnnotation still accepts a pan the user did not ask for",
+          "[ui][AnnotationInteraction]")
+{
+    // A read-only slide converts a press on an annotation into a pan. Space is
+    // not held, so this is still a selection click -- clicking a mark to read
+    // its properties is the only way a reader has to select one.
+    REQUIRE(releaseSelectsAnnotation(true, false, false, 1.0, 6.0));
+}
