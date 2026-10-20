@@ -622,3 +622,37 @@ TEST_CASE("case folding is Unicode-aware, so one category stays one row", "[ui][
     REQUIRE(tally[0].count == 2);
     REQUIRE(tally[0].category == upper);  // the spelling first seen
 }
+
+TEST_CASE("categoryTally merges configured categories that differ only by padding "
+          "or case", "[ui][AnnotationListPolicy]")
+{
+    // A configured list reaches here straight from the store. The store
+    // normalises, but this function must not depend on that having happened --
+    // two rows for one category is a split clinical count, and the user reads
+    // the tally, not the settings.
+    const std::vector<core::Annotation> annotations{
+        markerWith("a", "Tumor"), markerWith("b", "TUMOR"), markerWith("c", " tumor ")};
+
+    const std::vector<ui::CategoryTallyRow> rows =
+        ui::categoryTally(annotations, {"Tumor", "  TUMOR  ", "tumor"});
+
+    REQUIRE(rows.size() == 1);
+    REQUIRE(rows.front().category == "Tumor");
+    REQUIRE(rows.front().count == 3);
+    REQUIRE(rows.front().configured);
+}
+
+TEST_CASE("categoryTally counts a non-ASCII category typed in two cases as one row",
+          "[ui][AnnotationListPolicy]")
+{
+    // The defect entries 106 and 72 together describe: the tally folded one way
+    // and the vocabulary another, so this row read eight while a rename of it
+    // changed five.
+    const std::vector<core::Annotation> annotations{
+        markerWith("a", "Zellk\xC3\xB6rper"), markerWith("b", "ZELLK\xC3\x96RPER")};
+
+    const std::vector<ui::CategoryTallyRow> rows = ui::categoryTally(annotations, {});
+
+    REQUIRE(rows.size() == 1);
+    REQUIRE(rows.front().count == 2);
+}

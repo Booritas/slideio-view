@@ -271,3 +271,23 @@ TEST_CASE("normalizeCategoryList deduplicates a non-ASCII case pair", "[core][Ca
 
     REQUIRE(out == std::vector<std::string>{"Zellk\xC3\xB6rper"});
 }
+
+TEST_CASE("normalizeCategoryList drops a duplicate that matches only after BOTH "
+          "trimming and folding", "[core][Categories]")
+{
+    // Trimming and case folding are each covered on their own above. Neither
+    // test would notice a rule that applied one of them and not the other to
+    // the comparison key, which is the whole job of this function.
+    const std::vector<std::string> out = normalizeCategoryList({"  Tumor  ", "TUMOR"});
+
+    REQUIRE(out == std::vector<std::string>{"Tumor"});
+}
+
+TEST_CASE("normalizeCategoryList folds a non-ASCII duplicate that is also padded",
+          "[core][Categories]")
+{
+    const std::vector<std::string> out =
+        normalizeCategoryList({" Zellk\xC3\xB6rper ", "ZELLK\xC3\x96RPER"});
+
+    REQUIRE(out == std::vector<std::string>{"Zellk\xC3\xB6rper"});
+}

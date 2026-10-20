@@ -168,6 +168,11 @@ TEST_CASE("translated by zero is the identity", "[core][AnnotationGeometry]")
     const RectF box = boundingBox(translated(rect(10.0, 20.0, 110.0, 70.0), 0.0, 0.0));
     REQUIRE(box.x == 10.0);
     REQUIRE(box.y == 20.0);
+    // The extent too: asserting the origin alone would pass for a translate
+    // that moved one corner and left the other, which is the shape of the
+    // bug an identity test exists to catch.
+    REQUIRE(box.width == 100.0);
+    REQUIRE(box.height == 50.0);
 }
 
 namespace

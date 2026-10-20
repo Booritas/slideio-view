@@ -1,9 +1,10 @@
 # Deferred minor findings — recovered index
 
-Status: recovered 2026-10-19 from the session transcript; split into seven
-batches, B1 to B5 done; 75 of 117 triaged, 20 fixed. **The full text of these
-findings is lost.** What is here is each one's opening clause, enough to identify
-it and re-derive it against the code, and nothing more.
+Status: recovered 2026-10-19 from the session transcript, split into seven
+batches and all seven worked by 2026-10-20: **117 of 117 triaged, 26 fixed, 23
+stems unusable.** The full text of these findings is lost -- what is here is
+each one's opening clause, enough to identify it and re-derive it against the
+code, and nothing more.
 
 ## Why this file exists, and what went wrong
 
@@ -105,8 +106,8 @@ one batch. The numbers are the entry numbers in the list below.
 | B3 | viewport interaction and drag state | 1, 7, 11, 33, 43, 58, 60, 62, 71, 76, 84, 88, 112 | 13 | **done 2026-10-20** |
 | B4 | panels, categories, preferences | 13, 15, 18, 28, 32, 61, 64, 67, 69, 81, 83, 85, 86, 109 | 14 | **done 2026-10-20** (86 and 109 moved to B6) |
 | B5 | persistence, paths, workspace, serialization | 12, 22, 23, 31, 36, 38, 39, 40, 59, 94, 96, 99, 100, 114, 117 | 15 | **done 2026-10-20** (4 stems unusable) |
-| B6 | documentation and comments | 4, 17, 20, 35, 41, 48, 63, 74, 75, 78, 79, 80, 90, 92, 95, 108, 113 | 17 | not started |
-| B7 | test quality: weak, missing or vacuous cases | 26, 45, 47, 49, 50, 51, 52, 53, 54, 55, 56, 77, 82, 87, 89, 91, 93, 97, 98, 101, 102, 103, 105, 115 | 24 | not started |
+| B6 | documentation and comments | 4, 17, 20, 35, 41, 48, 63, 74, 75, 78, 79, 80, 86, 90, 92, 95, 108, 109, 113 | 19 | **done 2026-10-20** (9 stems unusable) |
+| B7 | test quality: weak, missing or vacuous cases | 26, 45, 47, 49, 50, 51, 52, 53, 54, 55, 56, 77, 82, 87, 89, 91, 93, 97, 98, 101, 102, 103, 105, 115 | 24 | **done 2026-10-20** (14 stems unusable) |
 
 Already resolved outside the batches, in the first triage pass: 2, 9, 24, 25,
 27, 30, 34, 37, 66, 68, 73, 106, 107, 110, 111, 116.
@@ -354,12 +355,88 @@ just changed which file is authoritative), 117 (annotation filenames are
 `<slideId>.s<N>.annotations.json` and a slideId is FNV-1a hex, so no Windows
 reserved device name can be produced).
 
+### B6 — documentation and comments (2026-10-20)
+
+Nineteen entries including the two moved from B4. **One fix, three closed, and
+the rest either not findable or not findings.** This is the batch the
+truncation hurt most, and the shape of the damage is worth naming: five stems
+are cut at an opening quote -- *"the Preferences tooltip says "*, *"the comment
+at ViewportWidget.cpp:4201 ("* -- so the finding was entirely in the quoted
+text. Two more are about round reports under `.superpowers/sdd/`, which no
+longer exists. Two record that there was nothing to do.
+
+The one fix, entry 113, was worth having: `Viewport::fitToRect` documented
+neither its `[0, 0.45]` clamp on `marginFraction` nor the more surprising fact
+that it applies **no zoom limit at all**. A sub-pixel target box yields an
+enormous scale, and `ui::ViewportController` clamps it immediately afterwards
+because the limits are a ui concern core cannot see. That is now in the header,
+which is where someone adding a second caller would look. Entry 57, in B1, was
+the same fact arriving from the other direction.
+
+Closed: 35 (`Iso8601.h` names the 1970 floor as well as the 9999 ceiling), 108
+(no trailing whitespace remains), 4 (the finding says the code is right and the
+plan document is not, and CLAUDE.md already settles that the code is the truth).
+
+Accepted: 20 -- `AnnotationShapeName.cpp` orders its three dispatch sites by
+variant alternative rather than alphabetically, and consistently. That is more
+useful than alphabetical here, because it is the order the compiler enumerates
+them in when a new shape fires every site.
+
+Entries 86 and 109, moved here from B4, are duplication with no behavioural
+difference: `onSetSlideColorProfile`'s file-pick-and-validate block, and the
+`QStringList`/`vector<string>` conversions the category store does on both
+sides of its own boundary and `MainWindow` once more. Both are real and neither
+can produce a wrong result; they are left as indexed, not fixed, because this
+round had no reason to be in those files.
+
+### B7 — test quality (2026-10-20)
+
+Twenty-four entries: **four closed, five fixed, one accepted, and fourteen
+whose stems are unusable.** The ratio is not an accident. A test-quality
+finding is almost entirely its reasoning -- *"the cross-session persistence
+test would pass with"* is cut at the exact word where the weakness was named,
+and *"the first Annotation test is also weak against a"* likewise. A
+correctness finding usually names a file or a symbol in its first clause and
+survives truncation; these did not.
+
+Where a stem was guessable I said so and still did not act -- entry 89
+(asserting two of four corners would pass for a winding-order change), 101 (a
+tie-break test passes vacuously when the input is already ordered), 102 (an
+equality that holds because neither side was ever set). Those are plausible
+reconstructions, not the findings, and writing a test against a guess would put
+a false record in the suite.
+
+Five were real gaps and are now covered:
+
+- **Entries 52 and 56** are the ones worth having, because they guard the rule
+  B1 changed. `normalizeCategoryList` had trimming and case folding covered
+  separately, and neither test would have noticed a key that applied one and
+  not the other -- which is precisely the defect entries 72 and 106 were.
+  `ui::categoryTally` had no test at all against a configured list carrying
+  padded or case-variant entries, nor against a non-ASCII case pair. Both now
+  do, and the non-ASCII case is the one that read eight while a rename of it
+  changed five.
+- **Entry 77**: the `[0, 0.45]` margin clamp had no test. Two now: an over-asked
+  margin fits identically to 0.45, and a negative one identically to 0.
+- **Entry 103**: the zero-translation identity test asserted x and y and not
+  width and height, so it would have passed for a translate that moved one
+  corner and left the other -- the exact bug an identity test exists to catch.
+
+Closed: 51 (`computeSlideId` IS pinned against a hardcoded hex string, which is
+what keeps stored annotation files addressable), 54, 105, and 93 in part.
+
+Accepted: 45, "NaN geometry inputs untested". A test here would pin an
+accident -- `std::min(NaN, x)` returning `x` is a consequence of how the
+comparison fails, not a decision. The guarantee that matters is the
+serializer's `isFinitePoint`, which refuses NaN on read and on write, and that
+is tested.
+
 ## The findings
 
 1. #10 moveOriginalGeometry's unguarded `if (picked)` could **[CLOSED - the else branch resets moveOriginal, ViewportWidget.cpp:4675, so a capture from an earlier drag cannot be restored onto this annotation]**
 2. #11 the front-trim loop erases one element at a time, O(n) **[CLOSED - UndoRedoStack.cpp:39-46 is one range erase, with the reasoning in a comment]**
 3. #4 setSelected() unconditional after an insert() that can drop **[CLOSED - AnnotationModel::setSelected refuses an id the model does not hold, and AnnotationEditCommand::apply says so at the call: a dropped insert leaves the previous selection standing]**
-4. #4 Shift+Ctrl squares the box (code correct, plan
+4. #4 Shift+Ctrl squares the box (code correct, plan **[CLOSED by its own wording - the finding says the code is correct and the plan document is not; `documents/` is the plan, and CLAUDE.md already says the code is the truth where they disagree]**
 5. #5 an invalid command is rejected by convention at the call **[CLOSED - AnnotationEditCommand::create rejects a command recording neither state, centrally, so a push site added later cannot forget]**
 6. #6 ~MainWindow nulls the persistence pointer but not **[CLOSED - the three Qt-owned widgets are deleted and nulled explicitly, after saveState; every app and infra service is a unique_ptr in Impl and dies with it]**
 7. #6 preview omits withMinimumExtent that the commit **[ACCEPTED 2026-10-20 - and now stated where the preview is painted: the preview shows the gesture, and the one-screen-pixel widen is what the commit does to a gesture collapsed on one axis]**
@@ -372,16 +449,16 @@ reserved device name can be produced).
 14. an empty polygon's boundingBox is {0,0,0,0} — a real rect at **[ACCEPTED 2026-10-19 - documented as a sentinel at AnnotationGeometry.cpp:76; no reachable path builds an empty polygon, so std::optional would make every caller handle a case none can meet]**
 15. an empty/whitespace-only `to` retags to an empty **[CLOSED - core::retagClassification refuses an empty trimmed target and returns no changes, so no undo step is recorded either]**
 16. AnnotationEditing.cpp uses std::nullopt with only an **[FIXED 2026-10-20 - <optional> is included directly; it had been reaching it through AnnotationEditCommand.h]**
-17. AnnotationGeometry.h header comment 
+17. AnnotationGeometry.h header comment **[STEM TOO TRUNCATED - the clause stops before saying what about it. Nothing findable]**
 18. AnnotationPropertiesPanel.cpp:304 dereferences widget()->layout() **[FIXED 2026-10-20 - null-checked; qobject_cast already tolerates a null argument, so the guard costs one ternary]**
 19. annotationsBulkChanged -> refreshAfterReset forces stored **[CLOSED - AnnotationPropertiesPanel.cpp:232 connects the bulk signal to refresh, not refreshAfterReset, so a field the user has focus in stays theirs]**
-20. AnnotationShapeName.cpp breaks alphabetical order in
+20. AnnotationShapeName.cpp breaks alphabetical order in **[ACCEPTED 2026-10-20 - all three sites follow the variant alternative order (Rectangle, Ellipse, Polygon, Point, Arrow) consistently, which is more useful than alphabetical: it is the order the compiler enumerates them in]**
 21. AnnotationType and the geometry variant are independent **[ACCEPTED 2026-10-19 - the dangerous direction is a compile error: a new variant alternative with no typeOfShape overload will not build. The reverse leaves an unreachable enumerator]**
 22. bad_alloc from the outer catch is reported as **[STEM TOO TRUNCATED - the clause names neither the site nor what it is reported as. Re-derive if the load/save error paths are touched]**
 23. beginSlide's file read is on the UI thread; a **[LIVE, ACCEPTED 2026-10-20 - confirmed at AnnotationPersistenceService.cpp:94. Moving annotation I/O off the UI thread is architecture, not a repair; the read happens inside a slide open that already shows a loading overlay, and these files are small]**
 24. categories() does not normalise on read, so a hand-edited **[CLOSED - categories() calls core::normalizeCategoryList on read, QSettingsAnnotationCategoryStore.cpp:44]**
 25. categoryTally recomputes on every filter keystroke though **[FIXED 2026-10-19 - rebuild() split; the filter and sort combos call rebuildRows(), which does not touch the tally]**
-26. ceiling test 2 is vacuous on MSVC and libc++ — its
+26. ceiling test 2 is vacuous on MSVC and libc++ — its **[STEM TOO TRUNCATED - "its" is where the reason was. The Iso8601 ceiling is covered by name; whether one case is vacuous on a given standard library needs the original]**
 27. CLAUDE.md claims the ui layer links slideio-viewer-app; it **[appears CLOSED 2026-10-19 - CMake and CLAUDE.md agree today]**
 28. clearing the user name (setUserName( **[CLOSED - setUserName removes the key rather than storing an empty string, so hasUserName() answers correctly afterwards]**
 29. collinearity is exact (d == 0.0), no epsilon. Correct and **[ACCEPTED 2026-10-19 - an epsilon would make "collinear" depend on coordinate magnitude, so a shape would change its self-intersection answer by being panned]**
@@ -390,35 +467,35 @@ reserved device name can be produced).
 32. displacedProfileNote takes a const SlideInfo&, so **[CLOSED - it takes a bool and a string now, in SlidePropertiesPanel.h, so it is a pure function a test can reach]**
 33. Escape is accepted unconditionally, blocking any parent **[CLOSED - with nothing in flight it falls through to QOpenGLWidget::keyPressEvent, ViewportWidget.cpp:5266]**
 34. filter folds case but the Label/Classification/Type sorts **[FIXED 2026-10-19 - the three sorts fold case, tests in AnnotationListPolicyTest.cpp]**
-35. formatIso8601Utc's header comment names only the 9999
+35. formatIso8601Utc's header comment names only the 9999 **[CLOSED - Iso8601.h:11-14 names the 1970 floor and the 9999 ceiling, and says why both cost nothing]**
 36. if DocumentsLocation resolves empty (rare Linux), the **[FIXED 2026-10-20 - it produced "/slideio-viewer" at the filesystem root; falls back to AppLocalDataLocation, where the log already lives]**
 37. item->setData(0, Qt::UserRole, row.configured) is a dead **[CLOSED - no such call remains]**
 38. M3 — `previousWorkspace` captures the resolved path, so **[FIXED 2026-10-20 - captured raw now, through the new configuredWorkspaceDirectory(). Restoring the resolved path on Cancel pinned the workspace at today's Documents folder]**
 39. M5 — `result.asked` is set before the resolver check, **[FIXED 2026-10-20 - it is options.ask AND a resolver existing; `asked` means the user was asked, and MainWindow reports on it]**
 40. M6 — Cancel re-enters beginSlide, which re-runs the **[ACCEPTED 2026-10-20 - it has to: m_repointTo(oldRoot) just changed which file is authoritative, so the model must be reloaded from the restored root]**
-41. MainWindow.cpp now 1191 lines; mirrors its existing pattern
+41. MainWindow.cpp now 1191 lines; mirrors its existing pattern **[STALE - the file is past 2400 lines now. Its size is a standing fact, not a finding to close]**
 42. measure() calls outline(geometry) and then measureKnown calls **[FIXED 2026-10-19 - measureOutline takes the outline measure() already built; the double build fell on freehand traces, the shapes with the most vertices]**
 43. move rebuilds geometry as RectangleGeometry from the **[CLOSED - the move applies core::translated to the captured geometry, ViewportWidget.cpp:4925]**
 44. NaN behaviour is benign but accidental. std::min(NaN, 5.0f) **[ACCEPTED 2026-10-19 - benign and now stated: AnnotationDecoration.cpp returns the fixed head size, so the glyph draws nominally rather than vanishing]**
-45. NaN geometry inputs untested
+45. NaN geometry inputs untested **[ACCEPTED 2026-10-20 - a test here would pin an accident. The guarantee that matters is the serializer's: isFinitePoint refuses NaN on read and write, which is tested]**
 46. NaN in lineWidth/fillOpacity always compares unequal, so it **[CLOSED - inClosedRange calls std::isfinite first, AnnotationSerialization.cpp:103, so NaN is refused on both read and write]**
-47. new #includes/usings sit mid-file in the test, against the
-48. new isUnclassifiedCategory declaration was inserted between
-49. new test names start lowercase; the file's existing cases start
-50. no exact-boundary test — ceiling accepted vs ceiling+1
-51. no golden-vector test pins the exact FNV-1a-over-separated-string
-52. no test for a duplicate matching only after trim AND case
-53. no test has two annotations with differing modifiedAt.
-54. no test pins that a stored classification with surrounding
-55. no test that an unset store leaves the file unwritten, nor
-56. no tests for case-duplicate or whitespace-padded CONFIGURED
+47. new #includes/usings sit mid-file in the test, against the **[STEM TOO TRUNCATED to locate - it names no file, and several test files have had their include blocks rewritten since]**
+48. new isUnclassifiedCategory declaration was inserted between **[MOOT 2026-10-20 - the header was reordered when caseFoldKey landed; it now reads predicates then operations]**
+49. new test names start lowercase; the file's existing cases start **[NOT ACTIONABLE as an entry - it names no file. Treated as a standing rule: match the surrounding file's case]**
+50. no exact-boundary test — ceiling accepted vs ceiling+1 **[STEM TOO TRUNCATED to place with confidence - probably Iso8601, where the ceiling is covered by name; re-derive if that area is touched]**
+51. no golden-vector test pins the exact FNV-1a-over-separated-string **[CLOSED - SlideIdTest.cpp:133 pins computeSlideId against a hardcoded hex string, which is what keeps stored annotation files addressable]**
+52. no test for a duplicate matching only after trim AND case **[FIXED 2026-10-20 - two tests added; trimming and folding were each covered alone, which would not notice a key that applied one and not the other]**
+53. no test has two annotations with differing modifiedAt. **[STEM TOO TRUNCATED to place - it names no test file, and modifiedAt ordering matters in several]**
+54. no test pins that a stored classification with surrounding **[CLOSED - AnnotationCategoriesTest.cpp:179, "retagClassification matches a stored classification with surrounding whitespace"]**
+55. no test that an unset store leaves the file unwritten, nor **[STEM TOO TRUNCATED - cut at "nor", where the second half of the gap was]**
+56. no tests for case-duplicate or whitespace-padded CONFIGURED **[FIXED 2026-10-20 - categoryTally is now tested against a configured list carrying both, and against a non-ASCII case pair]**
 57. no upper bound on scale — a sub-pixel bounding box yields a **[CLOSED - ViewportController.cpp:99 clamps to kMinScale..kMaxScale right after fitToRect, with a comment saying core knows nothing of the limits]**
 58. nothing resets dragOwner when a slide closes mid-drag; **[CLOSED - resetAnnotationState clears dragOwner, dragButton and every captured original, then calls updateCursor]**
 59. openAuxImage has no live caller today (associated images go via **[STEM TOO TRUNCATED to act on - openAuxImageSync does have callers; whether the public ViewportWidget::openAuxImage is dead needs re-deriving]**
 60. paintAnnotations has no per-type geometry dispatch; needed **[CLOSED - it paints from core::outline and core::screenDecoration, so the dispatch is in core where the variant is]**
 61. parallel `rows`/`keys` vectors could desynchronise if a **[FIXED 2026-10-20 - an unordered_map from key to row index; the synthetic Unclassified row had already broken the invariant on purpose]**
 62. preview rectangle repeats the screenRect conversion. **[FIXED 2026-10-20 - the preview draws screenPath(core::outline(...)); the hand-rolled ellipse path loop is gone]**
-63. ragged comment line-wrapping left by the edits
+63. ragged comment line-wrapping left by the edits **[NOT ACTIONABLE as an entry - it names no site. Treated as a standing rule instead: reflow what an edit leaves ragged, which these batches have done as they went]**
 64. rebuild() runs on every annotationChanged. If a move-drag **[FIXED 2026-10-20 - setGeometry emits a separate annotationGeometryChanged; the list panel does not connect it, the viewport, properties panel and persistence service do]**
 65. rectangles are not clamped to the slide extent. Recorded as **[LIVE, ACCEPTED 2026-10-19 - no clamp exists. A trace running off the tissue edge is a real gesture and the slide extent is not a clinical boundary; clamping would move a vertex the user placed]**
 66. rename is refused entirely on a read-only slide including the
@@ -429,48 +506,48 @@ reserved device name can be produced).
 71. Space held + left click with no movement clears the **[FIXED 2026-10-20 - ui::releaseSelectsAnnotation refuses a click made under held Space; a pan the user did not ask for, such as a read-only slide's, still selects]**
 72. std::tolower/std::isspace are locale-dependent where the **[FIXED 2026-10-19 - core::caseFoldKey replaces both, and ui now calls it too; this was the core half of 106]**
 73. tally not cleared when the model goes null (unreachable today). **[CLOSED - rebuildTally() clears before the null check]**
-74. task-2-report.md per-case assertion breakdown lists cases
-75. task-3-report.md file-size table reports 66/65/108 lines
+74. task-2-report.md per-case assertion breakdown lists cases **[NOT A CODE FINDING - it is about a round report under .superpowers/sdd/, which is gone]**
+75. task-3-report.md file-size table reports 66/65/108 lines **[NOT A CODE FINDING - same: a round report under .superpowers/sdd/, which is gone]**
 76. that condition is now DUPLICATED between the preview **[FIXED 2026-10-20 - ui::boxToolGeometry is the one place deciding whether a box drag is an ellipse or a rectangle; preview and commit both ask it]**
-77. the 0.45 margin clamp has no test of its own.
-78. the 720->900px widen + resizeColumnsToContents judged JUSTIFIED,
-79. the ambiguity fix was correct and test-only; no production change
-80. the comment at ViewportWidget.cpp:4201 (
+77. the 0.45 margin clamp has no test of its own. **[FIXED 2026-10-20 - two tests: an over-asked margin fits identically to 0.45, and a negative one identically to 0]**
+78. the 720->900px widen + resizeColumnsToContents judged JUSTIFIED, **[NO ACTION - the finding records a judgement that the change was justified]**
+79. the ambiguity fix was correct and test-only; no production change **[NO ACTION - the finding records that there was nothing to do]**
+80. the comment at ViewportWidget.cpp:4201 ( **[STEM TOO TRUNCATED - cut at the opening quote, and the line has moved several times since. Nothing findable]**
 81. the context-menu handler is correct only because nothing reads **[ACCEPTED - this is the coupling AC29 was struck over: the tally resolves its row by itemAt(at) and carries NoSelection + NoFocus deliberately. Recorded in the categorized-counting spec]**
-82. the cross-session persistence test would pass with
+82. the cross-session persistence test would pass with **[STEM TOO TRUNCATED - "would pass with" is exactly where the weakness was named]**
 83. the dedup `seen` vector is searched linearly (O(n^2)); fine **[ACCEPTED 2026-10-20 - a configured category list is a handful of entries. The same shape in ui::categoryTally, which walks every annotation, is the one that was worth a map; entry 61]**
 84. the dragOwner reset in commitPendingShape is unconditional, so **[CLOSED - endToolDrag returns early unless dragOwner == Tool, so a pan stays alive across a commit, a cancel or a tool change]**
 85. the empty state clears the measurement VALUES but does not **[FIXED 2026-10-20 - the captions too: deselecting a polygon left an empty "Area" row and a caption reading "Perimeter"]**
 86. the file-pick+validate block in onSetSlideColorProfile duplicates **[DEFERRED to B6 - duplication, not a defect; no behaviour differs between the two blocks today]**
-87. the first Annotation test is also weak against a
+87. the first Annotation test is also weak against a **[STEM TOO TRUNCATED - "weak against a" is where the finding was]**
 88. the hint is transient and set on activeToolChanged, so a **[LIVE, ACCEPTED 2026-10-20 - setActiveTool has no early return, so re-pressing the tool key re-shows it. Making it persist for the length of a trace is a design decision, not a defect fix]**
-89. the inverted-rectangle outline test asserts corners 0 and 2
-90. the movePressSlide comment's 
-91. the negative test covers rectangle and arrow only; an
-92. the new include is one position out of alphabetical order in a
-93. the normalisation test covers one case; core's tests cover
+89. the inverted-rectangle outline test asserts corners 0 and 2 **[STEM TOO TRUNCATED to act on, though the shape is guessable: asserting two of four corners would pass for a winding order change. Re-derive if outline() is touched]**
+90. the movePressSlide comment's **[STEM TOO TRUNCATED - cut at the opening quote]**
+91. the negative test covers rectangle and arrow only; an **[STEM TOO TRUNCATED to locate the test, though the gap is named: a third type is uncovered]**
+92. the new include is one position out of alphabetical order in a **[STEM TOO TRUNCATED to locate - it names neither the include nor the file, and the include blocks have been rewritten since in several of these files]**
+93. the normalisation test covers one case; core's tests cover **[PARTLY ADDRESSED 2026-10-20 - core's normalisation now has combined trim-and-fold coverage, and ui's categoryTally has its own; entries 52 and 56]**
 94. the pacing fix (m_lastMutation push-forward) is **[STEM TOO TRUNCATED - the clause stops before the judgement. The push-forward is at AnnotationPersistenceService.cpp:193; re-derive if autosave pacing is touched]**
-95. the Preferences tooltip says 
+95. the Preferences tooltip says **[STEM TOO TRUNCATED - cut at the opening quote]**
 96. the quit cannot be aborted — see R27. **[CLOSED by reference - the finding defers to a recorded decision, R27, rather than raising anything itself]**
-97. the refused-save test does not pin the serialize-first
-98. the second new test (getter vs static resolver) is
+97. the refused-save test does not pin the serialize-first **[STEM TOO TRUNCATED - "serialize-first" names an ordering the rest of the sentence described]**
+98. the second new test (getter vs static resolver) is **[STEM TOO TRUNCATED - cut before the judgement]**
 99. the serializer will write an empty annotation id that **[CLOSED - AnnotationSerialization.cpp:662 refuses an empty or duplicate id before writing anything, so the "never write a file we cannot read back" invariant holds]**
 100. the suppliedWasUsed block is duplicated verbatim across both **[FIXED 2026-10-20 - applySuppliedProfileOrigin is the one mirror of buildManagedScene's rule; there were three copies and nothing keeping them in step]**
-101. the tie-break tests depend on std::sort actually reordering
-102. the unchanged-edit test's modifiedAt equality could pass
-103. the zero-translation identity test asserts x and y but not
+101. the tie-break tests depend on std::sort actually reordering **[STEM TOO TRUNCATED to act on, though the hazard is guessable: a tie-break test passes vacuously when the input is already ordered. Worth re-deriving if the list sorts change]**
+102. the unchanged-edit test's modifiedAt equality could pass **[STEM TOO TRUNCATED to act on, though the hazard is guessable: an equality that passes because both sides were never set]**
+103. the zero-translation identity test asserts x and y but not **[FIXED 2026-10-20 - width and height too; the origin alone would pass for a translate that moved one corner and left the other]**
 104. threeSignificantFigures can ask for ~302 decimals at a **[FIXED 2026-10-19 - decimals clamped to kMaxDecimals, and a non-finite guard added: log10(inf) cast to int was undefined behaviour]**
-105. tolerance on a degenerate rectangle untested
+105. tolerance on a degenerate rectangle untested **[CLOSED - AnnotationGeometryTest.cpp:112, "hitTest respects tolerance on a degenerate rectangle"]**
 106. toLower is ASCII-only, so non-ASCII case variants split rows **[FIXED 2026-10-19 - toLower uses QString::toCaseFolded; test uses an O-diaeresis pair]**
 107. toLower(clean) computed twice per non-empty classification. **[FIXED 2026-10-19 - the key is computed after the refusals that discard it]**
-108. trailing whitespace on the loadFailure line in load().
+108. trailing whitespace on the loadFailure line in load(). **[CLOSED - no trailing whitespace remains in JsonAnnotationRepository.cpp]**
 109. two hand-written QStringList<->vector<string> conversion **[DEFERRED to B6 - duplication, not a defect; the store converts on both sides of its own boundary and MainWindow once more]**
 110. ui uses QString case-insensitive comparison where core uses **[PARTLY FIXED 2026-10-19 - ui now folds case the Unicode way; core still folds ASCII, which is sufficient for its ASCII-only comparand]**
 111. unused <QSettings> include in the test file. **[CLOSED - QSettings is used at QSettingsAnnotationCategoryStoreTest.cpp:84]**
 112. updateCursor has no DragOwner::MoveVertex case, so a **[CLOSED - the case exists at ViewportWidget.cpp:3862 with the reasoning beside it]**
-113. Viewport.h's doc comment does not mention the [0, 0.45]
+113. Viewport.h's doc comment does not mention the [0, 0.45] **[FIXED 2026-10-20 - fitToRect now documents the margin clamp and, with it, that the function applies no zoom limit of its own; that is ui::ViewportController's job]**
 114. while the service is null the two emissions are **[STEM TOO TRUNCATED - "the two emissions" names nothing findable. Re-derive if the persistence service's signal wiring is touched]**
-115. whitespace asymmetry in the (none) test — 
+115. whitespace asymmetry in the (none) test — **[STEM TOO TRUNCATED - cut at the dash]**
 116. window title still names the closed slide after File > Close **[CLOSED 2026-10-19 - commit 3baecc2]**
 117. Windows reserved device names (CON, NUL, AUX, PRN, **[ACCEPTED 2026-10-20 - annotation filenames are "<slideId>.s<N>.annotations.json" and a slideId is FNV-1a hex, so no reserved name can be produced. A user-chosen workspace directory is the OS's to refuse]**
 

@@ -179,3 +179,31 @@ TEST_CASE("fitToRect ignores a screen with no area", "[core][Viewport]")
     REQUIRE_THAT(viewport.centerY(), WithinAbs(6.0, 1e-9));
     REQUIRE_THAT(viewport.scale(), WithinAbs(1.0, 1e-9));
 }
+
+TEST_CASE("fitToRect clamps the margin to 0.45", "[core][Viewport]")
+{
+    // At 0.5 the usable width is zero and the scale would be infinite, so the
+    // clamp is what stops a caller asking for a margin that consumes the whole
+    // screen. Asserting it through two margins that must agree: anything at or
+    // above 0.45 is the same fit.
+    Viewport clamped(0.0, 0.0, 1.0, 800, 600);
+    clamped.fitToRect(RectF{0.0, 0.0, 400.0, 300.0}, 0.45);
+
+    Viewport overAsked(0.0, 0.0, 1.0, 800, 600);
+    overAsked.fitToRect(RectF{0.0, 0.0, 400.0, 300.0}, 5.0);
+
+    REQUIRE(overAsked.scale() == clamped.scale());
+    REQUIRE(std::isfinite(overAsked.scale()));
+    REQUIRE(overAsked.scale() > 0.0);
+}
+
+TEST_CASE("fitToRect clamps a negative margin to zero", "[core][Viewport]")
+{
+    Viewport noMargin(0.0, 0.0, 1.0, 800, 600);
+    noMargin.fitToRect(RectF{0.0, 0.0, 400.0, 300.0}, 0.0);
+
+    Viewport negative(0.0, 0.0, 1.0, 800, 600);
+    negative.fitToRect(RectF{0.0, 0.0, 400.0, 300.0}, -1.0);
+
+    REQUIRE(negative.scale() == noMargin.scale());
+}
