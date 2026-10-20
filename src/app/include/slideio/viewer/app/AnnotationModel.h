@@ -137,6 +137,22 @@ signals:
     void annotationAdded(const std::string& id);
     void annotationRemoved(const std::string& id);
     void annotationChanged(const std::string& id);
+    /// ONLY the geometry moved or resized; nothing a list row displays can
+    /// have changed.
+    ///
+    /// Split out of annotationChanged because a move-drag emits one per mouse
+    /// move, and AnnotationListPanel rebuilds its whole tree on
+    /// annotationChanged -- several hundred QTreeWidgetItems per frame, to
+    /// produce rows identical to the ones already on screen. A list row shows
+    /// a label, a type and a classification; setGeometry can change none of
+    /// the three, because core::typeOf is derived from the geometry's variant
+    /// alternative and a translate or a resize keeps it.
+    ///
+    /// Everything that DOES care about geometry connects both: the viewport
+    /// repaints, the properties panel re-measures perimeter and area, and the
+    /// persistence service marks the slide dirty. Only the list panel is
+    /// entitled to ignore this one, and that is the entire point of it.
+    void annotationGeometryChanged(const std::string& id);
     void selectionChanged(const std::string& id);
     void cleared();
     /// The whole contents changed at once. Listeners must rebuild rather than

@@ -306,10 +306,14 @@ void AnnotationListPanel::rebuild()
 
 void AnnotationListPanel::rebuildRows()
 {
-    // Hidden docks skip the work: a drag in the viewport emits annotationChanged
-    // per mouse-move, and rebuilding (clear, N items, a sort) for each would be
-    // paid by a panel nobody can see. showEvent() catches up. The title goes
-    // unrefreshed too, which costs nothing -- it is not visible either.
+    // Hidden docks skip the work. A reload, a bulk retag or a burst of
+    // creations each rebuild every row (clear, N items, a sort), and a panel
+    // nobody can see should not pay for it. showEvent() catches up. The title
+    // goes unrefreshed too, which costs nothing -- it is not visible either.
+    //
+    // A move-drag no longer reaches here at all: setGeometry emits
+    // annotationGeometryChanged, which this panel deliberately does not
+    // connect, because nothing a row displays can change when a shape moves.
     if (!isVisible()) {
         return;
     }

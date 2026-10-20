@@ -157,7 +157,8 @@ bool AnnotationModel::setGeometry(const std::string& id, core::AnnotationGeometr
     }
 
     it->setGeometry(std::move(geometry));
-    emit annotationChanged(targetId);
+    // The geometry-only signal, not annotationChanged: see the declaration.
+    emit annotationGeometryChanged(targetId);
     return true;
 }
 

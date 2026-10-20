@@ -2192,6 +2192,11 @@ ViewportWidget::ViewportWidget(app::AnnotationModel& model, QWidget* parent)
             repaintOnModelChange);
     connect(m_impl->annotations, &app::AnnotationModel::annotationChanged, this,
             repaintOnModelChange);
+    // The whole reason the geometry signal exists is the list panel, which
+    // ignores it. The viewport is the opposite case: a move-drag is exactly
+    // what it has to repaint for.
+    connect(m_impl->annotations, &app::AnnotationModel::annotationGeometryChanged, this,
+            repaintOnModelChange);
     connect(m_impl->annotations, &app::AnnotationModel::selectionChanged, this,
             repaintOnModelChange);
     // Spec §2 lists "selecting a different annotation" as an exit, and this is

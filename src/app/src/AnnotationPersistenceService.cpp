@@ -35,6 +35,10 @@ AnnotationPersistenceService::AnnotationPersistenceService(core::IAnnotationRepo
             [this](const std::string&) { markDirty(); });
     connect(&m_model, &AnnotationModel::annotationChanged, this,
             [this](const std::string&) { markDirty(); });
+    // A move or a resize is an edit like any other: the file on disk is no
+    // longer what is on screen until it is written.
+    connect(&m_model, &AnnotationModel::annotationGeometryChanged, this,
+            [this](const std::string&) { markDirty(); });
 
     // Safe where modelReset() is not: the service never emits this itself, whereas
     // it calls replaceAll() (which emits modelReset) during a load.

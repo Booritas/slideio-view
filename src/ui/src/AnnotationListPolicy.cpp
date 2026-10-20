@@ -8,6 +8,7 @@
 #include <chrono>
 #include <iterator>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 namespace slideio::viewer::ui
@@ -175,7 +176,12 @@ std::vector<CategoryTallyRow> categoryTally(const std::vector<core::Annotation>&
                                             const std::vector<std::string>& categories)
 {
     std::vector<CategoryTallyRow> rows;
-    std::vector<std::string> keys;  // Parallel to rows, lowercased for matching.
+    // Key -> index into rows, rather than a second vector held parallel to it.
+    // The parallel version maintained its invariant by hand in four places and
+    // then broke it on purpose in a fifth: the synthetic Unclassified row was
+    // pushed to rows and not to keys, which was harmless only because nothing
+    // looked anything up afterwards. A map cannot be one entry out of step.
+    std::unordered_map<std::string, std::size_t> indexByKey;
     for (const std::string& category : categories) {
         const std::string clean = trimmedText(category);
         if (clean.empty()) {
@@ -185,12 +191,12 @@ std::vector<CategoryTallyRow> categoryTally(const std::vector<core::Annotation>&
             continue;
         }
         // After the refusals, not before: an Unclassified entry is discarded
-        // here, and lowercasing it first was work thrown away.
+        // here, and folding its case first was work thrown away.
         const std::string key = toLower(clean);
-        if (std::find(keys.begin(), keys.end(), key) != keys.end()) {
+        if (indexByKey.count(key) != 0) {
             continue;
         }
-        keys.push_back(key);
+        indexByKey.emplace(key, rows.size());
         rows.push_back(CategoryTallyRow{clean, 0, true});
     }
 
@@ -202,22 +208,24 @@ std::vector<CategoryTallyRow> categoryTally(const std::vector<core::Annotation>&
             continue;
         }
         const std::string key = toLower(clean);
-        const auto found = std::find(keys.begin(), keys.end(), key);
-        if (found != keys.end()) {
-            ++rows[static_cast<std::size_t>(std::distance(keys.begin(), found))].count;
+        const auto found = indexByKey.find(key);
+        if (found != indexByKey.end()) {
+            ++rows[found->second].count;
             continue;
         }
         // Not configured: it joins the end, keeping the spelling first seen.
-        keys.push_back(key);
+        indexByKey.emplace(key, rows.size());
         rows.push_back(CategoryTallyRow{clean, 1, false});
     }
 
     if (unclassified > 0) {
+        // Deliberately not registered in indexByKey: it is not a category and
+        // nothing may ever match into it. Under the parallel vectors this was
+        // an off-by-one waiting for the next person to add a lookup.
         rows.push_back(CategoryTallyRow{"Unclassified", unclassified, false, true});
     }
     return rows;
 }
-
 bool countingComboSwallowsKey(int key, bool popupVisible)
 {
     if (popupVisible) {

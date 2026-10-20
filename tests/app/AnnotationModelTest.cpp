@@ -95,23 +95,57 @@ TEST_CASE("remove reports false for an unknown id", "[app][AnnotationModel]")
     REQUIRE_FALSE(model.remove("not-a-real-id"));
 }
 
-TEST_CASE("setGeometry updates the shape and emits annotationChanged",
+TEST_CASE("setGeometry updates the shape and emits annotationGeometryChanged",
           "[app][AnnotationModel]")
 {
     app::AnnotationModel model;
     const std::string id = addRect(model, 0.0, 0.0, 10.0, 10.0);
 
-    int changes = 0;
+    int geometryChanges = 0;
+    int generalChanges = 0;
+    QObject::connect(&model, &app::AnnotationModel::annotationGeometryChanged,
+                     [&geometryChanges](const std::string&) { ++geometryChanges; });
     QObject::connect(&model, &app::AnnotationModel::annotationChanged,
-                     [&changes](const std::string&) { ++changes; });
+                     [&generalChanges](const std::string&) { ++generalChanges; });
 
     REQUIRE(model.setGeometry(id, rect(5.0, 5.0, 25.0, 25.0)));
-    REQUIRE(changes == 1);
+    REQUIRE(geometryChanges == 1);
+    // The point of the split: a move-drag emits one of these per mouse move,
+    // and AnnotationListPanel rebuilds its whole tree on annotationChanged. A
+    // geometry change cannot alter a label, a type or a classification, so the
+    // list has nothing to rebuild and must not be told to.
+    REQUIRE(generalChanges == 0);
 
     const core::Annotation* found = model.find(id);
     REQUIRE(found != nullptr);
     REQUIRE(found->boundingBox().x == 5.0);
     REQUIRE(found->boundingBox().width == 20.0);
+}
+
+TEST_CASE("restore emits annotationChanged, not the geometry-only signal",
+          "[app][AnnotationModel]")
+{
+    // restore() puts back a WHOLE annotation, so a label or a classification
+    // may differ from what is held. The list panel has to hear about it.
+    app::AnnotationModel model;
+    const std::string id = addRect(model, 0.0, 0.0, 10.0, 10.0);
+
+    int geometryChanges = 0;
+    int generalChanges = 0;
+    QObject::connect(&model, &app::AnnotationModel::annotationGeometryChanged,
+                     [&geometryChanges](const std::string&) { ++geometryChanges; });
+    QObject::connect(&model, &app::AnnotationModel::annotationChanged,
+                     [&generalChanges](const std::string&) { ++generalChanges; });
+
+    const core::Annotation* held = model.find(id);
+    REQUIRE(held != nullptr);
+    core::AnnotationProperties properties = held->properties();
+    properties.label = "renamed";
+    const core::Annotation edited{held->id(), held->geometry(), properties, held->metadata()};
+
+    REQUIRE(model.restore(edited));
+    REQUIRE(generalChanges == 1);
+    REQUIRE(geometryChanges == 0);
 }
 
 TEST_CASE("hitTest returns the topmost annotation under the point",

@@ -1,7 +1,7 @@
 # Deferred minor findings — recovered index
 
 Status: recovered 2026-10-19 from the session transcript; split into seven
-batches, B1 to B3 done; 46 of 117 triaged, 12 fixed. **The full text of these
+batches, B1 to B4 done; 60 of 117 triaged, 16 fixed. **The full text of these
 findings is lost.** What is here is each one's opening clause, enough to identify
 it and re-derive it against the code, and nothing more.
 
@@ -103,7 +103,7 @@ one batch. The numbers are the entry numbers in the list below.
 | B1 | core geometry, measurement and numerics | 8, 14, 21, 29, 42, 44, 46, 57, 65, 70, 72, 104 | 12 | **done 2026-10-19** |
 | B2 | AnnotationModel, undo/redo, app services | 3, 5, 6, 10, 16, 19 | 6 | **done 2026-10-20** |
 | B3 | viewport interaction and drag state | 1, 7, 11, 33, 43, 58, 60, 62, 71, 76, 84, 88, 112 | 13 | **done 2026-10-20** |
-| B4 | panels, categories, preferences | 13, 15, 18, 28, 32, 61, 64, 67, 69, 81, 83, 85, 86, 109 | 14 | not started |
+| B4 | panels, categories, preferences | 13, 15, 18, 28, 32, 61, 64, 67, 69, 81, 83, 85, 86, 109 | 14 | **done 2026-10-20** (86 and 109 moved to B6) |
 | B5 | persistence, paths, workspace, serialization | 12, 22, 23, 31, 36, 38, 39, 40, 59, 94, 96, 99, 100, 114, 117 | 15 | not started |
 | B6 | documentation and comments | 4, 17, 20, 35, 41, 48, 63, 74, 75, 78, 79, 80, 90, 92, 95, 108, 113 | 17 | not started |
 | B7 | test quality: weak, missing or vacuous cases | 26, 45, 47, 49, 50, 51, 52, 53, 54, 55, 56, 77, 82, 87, 89, 91, 93, 97, 98, 101, 102, 103, 105, 115 | 24 | not started |
@@ -244,6 +244,62 @@ the preview is painted) and entry 88 (the n-point tool hint is transient, but
 `setActiveTool` has no early return, so re-pressing the tool key brings it
 back; making it persist for the length of a trace is a design decision).
 
+### B4 — panels, categories, preferences (2026-10-20)
+
+Fourteen entries: five already closed, four fixed, three accepted, two moved
+to B6 as duplication rather than defects, and **one left live because fixing
+it is a decision, not a repair**.
+
+**Entry 64 is the one worth reading.** `AnnotationModel::setGeometry` emitted
+`annotationChanged`, and `AnnotationListPanel` rebuilds its whole tree on that
+signal -- `clear()`, N `QTreeWidgetItem`s and a sort. A move-drag emits one per
+mouse move. On a slide carrying a few hundred annotations, every frame of every
+drag rebuilt several hundred list rows to produce rows identical to the ones
+already on screen, and the stutter lands on the drag itself.
+
+Nothing a row displays can change when a shape moves: a row shows a label, a
+type and a classification, and `core::typeOf` is derived from the geometry's
+variant alternative, which a translate or a resize keeps. So `setGeometry` now
+emits `annotationGeometryChanged`, and the list panel is the one listener that
+does not connect it. The viewport does (it repaints), the properties panel does
+(it measures perimeter and area from the geometry), and
+`AnnotationPersistenceService` does (a move is an edit and the file is stale
+until it is written). Making each of the four state its own answer is the
+point; a signal everyone connects by default is the thing that was wrong.
+
+This is the same defect as entry 25, one layer up: work whose result is
+guaranteed to equal what is already displayed.
+
+The other three fixes:
+
+- **Entry 85**: the properties panel's empty state cleared the measurement
+  values but not their captions, which are set from the last annotation shown.
+  Deselecting a polygon left an empty "Area" row and a caption still reading
+  "Perimeter" -- a measurement frame for a shape that is no longer selected.
+- **Entry 61**: `ui::categoryTally` kept `rows` and `keys` as parallel vectors,
+  maintained by hand in four places and then deliberately broken in a fifth --
+  the synthetic Unclassified row was pushed to `rows` and not to `keys`,
+  harmless only because nothing looked anything up afterwards. It is a map from
+  key to row index now, which cannot be one entry out of step, and the linear
+  scan per annotation goes with it.
+- **Entry 18**: `widget()->layout()` dereferenced without a null check.
+
+**Entry 67 is live and is left live on purpose.** Renaming a category with no
+slide open reports "These annotations are open read-only and cannot be
+changed", because the gate asks `annotationPersistence->isActive()`, which is
+false for a read-only slide and for no slide at all. The message names a cause
+that is not the cause, which this project treats as worse than naming none. But
+the fix is not a better message: the category list is a global preference
+(CLAUDE.md), so a vocabulary rename with nothing open is arguably valid and
+should simply retag nothing. That is the project owner's call, not a repair to
+make silently.
+
+Accepted: 13 (the Preferences write is idempotent -- the store normalises on
+both sides), 81 (the tally context menu resolving by `itemAt` is the coupling
+AC29 was struck over, already recorded), 83 (a configured category list is a
+handful of entries; the same shape in `categoryTally`, which walks every
+annotation, is the one that earned a map).
+
 ## The findings
 
 1. #10 moveOriginalGeometry's unguarded `if (picked)` could **[CLOSED - the else branch resets moveOriginal, ViewportWidget.cpp:4675, so a capture from an earlier drag cannot be restored onto this annotation]**
@@ -258,12 +314,12 @@ back; making it persist for the length of a trace is a design decision).
 10. #8 undoing a create clears an unrelated selection -- exactly **[CLOSED - AnnotationModel::remove clears the selection only when the removed id IS the selected one, AnnotationModel.cpp:140]**
 11. a 1-pixel jitter counts as a pan and suppresses **[CLOSED - the selection test is the press-to-release distance, not whether a move event arrived; now in ui::releaseSelectsAnnotation]**
 12. a hand-edited file carrying fillOpacity 0.333 quantises and
-13. accepting Preferences writes the category store even when
+13. accepting Preferences writes the category store even when **[ACCEPTED 2026-10-20 - the store normalises on write and on read, so the rewrite is idempotent, and re-feeding the panels is how a normalisation becomes visible]**
 14. an empty polygon's boundingBox is {0,0,0,0} — a real rect at **[ACCEPTED 2026-10-19 - documented as a sentinel at AnnotationGeometry.cpp:76; no reachable path builds an empty polygon, so std::optional would make every caller handle a case none can meet]**
-15. an empty/whitespace-only `to` retags to an empty
+15. an empty/whitespace-only `to` retags to an empty **[CLOSED - core::retagClassification refuses an empty trimmed target and returns no changes, so no undo step is recorded either]**
 16. AnnotationEditing.cpp uses std::nullopt with only an **[FIXED 2026-10-20 - <optional> is included directly; it had been reaching it through AnnotationEditCommand.h]**
 17. AnnotationGeometry.h header comment 
-18. AnnotationPropertiesPanel.cpp:304 dereferences widget()->layout()
+18. AnnotationPropertiesPanel.cpp:304 dereferences widget()->layout() **[FIXED 2026-10-20 - null-checked; qobject_cast already tolerates a null argument, so the guard costs one ternary]**
 19. annotationsBulkChanged -> refreshAfterReset forces stored **[CLOSED - AnnotationPropertiesPanel.cpp:232 connects the bulk signal to refresh, not refreshAfterReset, so a field the user has focus in stays theirs]**
 20. AnnotationShapeName.cpp breaks alphabetical order in
 21. AnnotationType and the geometry variant are independent **[ACCEPTED 2026-10-19 - the dangerous direction is a compile error: a new variant alternative with no typeOfShape overload will not build. The reverse leaves an unreachable enumerator]**
@@ -273,11 +329,11 @@ back; making it persist for the length of a trace is a design decision).
 25. categoryTally recomputes on every filter keystroke though **[FIXED 2026-10-19 - rebuild() split; the filter and sort combos call rebuildRows(), which does not touch the tally]**
 26. ceiling test 2 is vacuous on MSVC and libc++ — its
 27. CLAUDE.md claims the ui layer links slideio-viewer-app; it **[appears CLOSED 2026-10-19 - CMake and CLAUDE.md agree today]**
-28. clearing the user name (setUserName(
+28. clearing the user name (setUserName( **[CLOSED - setUserName removes the key rather than storing an empty string, so hasUserName() answers correctly afterwards]**
 29. collinearity is exact (d == 0.0), no epsilon. Correct and **[ACCEPTED 2026-10-19 - an epsilon would make "collinear" depend on coordinate magnitude, so a shape would change its self-intersection answer by being panned]**
 30. core::nearestBoxHandle treats a NaN distance as in **[CLOSED - BoxResize.cpp:35-39 refuses NaN deliberately]**
 31. currentSlideId() recomputes the content-size walk that
-32. displacedProfileNote takes a const SlideInfo&, so
+32. displacedProfileNote takes a const SlideInfo&, so **[CLOSED - it takes a bool and a string now, in SlidePropertiesPanel.h, so it is a pure function a test can reach]**
 33. Escape is accepted unconditionally, blocking any parent **[CLOSED - with nothing in flight it falls through to QOpenGLWidget::keyPressEvent, ViewportWidget.cpp:5266]**
 34. filter folds case but the Label/Classification/Type sorts **[FIXED 2026-10-19 - the three sorts fold case, tests in AnnotationListPolicyTest.cpp]**
 35. formatIso8601Utc's header comment names only the 9999
@@ -306,15 +362,15 @@ back; making it persist for the length of a trace is a design decision).
 58. nothing resets dragOwner when a slide closes mid-drag; **[CLOSED - resetAnnotationState clears dragOwner, dragButton and every captured original, then calls updateCursor]**
 59. openAuxImage has no live caller today (associated images go via
 60. paintAnnotations has no per-type geometry dispatch; needed **[CLOSED - it paints from core::outline and core::screenDecoration, so the dispatch is in core where the variant is]**
-61. parallel `rows`/`keys` vectors could desynchronise if a
+61. parallel `rows`/`keys` vectors could desynchronise if a **[FIXED 2026-10-20 - an unordered_map from key to row index; the synthetic Unclassified row had already broken the invariant on purpose]**
 62. preview rectangle repeats the screenRect conversion. **[FIXED 2026-10-20 - the preview draws screenPath(core::outline(...)); the hand-rolled ellipse path loop is gone]**
 63. ragged comment line-wrapping left by the edits
-64. rebuild() runs on every annotationChanged. If a move-drag
+64. rebuild() runs on every annotationChanged. If a move-drag **[FIXED 2026-10-20 - setGeometry emits a separate annotationGeometryChanged; the list panel does not connect it, the viewport, properties panel and persistence service do]**
 65. rectangles are not clamped to the slide extent. Recorded as **[LIVE, ACCEPTED 2026-10-19 - no clamp exists. A trace running off the tissue edge is a real gesture and the slide extent is not a clinical boundary; clamping would move a vertex the user placed]**
 66. rename is refused entirely on a read-only slide including the
-67. rename with no slide open reports 
+67. rename with no slide open reports **[LIVE 2026-10-20 - confirmed. The gate asks annotationPersistence->isActive(), which is false both for a read-only slide and for no slide at all, so renaming a category with nothing open reports "open read-only". Needs a decision, not just a message: the category list is a global preference, so the vocabulary rename is arguably valid with no slide open]**
 68. resizableBoxGeometry computes boundingBox before the **[STILL LIVE - ViewportWidget.cpp:1641 vs :1645]**
-69. setAnnotationModel(nullptr) on an already-null model returns
+69. setAnnotationModel(nullptr) on an already-null model returns **[CLOSED - benign: both are null, so there is nothing to disconnect and nothing to clear; the panel is already showing nothing]**
 70. snprintf buffer truncation rather than overrun for extreme **[FIXED 2026-10-19 - kNumberBufferSize is 352, enough for %.0f of DBL_MAX; see 104]**
 71. Space held + left click with no movement clears the **[FIXED 2026-10-20 - ui::releaseSelectsAnnotation refuses a click made under held Space; a pan the user did not ask for, such as a read-only slide's, still selects]**
 72. std::tolower/std::isspace are locale-dependent where the **[FIXED 2026-10-19 - core::caseFoldKey replaces both, and ui now calls it too; this was the core half of 106]**
@@ -326,12 +382,12 @@ back; making it persist for the length of a trace is a design decision).
 78. the 720->900px widen + resizeColumnsToContents judged JUSTIFIED,
 79. the ambiguity fix was correct and test-only; no production change
 80. the comment at ViewportWidget.cpp:4201 (
-81. the context-menu handler is correct only because nothing reads
+81. the context-menu handler is correct only because nothing reads **[ACCEPTED - this is the coupling AC29 was struck over: the tally resolves its row by itemAt(at) and carries NoSelection + NoFocus deliberately. Recorded in the categorized-counting spec]**
 82. the cross-session persistence test would pass with
-83. the dedup `seen` vector is searched linearly (O(n^2)); fine
+83. the dedup `seen` vector is searched linearly (O(n^2)); fine **[ACCEPTED 2026-10-20 - a configured category list is a handful of entries. The same shape in ui::categoryTally, which walks every annotation, is the one that was worth a map; entry 61]**
 84. the dragOwner reset in commitPendingShape is unconditional, so **[CLOSED - endToolDrag returns early unless dragOwner == Tool, so a pan stays alive across a commit, a cancel or a tool change]**
-85. the empty state clears the measurement VALUES but does not
-86. the file-pick+validate block in onSetSlideColorProfile duplicates
+85. the empty state clears the measurement VALUES but does not **[FIXED 2026-10-20 - the captions too: deselecting a polygon left an empty "Area" row and a caption reading "Perimeter"]**
+86. the file-pick+validate block in onSetSlideColorProfile duplicates **[DEFERRED to B6 - duplication, not a defect; no behaviour differs between the two blocks today]**
 87. the first Annotation test is also weak against a
 88. the hint is transient and set on activeToolChanged, so a **[LIVE, ACCEPTED 2026-10-20 - setActiveTool has no early return, so re-pressing the tool key re-shows it. Making it persist for the length of a trace is a design decision, not a defect fix]**
 89. the inverted-rectangle outline test asserts corners 0 and 2
@@ -354,7 +410,7 @@ back; making it persist for the length of a trace is a design decision).
 106. toLower is ASCII-only, so non-ASCII case variants split rows **[FIXED 2026-10-19 - toLower uses QString::toCaseFolded; test uses an O-diaeresis pair]**
 107. toLower(clean) computed twice per non-empty classification. **[FIXED 2026-10-19 - the key is computed after the refusals that discard it]**
 108. trailing whitespace on the loadFailure line in load().
-109. two hand-written QStringList<->vector<string> conversion
+109. two hand-written QStringList<->vector<string> conversion **[DEFERRED to B6 - duplication, not a defect; the store converts on both sides of its own boundary and MainWindow once more]**
 110. ui uses QString case-insensitive comparison where core uses **[PARTLY FIXED 2026-10-19 - ui now folds case the Unicode way; core still folds ASCII, which is sufficient for its ASCII-only comparand]**
 111. unused <QSettings> include in the test file. **[CLOSED - QSettings is used at QSettingsAnnotationCategoryStoreTest.cpp:84]**
 112. updateCursor has no DragOwner::MoveVertex case, so a **[CLOSED - the case exists at ViewportWidget.cpp:3862 with the reasoning beside it]**

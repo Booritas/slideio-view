@@ -217,6 +217,10 @@ void AnnotationPropertiesPanel::setAnnotationModel(app::AnnotationModel* model)
         connect(m_impl->model, &app::AnnotationModel::annotationAdded, this, refresh);
         connect(m_impl->model, &app::AnnotationModel::annotationRemoved, this, refresh);
         connect(m_impl->model, &app::AnnotationModel::annotationChanged, this, refresh);
+        // Perimeter and area are measured from the geometry, so a move or a
+        // resize changes what this panel displays even though the list panel
+        // can ignore the same signal.
+        connect(m_impl->model, &app::AnnotationModel::annotationGeometryChanged, this, refresh);
         // These two mean the contents are being replaced wholesale, so every
         // cached measurement answers for an annotation that may no longer
         // exist -- and ids are not unique across slides.
@@ -302,7 +306,10 @@ void AnnotationPropertiesPanel::updateMeasurements(const core::Annotation& annot
         m_impl->selfIntersectionById[annotation.id()] = metrics.selfIntersecting;
     }
 
-    auto* form = qobject_cast<QFormLayout*>(widget()->layout());
+    // widget() is set in the constructor and never cleared, but a QDockWidget
+    // with no widget returns null and this would dereference it. The cast
+    // already tolerates a null argument, so the guard costs one ternary.
+    auto* form = qobject_cast<QFormLayout*>(widget() != nullptr ? widget()->layout() : nullptr);
     if (metrics.closed) {
         if (form != nullptr && m_impl->areaRow >= 0) {
             form->setRowVisible(m_impl->areaRow, true);
@@ -373,7 +380,7 @@ void AnnotationPropertiesPanel::revertToModel()
 
 void AnnotationPropertiesPanel::repopulate(bool force)
 {
-    // Hidden docks skip the work: a move-drag emits annotationChanged per
+    // Hidden docks skip the work: a move-drag emits annotationGeometryChanged per
     // mouse-move, and this does a style-sheet parse and four setters each time.
     // shownId is still cleared, though. The widgets are frozen while hidden, so
     // a shownId left pointing at the last annotation would let a commit (the
@@ -407,6 +414,17 @@ void AnnotationPropertiesPanel::repopulate(bool force)
         m_impl->modified->clear();
         m_impl->areaValue->clear();
         m_impl->lengthValue->clear();
+        // The captions too, not only the values. They are set from the LAST
+        // annotation shown, so deselecting a polygon used to leave an empty
+        // "Area" row and a caption still reading "Perimeter" -- a measurement
+        // frame for a shape that is no longer selected. Reset to the same
+        // state a line gives, which is what the panel is built with.
+        if (auto* emptyForm = qobject_cast<QFormLayout*>(
+                widget() != nullptr ? widget()->layout() : nullptr);
+            emptyForm != nullptr && m_impl->areaRow >= 0) {
+            emptyForm->setRowVisible(m_impl->areaRow, false);
+        }
+        m_impl->lengthCaption->setText(tr("Length"));
         setFieldsEnabled(false);
         m_impl->populating = false;
         return;
