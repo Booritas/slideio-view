@@ -2,6 +2,9 @@
 
 #include "slideio/viewer/core/AnnotationCategories.h"
 
+#include <ios>
+#include <string>
+
 using slideio::viewer::core::caseFoldKey;
 using slideio::viewer::core::normalizeCategoryList;
 
@@ -246,19 +249,105 @@ TEST_CASE("caseFoldKey leaves eszett alone", "[core][Categories]")
 
 TEST_CASE("caseFoldKey passes through what it cannot fold", "[core][Categories]")
 {
-    // Cyrillic: outside the table, so it folds to itself -- narrower than
-    // Qt, and identical on both sides of the layer boundary, which is the
-    // property that matters.
-    const std::string cyrillic = "\xD0\x9C\xD0\xB8";
-    REQUIRE(caseFoldKey(cyrillic) == cyrillic);
+    // Hebrew: unicameral, so folding it to itself is not a gap -- it is what
+    // caseless matching means for a script with no case, and what Qt does with
+    // it too.
+    const std::string hebrew = "\xD7\x90\xD7\x91";
+    REQUIRE(caseFoldKey(hebrew) == hebrew);
+
+    // Chinese, likewise, and three bytes per character rather than two: the
+    // decode never runs for it at all.
+    const std::string chinese = "\xE7\xB4\xB0\xE8\x83\x9E";
+    REQUIRE(caseFoldKey(chinese) == chinese);
+
+    // Armenian DOES have case and is deliberately not covered. Pinned so the
+    // boundary is a decision on record rather than something nobody noticed.
+    const std::string armenianCapital = "\xD4\xB1";
+    REQUIRE(caseFoldKey(armenianCapital) == armenianCapital);
 
     // A lone continuation byte is not valid UTF-8 at all. It must come back
     // unchanged rather than be decoded as if it were a letter.
     REQUIRE(caseFoldKey("A\x96") == "a\x96");
 
     // A truncated two-byte sequence at the very end of the string: the lead is
-    // in the Latin range but there is no continuation byte to pair it with.
+    // in the foldable range but there is no continuation byte to pair it with.
     REQUIRE(caseFoldKey("x\xC3") == "x\xC3");
+}
+
+TEST_CASE("caseFoldKey folds the Greek alphabet", "[core][Categories]")
+{
+    // "MITOSI" in Greek capitals and lowercase: U+039C U+0399 U+03A4 U+039F
+    // U+03A3 U+0397 against U+03BC U+03B9 U+03C4 U+03BF U+03C3 U+03B7.
+    const std::string upper = "\xCE\x9C\xCE\x99\xCE\xA4\xCE\x9F\xCE\xA3\xCE\x97";
+    const std::string lower = "\xCE\xBC\xCE\xB9\xCF\x84\xCE\xBF\xCF\x83\xCE\xB7";
+
+    REQUIRE(caseFoldKey(upper) == caseFoldKey(lower));
+    REQUIRE(caseFoldKey(upper) == lower);
+}
+
+TEST_CASE("caseFoldKey folds final sigma to ordinary sigma", "[core][Categories]")
+{
+    // A Greek word ending in sigma is spelled with U+03C2; the same word with
+    // anything after it uses U+03C3. Without this they would be two
+    // categories, one of them appearing only when the name stands alone.
+    REQUIRE(caseFoldKey("\xCF\x82") == "\xCF\x83");
+    REQUIRE(caseFoldKey("\xCE\xA3") == "\xCF\x83");
+}
+
+TEST_CASE("caseFoldKey folds the accented Greek capitals", "[core][Categories]")
+{
+    // These sit BELOW the alphabet and fold up into letters scattered across
+    // the lowercase range, with no constant offset. Every one is checked
+    // because there is no rule to check instead.
+    REQUIRE(caseFoldKey("\xCE\x86") == "\xCE\xAC"); // U+0386 -> U+03AC
+    REQUIRE(caseFoldKey("\xCE\x88") == "\xCE\xAD"); // U+0388 -> U+03AD
+    REQUIRE(caseFoldKey("\xCE\x89") == "\xCE\xAE"); // U+0389 -> U+03AE
+    REQUIRE(caseFoldKey("\xCE\x8A") == "\xCE\xAF"); // U+038A -> U+03AF
+    REQUIRE(caseFoldKey("\xCE\x8C") == "\xCF\x8C"); // U+038C -> U+03CC
+    REQUIRE(caseFoldKey("\xCE\x8E") == "\xCF\x8D"); // U+038E -> U+03CD
+    REQUIRE(caseFoldKey("\xCE\x8F") == "\xCF\x8E"); // U+038F -> U+03CE
+}
+
+TEST_CASE("caseFoldKey leaves the unassigned Greek slot alone", "[core][Categories]")
+{
+    // U+03A2 sits between capital rho and capital sigma and is unassigned --
+    // lowercase sigma has two forms where uppercase has one. A shift applied
+    // across it would invent a letter.
+    REQUIRE(caseFoldKey("\xCE\xA2") == "\xCE\xA2");
+}
+
+TEST_CASE("caseFoldKey folds the Cyrillic alphabet", "[core][Categories]")
+{
+    // "MITOZ" in Cyrillic: U+041C U+0418 U+0422 U+041E U+0417 against
+    // U+043C U+0438 U+0442 U+043E U+0437.
+    const std::string upper = "\xD0\x9C\xD0\x98\xD0\xA2\xD0\x9E\xD0\x97";
+    const std::string lower = "\xD0\xBC\xD0\xB8\xD1\x82\xD0\xBE\xD0\xB7";
+
+    REQUIRE(caseFoldKey(upper) == caseFoldKey(lower));
+    REQUIRE(caseFoldKey(upper) == lower);
+}
+
+TEST_CASE("caseFoldKey folds the Cyrillic letters that sit below the alphabet",
+          "[core][Categories]")
+{
+    // Unicode placed these capitals BEFORE the alphabet and their lowercase
+    // forms after it, so the shift is 0x50 rather than 0x20. They are the
+    // letters Russian does not use and Ukrainian, Serbian, Macedonian and
+    // Belarusian do -- so this is not an exotic corner.
+    REQUIRE(caseFoldKey("\xD0\x81") == "\xD1\x91"); // U+0401 YO -> U+0451
+    REQUIRE(caseFoldKey("\xD0\x87") == "\xD1\x97"); // U+0407 YI -> U+0457
+    REQUIRE(caseFoldKey("\xD0\x8F") == "\xD1\x9F"); // U+040F DZHE -> U+045F
+}
+
+TEST_CASE("caseFoldKey folds the paired Cyrillic runs and palochka",
+          "[core][Categories]")
+{
+    REQUIRE(caseFoldKey("\xD1\xA2") == "\xD1\xA3"); // U+0462 -> U+0463, even
+    REQUIRE(caseFoldKey("\xD2\x8A") == "\xD2\x8B"); // U+048A -> U+048B, even
+    REQUIRE(caseFoldKey("\xD3\x81") == "\xD3\x82"); // U+04C1 -> U+04C2, odd
+    REQUIRE(caseFoldKey("\xD3\x90") == "\xD3\x91"); // U+04D0 -> U+04D1, even
+    // Palochka's lowercase form is at the far end of its run, not beside it.
+    REQUIRE(caseFoldKey("\xD3\x80") == "\xD3\x8F"); // U+04C0 -> U+04CF
 }
 
 TEST_CASE("normalizeCategoryList deduplicates a non-ASCII case pair", "[core][Categories]")
@@ -290,4 +379,46 @@ TEST_CASE("normalizeCategoryList folds a non-ASCII duplicate that is also padded
         normalizeCategoryList({" Zellk\xC3\xB6rper ", "ZELLK\xC3\x96RPER"});
 
     REQUIRE(out == std::vector<std::string>{"Zellk\xC3\xB6rper"});
+}
+
+TEST_CASE("caseFoldKey is idempotent across every codepoint it decodes",
+          "[core][Categories]")
+{
+    // A fold is a reduction to a representative, so folding a folded key must
+    // change nothing. The sweep is what makes this worth writing: every range
+    // and parity rule in the three script blocks is an off-by-one away from
+    // mapping a lowercase letter onto a different letter, and that shows up
+    // here as a second fold moving something. U+00C0 to U+04FF is exactly the
+    // span the decoder claims.
+    for (char32_t cp = 0x00C0; cp <= 0x04FF; ++cp) {
+        std::string utf8;
+        utf8.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+        utf8.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+
+        const std::string once = caseFoldKey(utf8);
+        INFO("codepoint U+" << std::hex << static_cast<unsigned>(cp));
+        REQUIRE(caseFoldKey(once) == once);
+    }
+}
+
+TEST_CASE("caseFoldKey maps one codepoint to one codepoint", "[core][Categories]")
+{
+    // Simple folding, not full folding: full folding would expand eszett to
+    // "ss" and the Greek iota-subscript letters to two codepoints each, giving
+    // a key whose length no longer tracks the text it came from.
+    //
+    // U+017F is the single exception and it is not an expansion: long s folds
+    // DOWN to ASCII s, out of the two-byte range into one byte. That is the
+    // mapping Unicode gives it, and this sweep found it the first time it ran,
+    // which is the case for writing the sweep rather than a handful of
+    // examples.
+    for (char32_t cp = 0x00C0; cp <= 0x04FF; ++cp) {
+        std::string utf8;
+        utf8.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+        utf8.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+
+        const std::size_t expected = (cp == 0x017F) ? 1u : 2u;
+        INFO("codepoint U+" << std::hex << static_cast<unsigned>(cp));
+        REQUIRE(caseFoldKey(utf8).size() == expected);
+    }
 }

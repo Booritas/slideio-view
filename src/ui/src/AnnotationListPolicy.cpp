@@ -24,8 +24,12 @@ namespace
 /// folds the tally and the filter, and the two must answer the same. Folding
 /// here with Qt and there with std::tolower is what made the tally merge two
 /// spellings of one category into a row of eight that a rename of that
-/// category then changed five of. Qt's fold is wider; agreement is worth more
-/// than the width, and the width is only lost outside Latin.
+/// category then changed five of.
+///
+/// Qt's fold is still wider -- it has the whole Unicode table, where
+/// caseFoldKey has Latin, Greek and Cyrillic. Agreement across the layer
+/// boundary is worth more than the width, and a script with no case folds to
+/// itself under both.
 ///
 /// It is deliberately not "lowercasing": case folding is what Unicode defines
 /// for caseless comparison.

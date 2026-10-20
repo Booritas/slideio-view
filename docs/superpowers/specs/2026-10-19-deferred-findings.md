@@ -134,17 +134,13 @@ a rename that silently misses a third of it. One fix cannot land on one side of
 a layer boundary when both sides compare the same strings.
 
 `core::caseFoldKey` is now the single fold, and ui calls it rather than Qt. It
-covers ASCII, the Latin-1 Supplement and Latin Extended-A, applied to UTF-8
-bytes; everything else passes through. That is narrower than
-`QString::toCaseFolded` -- Greek, Cyrillic and the Turkish dotless i fold to
-themselves -- and the narrowing was chosen deliberately: agreement across the
-boundary is worth more than width, and the width is only lost where the ASCII
-version had already lost it. `std::tolower` and `std::isspace` are gone from
-both files for the same reason they were wrong: they read the global C locale,
-and under a single-byte one they rewrite or trim the lead byte of a UTF-8
-letter depending on whether something else in the process had called
-`setlocale`.
-
+covers ASCII, the Latin-1 Supplement, Latin Extended-A, Greek and Cyrillic,
+applied to UTF-8 bytes; everything else passes through. Greek and Cyrillic were
+added on 2026-10-20 after the narrowing was questioned -- see "Extending the
+fold" below. `std::tolower` and `std::isspace` are gone from both files for the
+same reason they were wrong: they read the global C locale, and under a
+single-byte one they rewrite or trim the lead byte of a UTF-8 letter depending
+on whether something else in the process had called `setlocale`.
 The other three fixes:
 
 - **Entry 104 was undefined behaviour, not just an ugly number.**
@@ -176,6 +172,59 @@ off the tissue edge is a real gesture).
 
 Closed by earlier work: 46 (`inClosedRange` calls `std::isfinite`) and 57
 (`ViewportController.cpp:99` clamps the scale straight after `fitToRect`).
+
+### Extending the fold to Greek and Cyrillic (2026-10-20)
+
+Not from the index. B1 made `core::caseFoldKey` cover ASCII, the Latin-1
+Supplement and Latin Extended-A, which was wider than the `std::tolower` it
+replaced and narrower than the `QString::toCaseFolded` the ui had carried for
+one day. The project owner asked what the narrowing cost and whether it meant
+only Latin was supported.
+
+It did not. The fold is used **only** as a comparison key -- `==`, `find`, `<`,
+and as a map key -- and never stored or displayed: `normalizeCategoryList`
+keeps the trimmed original, `categoryTally` rows carry the spelling first seen,
+and `retagClassification` writes the target as typed. A category in any script
+was stored, shown, counted and renamed exactly as before. What a narrow fold
+costs is only whether two differently-CASED spellings are judged the same
+category.
+
+And the boundary was never "Latin": it was **bicameral**. Chinese, Japanese,
+Korean, Arabic, Hebrew, Thai and Devanagari have no case, so folding them to
+themselves is what caseless matching means for them, in this implementation and
+in Qt's. The scripts that actually lost something were Greek and Cyrillic.
+
+Both are now folded, in their own blocks beside the Latin one:
+
+- **Greek** is one contiguous 0x20 shift with U+03A2 punched out of it (that
+  slot is unassigned, because lowercase sigma has two forms and uppercase has
+  one). Two things are not shifts. The accented capitals sit BELOW the alphabet
+  at U+0386..U+038F and fold up into letters scattered across U+03AC..U+03CE
+  with no constant offset, so each is named. And **final sigma folds to
+  ordinary sigma** -- a Greek word ending in sigma is spelled with a different
+  letter from the same word with a suffix, so without that rule a category
+  typed on its own and the same category typed inside a phrase would be two
+  categories.
+- **Cyrillic** is two shifts and four paired runs. The basic alphabet shifts by
+  0x20; the letters Russian does not use and Ukrainian, Serbian, Macedonian and
+  Belarusian do shift by 0x50, because Unicode placed those capitals before the
+  alphabet and their lowercase forms after it. U+04C0 palochka is the outlier,
+  folding to U+04CF at the far end of its run.
+
+**The sweep is the part worth keeping.** Rather than a handful of examples, two
+tests walk every codepoint from U+00C0 to U+04FF -- the exact span the decoder
+claims -- and assert that folding is idempotent and that one codepoint maps to
+one codepoint. Every range bound and parity rule in the three blocks is an
+off-by-one away from mapping a lowercase letter onto a different letter, and
+that shows up in the first sweep as a second fold moving something. The width
+sweep failed on its first run at U+017F, which was the test being wrong rather
+than the code: long s folds DOWN to one-byte ASCII s, the one mapping that
+leaves the two-byte range.
+
+Still not folded, and now pinned by a test so the boundary is on record:
+Armenian and Georgian (which do have case), archaic and Coptic Greek, the Greek
+mathematical symbol variants, and the Turkish dotless i -- whose correct fold
+is locale-dependent and which Qt's default folding does not handle either.
 
 ### B2 — AnnotationModel, undo/redo, app services (2026-10-20)
 

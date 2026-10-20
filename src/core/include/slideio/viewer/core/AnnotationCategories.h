@@ -20,10 +20,10 @@ inline const std::vector<std::string> kDefaultAnnotationCategories{
 
 /// `text` reduced to a key two spellings of the same category share.
 ///
-/// Simple Unicode case folding over ASCII, the Latin-1 Supplement and Latin
-/// Extended-A, applied to UTF-8 bytes; every other byte passes through
-/// unchanged. The key is for comparison only and is never displayed -- what
-/// the user typed is what is stored and shown.
+/// Simple Unicode case folding over ASCII, the Latin-1 Supplement, Latin
+/// Extended-A, Greek and Cyrillic, applied to UTF-8 bytes; every other byte
+/// passes through unchanged. The key is for comparison only and is never
+/// displayed -- what the user typed is what is stored and shown.
 ///
 /// It exists because the fold has to be the SAME ONE on both sides of the
 /// layer boundary. ui::toLower used std::tolower while ui::categoryTally
@@ -34,11 +34,14 @@ inline const std::vector<std::string> kDefaultAnnotationCategories{
 /// what a rename then misses is worse than either rule alone, so both layers
 /// call this one function.
 ///
-/// Coverage stops where the mapping stops being regular: Greek, Cyrillic and
-/// the Turkish dotless i fold to themselves, which is what the ASCII-only
-/// version did for them as well. Narrower than QString::toCaseFolded, never
-/// wider, and identical in core and ui. Eszett folds to itself here, as it
-/// does in Qt's simple folding.
+/// What is NOT folded, and why it does not matter: a script with no case --
+/// Chinese, Japanese, Korean, Arabic, Hebrew, Thai, Devanagari -- folds to
+/// itself here, which is what caseless matching MEANS for it, and what Qt
+/// does with it too. Armenian and Georgian do have case and are not covered.
+/// Neither are archaic Greek, the Greek mathematical symbol variants, or the
+/// Turkish dotless i, whose correct fold is locale-dependent and which Qt's
+/// default folding does not handle either. Eszett folds to itself, as it does
+/// in Qt's simple folding.
 [[nodiscard]] std::string caseFoldKey(const std::string& text);
 
 /// True for "Unclassified" in any case, ignoring surrounding whitespace: the

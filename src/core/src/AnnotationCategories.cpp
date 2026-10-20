@@ -30,7 +30,7 @@ bool isAsciiSpace(unsigned char c)
     return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r';
 }
 
-/// The folded form of one Latin codepoint in U+0080..U+017F, or `cp` itself.
+/// The folded form of one Latin codepoint in U+00C0..U+017F, or `cp` itself.
 ///
 /// Three regular blocks, no table: the Latin-1 Supplement shifts by 0x20, and
 /// Latin Extended-A pairs an uppercase letter with the codepoint above it --
@@ -40,7 +40,7 @@ bool isAsciiSpace(unsigned char c)
 /// U+017F map outside Latin Extended-A entirely. The two gaps in the stretches
 /// -- U+0138 and U+0149, which have no uppercase form -- fall through to the
 /// identity return, which is the right answer for them.
-char32_t foldLatinCodepoint(char32_t cp)
+char32_t foldLatin(char32_t cp)
 {
     // U+00D7 is the multiplication sign, not a letter, and U+00DF is eszett,
     // whose simple fold is itself.
@@ -72,8 +72,111 @@ char32_t foldLatinCodepoint(char32_t cp)
     return cp;
 }
 
+/// The folded form of one modern Greek codepoint, or `cp` itself.
+///
+/// The alphabet is one contiguous shift of 0x20 with U+03A2 punched out of the
+/// middle of it -- that slot is unassigned, between rho and sigma, because
+/// lowercase sigma has two forms and uppercase has one.
+///
+/// Two things here are not shifts. The accented capitals sit BELOW the
+/// alphabet at U+0386..U+038F and fold up into the accented lowercase letters
+/// scattered across U+03AC..U+03CE, with no constant offset between them.
+/// And final sigma folds to ordinary sigma: a Greek word ending in sigma is
+/// spelled with a different letter from the same word with a suffix, so
+/// without this a category typed as a word on its own and the same category
+/// typed inside a phrase would be two categories.
+///
+/// Archaic and Coptic Greek (U+03D8..U+03FF) and the mathematical variant
+/// symbols (U+03D0, U+03D1, U+03F5 and their neighbours) are NOT folded. They
+/// are not letters anyone types into a category name, and leaving them alone
+/// keeps this block readable.
+char32_t foldGreek(char32_t cp)
+{
+    if (cp >= 0x0391 && cp <= 0x03A1) {
+        return cp + 0x20;
+    }
+    if (cp >= 0x03A3 && cp <= 0x03AB) {
+        return cp + 0x20;
+    }
+    if (cp == 0x03C2) {
+        return 0x03C3;
+    }
+    switch (cp) {
+    case 0x0386:
+        return 0x03AC;
+    case 0x0388:
+        return 0x03AD;
+    case 0x0389:
+        return 0x03AE;
+    case 0x038A:
+        return 0x03AF;
+    case 0x038C:
+        return 0x03CC;
+    case 0x038E:
+        return 0x03CD;
+    case 0x038F:
+        return 0x03CE;
+    default:
+        return cp;
+    }
+}
+
+/// The folded form of one Cyrillic codepoint, or `cp` itself.
+///
+/// Two shifts and four paired runs. The basic alphabet shifts by 0x20, and the
+/// block of letters above it -- the ones Russian does not use but Ukrainian,
+/// Serbian, Macedonian and Belarusian do -- shifts by 0x50, because Unicode
+/// placed those capitals BEFORE the alphabet and their lowercase forms after
+/// it. Everything from U+0460 up is pair-encoded the way Latin Extended-A is,
+/// uppercase then lowercase, so the parity rules read the same.
+///
+/// U+04C0 is the one outlier: palochka's lowercase form is U+04CF, at the far
+/// end of the run rather than beside it.
+char32_t foldCyrillic(char32_t cp)
+{
+    if (cp >= 0x0400 && cp <= 0x040F) {
+        return cp + 0x50;
+    }
+    if (cp >= 0x0410 && cp <= 0x042F) {
+        return cp + 0x20;
+    }
+    if (cp == 0x04C0) {
+        return 0x04CF;
+    }
+    if (cp >= 0x0460 && cp <= 0x0481) {
+        return (cp % 2 == 0) ? cp + 1 : cp;
+    }
+    if (cp >= 0x048A && cp <= 0x04BF) {
+        return (cp % 2 == 0) ? cp + 1 : cp;
+    }
+    if (cp >= 0x04C1 && cp <= 0x04CE) {
+        return (cp % 2 == 1) ? cp + 1 : cp;
+    }
+    if (cp >= 0x04D0 && cp <= 0x052F) {
+        return (cp % 2 == 0) ? cp + 1 : cp;
+    }
+    return cp;
+}
+
+/// The folded form of one codepoint in U+00C0..U+04FF, or `cp` itself.
+///
+/// Three scripts, because those are the three with case that a category name
+/// in this application plausibly uses. Everything between and around them --
+/// Latin Extended-B, IPA, combining marks, the Greek slots this does not
+/// claim -- falls through each block to the identity return.
+char32_t foldCodepoint(char32_t cp)
+{
+    if (cp < 0x0370) {
+        return foldLatin(cp);
+    }
+    if (cp < 0x0400) {
+        return foldGreek(cp);
+    }
+    return foldCyrillic(cp);
+}
+
 /// Appends `cp` to `out` as UTF-8. Only the one- and two-byte forms occur:
-/// foldLatinCodepoint never returns anything above U+017F, and the caller only
+/// foldCodepoint never returns anything above U+04FF, and the caller only
 /// hands it codepoints it decoded from a two-byte sequence.
 void appendUtf8(std::string& out, char32_t cp)
 {
@@ -84,7 +187,6 @@ void appendUtf8(std::string& out, char32_t cp)
     out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
     out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
 }
-
 std::string trimmed(const std::string& text)
 {
     const auto notSpace = [](unsigned char c) { return !isAsciiSpace(c); };
@@ -109,25 +211,31 @@ std::string caseFoldKey(const std::string& text)
             continue;
         }
 
-        // The two-byte forms that carry U+0080..U+07FF. Latin-1 Supplement and
-        // Latin Extended-A live in C3, C4 and C5; the decode is restricted to
-        // those three leads so no other script is touched or re-encoded.
-        const bool latinLead = lead >= 0xC3 && lead <= 0xC5;
+        // The two-byte forms carrying U+00C0..U+04FF: Latin-1 Supplement,
+        // Latin Extended-A, Greek and Cyrillic. The decode is restricted to
+        // the leads that reach those, so the three-byte scripts below are
+        // never decoded and never re-encoded.
+        //
+        // 0xD3 is the last lead that can reach Cyrillic; 0xD4 begins Armenian,
+        // which this does not fold. 0xC2 is excluded at the bottom for the
+        // same reason -- it carries U+0080..U+00BF, which is punctuation and
+        // signs, not letters with case.
+        const bool foldableLead = lead >= 0xC3 && lead <= 0xD3;
         const bool hasContinuation =
             i + 1 < text.size() && (static_cast<unsigned char>(text[i + 1]) & 0xC0) == 0x80;
-        if (!latinLead || !hasContinuation) {
-            // Anything else -- a longer sequence, another script, or a byte
-            // that is not valid UTF-8 at all -- is copied through untouched.
-            // A category name is whatever the user typed, and a key that
-            // mangled it would still compare equal to itself; passing it
-            // through keeps that true without pretending to fold it.
+        if (!foldableLead || !hasContinuation) {
+            // Anything else -- a longer sequence, a script with no case at
+            // all, or a byte that is not valid UTF-8 -- is copied through
+            // untouched. Chinese, Japanese, Korean, Arabic, Hebrew, Thai and
+            // Devanagari are unicameral, so the identity IS their case fold
+            // and this is the correct answer rather than a concession.
             folded.push_back(text[i]);
             continue;
         }
 
         const auto trail = static_cast<unsigned char>(text[i + 1]);
         const char32_t cp = (static_cast<char32_t>(lead & 0x1F) << 6) | (trail & 0x3F);
-        appendUtf8(folded, foldLatinCodepoint(cp));
+        appendUtf8(folded, foldCodepoint(cp));
         ++i;
     }
 
