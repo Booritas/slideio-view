@@ -1565,6 +1565,22 @@ void MainWindow::Impl::buildAnnotationPersistence()
                                  .arg(message, QDir::toNativeSeparators(path)));
                      });
 
+    QObject::connect(annotationPersistence.get(),
+                     &app::AnnotationPersistenceService::lockedByAnother, owner,
+                     [](const QString& path, const QString& holder) {
+                         // Logged, not shown: the user is already told by the
+                         // read-only reason that ViewportWidget composes from
+                         // isLockedByAnother(), and a dialog on top of it would
+                         // interrupt a reader who is allowed to read. The log
+                         // line is for the support question that follows --
+                         // "why can I not annotate this slide" -- which the
+                         // transient message cannot answer an hour later.
+                         spdlog::warn("Annotations locked by another instance: {} held by {}",
+                                      path.toStdString(),
+                                      holder.isEmpty() ? std::string("an unidentified process")
+                                                       : holder.toStdString());
+                     });
+
     QObject::connect(annotationPersistence.get(), &app::AnnotationPersistenceService::activeChanged,
                      owner, [this](bool active) {
                          // The service announces no successful save, so this is

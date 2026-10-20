@@ -89,6 +89,20 @@ public:
     [[nodiscard]] bool isDirty() const;
     [[nodiscard]] bool isActive() const;
 
+    /// True when this scene's annotation file is held by another instance of
+    /// this application, so it was shown but may not be written (FR-ANN-32).
+    ///
+    /// Separate from isActive(), which is false for several unrelated reasons.
+    /// The ui needs to tell them apart: "another window has this open" is a
+    /// state the user can do something about, and "the stored file could not be
+    /// used" is not.
+    [[nodiscard]] bool isLockedByAnother() const;
+
+    /// Who holds it, in words, or empty when the holder could not be read --
+    /// which is a normal outcome on a share. Only meaningful while
+    /// isLockedByAnother().
+    [[nodiscard]] QString lockHolder() const;
+
     /// When the open document's history began: the loaded file's createdAt, or
     /// the moment this slide was begun if there was no file. A workspace switch
     /// reads it BEFORE its flush, so that endSlide() clearing more state in
@@ -116,6 +130,11 @@ signals:
     /// enables and disables the drawing tools from this.
     void activeChanged(bool active);
 
+    /// Another instance of this application holds this scene's annotation file.
+    /// The annotations are on screen and nothing may be written to them. Fired
+    /// from beginSlide, before activeChanged.
+    void lockedByAnother(const QString& path, const QString& holder);
+
 private:
     void onAutosaveTick();
     void onModelCleared();
@@ -131,6 +150,8 @@ private:
     core::SlideProvenance m_provenance;
     std::chrono::system_clock::time_point m_createdAt{};
     bool m_active = false;
+    bool m_lockedByAnother = false;
+    QString m_lockHolder;
     bool m_dirty = false;
     bool m_loading = false;
     bool m_inCloseFlush = false;

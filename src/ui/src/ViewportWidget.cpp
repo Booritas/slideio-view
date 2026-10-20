@@ -2842,8 +2842,24 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
             // notices the tool is grey.
             annotationsAvailable = m_impl->persistence->isActive();
             if (!annotationsAvailable) {
-                annotationsReason = tr("Annotations are read-only for this slide: "
-                                       "the stored file could not be used.");
+                // Two different states, and the user can act on only one of
+                // them. "Another window has it" is answerable -- close the
+                // other window, or carry on reading -- while "the stored file
+                // could not be used" is not, and reporting the second for the
+                // first would send somebody looking for a corrupt file that is
+                // perfectly fine.
+                if (m_impl->persistence->isLockedByAnother()) {
+                    const QString holder = m_impl->persistence->lockHolder();
+                    annotationsReason =
+                        holder.isEmpty()
+                            ? tr("Another window has this slide's annotations open, "
+                                 "so they are read-only here.")
+                            : tr("Another window has this slide's annotations open (%1), "
+                                 "so they are read-only here.").arg(holder);
+                } else {
+                    annotationsReason = tr("Annotations are read-only for this slide: "
+                                           "the stored file could not be used.");
+                }
             }
         }
     }

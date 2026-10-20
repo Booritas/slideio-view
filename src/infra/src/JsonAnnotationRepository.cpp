@@ -6,10 +6,13 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QLockFile>
 #include <QSaveFile>
 #include <QString>
+#include <QStringList>
 
 #include <cstddef>
+#include <memory>
 #include <string_view>
 #include <utility>
 
@@ -44,6 +47,42 @@ bool isSafeKey(const std::string& slideId, int sceneIndex)
         }
     }
     return true;
+}
+
+
+/// How old a lock file must be before Qt may treat it as abandoned, when it
+/// cannot ask the operating system whether the owning process is alive --
+/// which is every lock taken by another machine on a shared workspace. Four
+/// hours: long enough that it cannot expire during a reading session, short
+/// enough that a remote crash does not block the slide for a working day.
+/// A lock left by a dead process on THIS host is detected immediately and does
+/// not wait for this at all.
+constexpr int kStaleLockMilliseconds = 4 * 60 * 60 * 1000;
+
+/// Who holds a lock, in words, for a message the user reads.
+///
+/// Every field is optional in practice -- a lock file on a share can be
+/// unreadable at the moment it is asked about -- so this says only what it
+/// actually learned, and returns empty rather than inventing a holder.
+std::string describeHolder(QLockFile& lock)
+{
+    qint64 pid = 0;
+    QString host;
+    QString application;
+    if (!lock.getLockInfo(&pid, &host, &application)) {
+        return {};
+    }
+    QStringList parts;
+    if (!application.isEmpty()) {
+        parts << application;
+    }
+    if (!host.isEmpty()) {
+        parts << QStringLiteral("on ") + host;
+    }
+    if (pid != 0) {
+        parts << QStringLiteral("(process ") + QString::number(pid) + QLatin1Char(')');
+    }
+    return parts.join(QLatin1Char(' ')).toStdString();
 }
 
 core::LoadResult loadFailure(core::LoadStatus status, std::string path, std::string message)
@@ -97,7 +136,83 @@ const std::string& JsonAnnotationRepository::workspaceRoot() const
 
 void JsonAnnotationRepository::setWorkspaceRoot(std::string workspaceRoot)
 {
+    // The lock belongs to a path under the OLD root, so it cannot survive a
+    // re-root: keeping it would leave a lock file nothing will ever release and
+    // leave the new root unlocked while this instance believed otherwise. The
+    // caller re-acquires through beginSlide(), which a workspace switch always
+    // calls after repointing.
+    unlock();
     m_workspaceRoot = std::move(workspaceRoot);
+}
+
+
+core::LockResult JsonAnnotationRepository::lock(const core::AnnotationKey& key)
+{
+    // One lock at a time: a second call replaces the first rather than leaking
+    // a file nothing will release. The interface promises this; here is where
+    // it is kept.
+    unlock();
+
+    core::LockResult result;
+    // Qt's own convention: the guarded file's name plus ".lock", so the two
+    // sort together and anyone looking in the folder can see what is held.
+    result.path = pathFor(key) + ".lock";
+
+    if (!isSafeKey(key.slideId, key.sceneIndex)) {
+        result.status = core::LockStatus::Unavailable;
+        result.message = "The slide identifier is not usable as a file name.";
+        return result;
+    }
+
+    // A lock file cannot live in a folder that does not exist, and the scene
+    // most worth locking is the one nobody has annotated yet. If the folder
+    // cannot be made, say Unavailable and let the caller carry on: the save
+    // will fail later for the same reason and that path reports itself.
+    const QString directory = annotationsDirectory(m_workspaceRoot);
+    if (!QDir().mkpath(directory)) {
+        result.status = core::LockStatus::Unavailable;
+        result.message = "The annotation folder could not be created.";
+        return result;
+    }
+
+    auto candidate = std::make_unique<QLockFile>(QString::fromStdString(result.path));
+    // Qt treats a lock as stale either when its process is gone -- which it can
+    // check directly when the lock names THIS host -- or when the file is older
+    // than this. The first case is the one that matters after a crash and is
+    // immediate whatever this value is. The second is the only answer available
+    // for a lock taken on another machine over a share, where no process can be
+    // interrogated, so it is set long: stealing a live colleague's lock is the
+    // failure this whole feature exists to prevent, and a lock left by a remote
+    // crash is a nuisance the user can resolve by deleting the file.
+    candidate->setStaleLockTime(kStaleLockMilliseconds);
+    // Non-blocking by construction. This runs on the UI thread during a slide
+    // open; a blocking acquire would freeze the application for as long as
+    // somebody else kept the slide open.
+    if (candidate->tryLock(0)) {
+        m_lock = std::move(candidate);
+        result.status = core::LockStatus::Acquired;
+        return result;
+    }
+
+    if (candidate->error() == QLockFile::LockFailedError) {
+        result.status = core::LockStatus::HeldByOther;
+        result.holder = describeHolder(*candidate);
+        return result;
+    }
+
+    // PermissionError, or no lock support on this filesystem. Not a refusal to
+    // work: this application ran without any locking at all until today.
+    result.status = core::LockStatus::Unavailable;
+    result.message = "The annotation folder does not allow locking.";
+    return result;
+}
+
+void JsonAnnotationRepository::unlock()
+{
+    // ~QLockFile unlocks and removes the file. Resetting is the whole operation;
+    // it is a no-op when nothing is held, which is what lets every path out call
+    // it without asking first.
+    m_lock.reset();
 }
 
 std::string JsonAnnotationRepository::pathFor(const core::AnnotationKey& key) const

@@ -78,6 +78,8 @@ void AnnotationPersistenceService::beginSlide(const core::AnnotationKey& key,
     m_provenance = provenance;
     m_createdAt = std::chrono::system_clock::now();
     m_dirty = false;
+    m_lockedByAnother = false;
+    m_lockHolder.clear();
     m_lastMutation = std::chrono::steady_clock::now();
     m_lastSave = m_lastMutation;
 
@@ -91,6 +93,18 @@ void AnnotationPersistenceService::beginSlide(const core::AnnotationKey& key,
         return;
     }
 
+    // FR-ANN-32, and BEFORE the load: the lock is about the key, not about what
+    // turned out to be in the file, and taking it first narrows the window in
+    // which two instances both believe they may write. Losing it is never a
+    // reason to refuse to SHOW the annotations -- a reader opening a slide a
+    // colleague is annotating should see what is there.
+    const core::LockResult lockResult = m_repository.lock(key);
+    m_lockedByAnother = lockResult.status == core::LockStatus::HeldByOther;
+    if (m_lockedByAnother) {
+        m_lockHolder = QString::fromStdString(lockResult.holder);
+        emit lockedByAnother(QString::fromStdString(lockResult.path), m_lockHolder);
+    }
+
     const core::LoadResult loaded = m_repository.load(key);
 
     switch (loaded.status) {
@@ -98,7 +112,10 @@ void AnnotationPersistenceService::beginSlide(const core::AnnotationKey& key,
         m_loading = true;
         m_model.replaceAll({});
         m_loading = false;
-        setActive(true);
+        // A scene nobody has annotated is the one the lock matters MOST for:
+        // two instances would otherwise both start from empty and whichever
+        // saved second would silently erase the other's work.
+        setActive(!m_lockedByAnother);
         return;
 
     case core::LoadStatus::Unreadable:
@@ -159,7 +176,10 @@ void AnnotationPersistenceService::beginSlide(const core::AnnotationKey& key,
         m_dirty = true;
         m_lastMutation = std::chrono::steady_clock::now();
     }
-    setActive(writable);
+    // The lock has the last word over every other route to writable, including
+    // a mismatch the user resolved as Reassociate: that choice says which slide
+    // the annotations belong to, not who may write the file.
+    setActive(writable && !m_lockedByAnother);
 }
 
 core::SaveResult AnnotationPersistenceService::flush()
@@ -245,6 +265,11 @@ core::SaveResult AnnotationPersistenceService::endSlide()
     m_key = core::AnnotationKey{};
     m_provenance = core::SlideProvenance{};
     m_dirty = false;
+    // Cleared with the rest of the per-slide state: with nothing open, nobody
+    // is holding anything against us, and a stale true would make the next
+    // read-only slide report the wrong reason.
+    m_lockedByAnother = false;
+    m_lockHolder.clear();
     setActive(false);
     return result;
 }
@@ -257,6 +282,17 @@ bool AnnotationPersistenceService::isDirty() const
 bool AnnotationPersistenceService::isActive() const
 {
     return m_active;
+}
+
+
+bool AnnotationPersistenceService::isLockedByAnother() const
+{
+    return m_lockedByAnother;
+}
+
+QString AnnotationPersistenceService::lockHolder() const
+{
+    return m_lockHolder;
 }
 
 std::chrono::system_clock::time_point AnnotationPersistenceService::documentCreatedAt() const
@@ -301,6 +337,15 @@ void AnnotationPersistenceService::onAutosaveTick()
 
 void AnnotationPersistenceService::setActive(bool active)
 {
+    if (!active) {
+        // The advisory lock is held EXACTLY while this service may write, and
+        // this is the one place that is made true rather than remembered at
+        // each of the half-dozen sites that turn writing off. Released before
+        // the early return below, because a service that is already inactive
+        // may still be holding a lock it took moments ago -- beginSlide takes
+        // the lock and then decides, and the decision can be no.
+        m_repository.unlock();
+    }
     if (m_active == active) {
         return;
     }

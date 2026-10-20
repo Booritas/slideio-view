@@ -65,10 +65,30 @@ public:
         return result;
     }
 
+    /// The switch is about roots, not about contention, so this fake always
+    /// grants the lock and only counts the calls -- which is enough to assert
+    /// that a re-root releases before it re-acquires.
+    core::LockResult lock(const core::AnnotationKey& key) override
+    {
+        lockCount++;
+        core::LockResult result;
+        result.status = core::LockStatus::Acquired;
+        result.path = pathFor(key) + ".lock";
+        return result;
+    }
+
+    void unlock() override
+    {
+        unlockCount++;
+    }
+
     [[nodiscard]] std::string pathFor(const core::AnnotationKey& key) const override
     {
         return root + "/annotations/" + keyText(key) + ".annotations.json";
     }
+
+    int lockCount = 0;
+    int unlockCount = 0;
 
     [[nodiscard]] static std::string keyText(const core::AnnotationKey& key)
     {

@@ -73,6 +73,34 @@ struct SaveResult
     std::string path;
 };
 
+enum class LockStatus
+{
+    /// This process now holds it, and must release it.
+    Acquired,
+    /// Another process holds it. Its annotations may be shown; none may be
+    /// written.
+    HeldByOther,
+    /// No lock could be taken -- the folder is missing, not writable, or the
+    /// filesystem does not support it. Deliberately NOT a refusal to edit: an
+    /// advisory lock is cooperative, and a workspace that cannot hold one is
+    /// exactly the state this application has always worked in. A folder that
+    /// refuses a lock file will refuse the save too, and that path already
+    /// reports itself.
+    Unavailable,
+};
+
+struct LockResult
+{
+    LockStatus status = LockStatus::Unavailable;
+    /// The lock file, whether or not it was taken.
+    std::string path;
+    /// Who holds it, when HeldByOther and the lock could be read: a program,
+    /// a host and a process id. Empty when the holder could not be identified,
+    /// which is a normal outcome on a share.
+    std::string holder;
+    std::string message;
+};
+
 /// Reads and writes annotation documents. Implemented by
 /// infra::JsonAnnotationRepository.
 ///
@@ -91,6 +119,21 @@ public:
 
     virtual LoadResult load(const AnnotationKey& key) = 0;
     virtual SaveResult save(const AnnotationDocument& document) = 0;
+
+    /// Takes the advisory lock on `key`'s file, for FR-ANN-32.
+    ///
+    /// At most ONE lock is held at a time, because at most one scene is open.
+    /// A second lock() replaces the first, and every implementation must make
+    /// that true rather than leaking the old one.
+    ///
+    /// Advisory means cooperative: it stops two copies of THIS application
+    /// overwriting each other, and stops nothing else. Returning Unavailable is
+    /// not a refusal to work -- see LockStatus.
+    virtual LockResult lock(const AnnotationKey& key) = 0;
+
+    /// Releases whatever lock() took. A no-op when nothing is held, so it is
+    /// safe to call on every path out, and must be.
+    virtual void unlock() = 0;
 
     /// Where `key` lives, whether or not anything is there. Exists so an error
     /// message can name a real path without the caller rebuilding the naming rule.

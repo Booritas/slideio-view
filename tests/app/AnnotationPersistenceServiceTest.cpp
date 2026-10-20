@@ -33,6 +33,21 @@ public:
         return nextSave;
     }
 
+    core::LockResult lock(const core::AnnotationKey& key) override
+    {
+        lockCount++;
+        lastLockedKey = key;
+        if (nextLock.path.empty()) {
+            nextLock.path = pathFor(key) + ".lock";
+        }
+        return nextLock;
+    }
+
+    void unlock() override
+    {
+        unlockCount++;
+    }
+
     [[nodiscard]] std::string pathFor(const core::AnnotationKey& key) const override
     {
         return "/fake/" + key.slideId + ".s" + std::to_string(key.sceneIndex) + ".json";
@@ -40,10 +55,14 @@ public:
 
     int loadCount = 0;
     int saveCount = 0;
+    int lockCount = 0;
+    int unlockCount = 0;
     core::AnnotationKey lastLoadedKey;
     core::AnnotationDocument lastSaved;
     core::LoadResult nextLoad;
     core::SaveResult nextSave{core::SaveStatus::Saved, {}, "/fake/path"};
+    core::AnnotationKey lastLockedKey;
+    core::LockResult nextLock{core::LockStatus::Acquired, {}, {}, {}};
 };
 
 core::SlideProvenance provenance()
@@ -686,4 +705,168 @@ TEST_CASE("a resolver that always retries cannot wedge the close",
 
     REQUIRE(asked == 5);
     REQUIRE_FALSE(service.isActive());
+}
+
+TEST_CASE("a scene held by another instance is shown but not writable",
+          "[app][AnnotationPersistenceService]")
+{
+    // FR-ANN-32. Losing the lock is never a reason to refuse to SHOW the
+    // annotations: a reader opening a slide a colleague is annotating should
+    // see what is there.
+    FakeRepository repository;
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+
+    repository.nextLock = {core::LockStatus::HeldByOther, "/fake/x.lock", "viewer on PC2 (process 42)", {}};
+    repository.nextLoad = loadedWith("slide-1", 0, {rectangle("a1")});
+
+    service.beginSlide({"slide-1", 0}, provenance());
+
+    REQUIRE_FALSE(service.isActive());
+    REQUIRE(service.isLockedByAnother());
+    REQUIRE(service.lockHolder() == QString("viewer on PC2 (process 42)"));
+    REQUIRE_FALSE(model.annotations().empty());
+}
+
+TEST_CASE("a held lock stops an unannotated scene from being written",
+          "[app][AnnotationPersistenceService]")
+{
+    // The case the lock matters MOST for: with no file yet, two instances both
+    // start from empty and whichever saves second erases the other's work.
+    FakeRepository repository;
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+
+    repository.nextLock = {core::LockStatus::HeldByOther, "/fake/x.lock", {}, {}};
+    repository.nextLoad.status = core::LoadStatus::NotFound;
+
+    service.beginSlide({"slide-1", 0}, provenance());
+
+    REQUIRE_FALSE(service.isActive());
+    REQUIRE(service.isLockedByAnother());
+}
+
+TEST_CASE("a lock that could not be taken at all does not stop editing",
+          "[app][AnnotationPersistenceService]")
+{
+    // Advisory means cooperative. A workspace that cannot hold a lock file is
+    // exactly the state this application worked in until today, and refusing to
+    // edit there would be a regression dressed as a safety feature.
+    FakeRepository repository;
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+
+    repository.nextLock = {core::LockStatus::Unavailable, "/fake/x.lock", {}, "no locking here"};
+    repository.nextLoad.status = core::LoadStatus::NotFound;
+
+    service.beginSlide({"slide-1", 0}, provenance());
+
+    REQUIRE(service.isActive());
+    REQUIRE_FALSE(service.isLockedByAnother());
+}
+
+TEST_CASE("the lock is taken for the key that was opened",
+          "[app][AnnotationPersistenceService]")
+{
+    // Both halves: annotations are keyed by (slide, scene), and a lock on the
+    // slide alone would lock a colleague out of every other scene of it.
+    FakeRepository repository;
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+    repository.nextLoad.status = core::LoadStatus::NotFound;
+
+    service.beginSlide({"slide-7", 3}, provenance());
+
+    REQUIRE(repository.lockCount == 1);
+    REQUIRE(repository.lastLockedKey.slideId == "slide-7");
+    REQUIRE(repository.lastLockedKey.sceneIndex == 3);
+}
+
+TEST_CASE("closing a slide gives the lock up", "[app][AnnotationPersistenceService]")
+{
+    FakeRepository repository;
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+    repository.nextLoad.status = core::LoadStatus::NotFound;
+
+    service.beginSlide({"slide-1", 0}, provenance());
+    const int beforeClose = repository.unlockCount;
+    service.endSlide();
+
+    REQUIRE(repository.unlockCount > beforeClose);
+    REQUIRE_FALSE(service.isActive());
+}
+
+TEST_CASE("an unidentifiable slide never takes a lock", "[app][AnnotationPersistenceService]")
+{
+    // computeSlideId gives every unidentifiable file the same id, so locking on
+    // it would have one such slide lock out every other one.
+    FakeRepository repository;
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+
+    service.beginSlide({"", 0}, provenance());
+
+    REQUIRE(repository.lockCount == 0);
+    REQUIRE_FALSE(service.isActive());
+}
+
+TEST_CASE("a file that could not be read gives the lock back",
+          "[app][AnnotationPersistenceService]")
+{
+    // The lock is held exactly while the service may write. Holding one while
+    // read-only would lock out another instance that could repair the file.
+    FakeRepository repository;
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+
+    repository.nextLoad.status = core::LoadStatus::Malformed;
+    repository.nextLoad.message = "unexpected token";
+
+    service.beginSlide({"slide-1", 0}, provenance());
+
+    REQUIRE(repository.lockCount == 1);
+    REQUIRE(repository.unlockCount >= 1);
+    REQUIRE_FALSE(service.isActive());
+    // And not reported as contention: nobody else holds it.
+    REQUIRE_FALSE(service.isLockedByAnother());
+}
+
+TEST_CASE("the lock state is cleared when the slide closes",
+          "[app][AnnotationPersistenceService]")
+{
+    // A stale true would make the next read-only slide report the wrong reason.
+    FakeRepository repository;
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+
+    repository.nextLock = {core::LockStatus::HeldByOther, "/fake/x.lock", "someone", {}};
+    repository.nextLoad.status = core::LoadStatus::NotFound;
+    service.beginSlide({"slide-1", 0}, provenance());
+    REQUIRE(service.isLockedByAnother());
+
+    service.endSlide();
+
+    REQUIRE_FALSE(service.isLockedByAnother());
+    REQUIRE(service.lockHolder().isEmpty());
+}
+
+TEST_CASE("a locked-out slide saves nothing even when edited",
+          "[app][AnnotationPersistenceService]")
+{
+    // The whole point: the model can still be changed in memory, and none of it
+    // may reach the file the other instance is writing.
+    FakeRepository repository;
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+
+    repository.nextLock = {core::LockStatus::HeldByOther, "/fake/x.lock", {}, {}};
+    repository.nextLoad.status = core::LoadStatus::NotFound;
+    service.beginSlide({"slide-1", 0}, provenance());
+
+    model.add(core::RectangleGeometry{core::PointF{0.0, 0.0}, core::PointF{10.0, 10.0}});
+    const core::SaveResult result = service.flush();
+
+    REQUIRE(result.status == core::SaveStatus::NothingToDo);
+    REQUIRE(repository.saveCount == 0);
 }

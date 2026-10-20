@@ -304,3 +304,165 @@ TEST_CASE("a refused save leaves the previous file untouched",
     REQUIRE(reloaded.document.annotations.size() == 1);
     REQUIRE(reloaded.document.annotations.front().id() == "a1");
 }
+
+TEST_CASE("a lock is taken beside the file it guards", "[infra][JsonAnnotationRepository]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    JsonAnnotationRepository repository(dir.path().toStdString());
+
+    const LockResult result = repository.lock({"a3f8c2e1b4d50697", 0});
+
+    REQUIRE(result.status == LockStatus::Acquired);
+    // Qt's own convention, so the two sort together and anyone looking in the
+    // folder can see what is held.
+    REQUIRE(result.path == repository.pathFor({"a3f8c2e1b4d50697", 0}) + ".lock");
+    REQUIRE(QFileInfo::exists(QString::fromStdString(result.path)));
+}
+
+TEST_CASE("locking creates the annotation folder", "[infra][JsonAnnotationRepository]")
+{
+    // The scene most worth locking is the one nobody has annotated yet, where
+    // two instances would both start from empty and the second would overwrite
+    // the first. A lock file cannot live in a folder that does not exist, so
+    // this is the one place other than a save that creates it.
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const QString annotations = dir.path() + "/annotations";
+    REQUIRE_FALSE(QFileInfo::exists(annotations));
+
+    JsonAnnotationRepository repository(dir.path().toStdString());
+    REQUIRE(repository.lock({"a3f8c2e1b4d50697", 0}).status == LockStatus::Acquired);
+
+    REQUIRE(QFileInfo::exists(annotations));
+}
+
+TEST_CASE("a second holder of the same key is refused and named",
+          "[infra][JsonAnnotationRepository]")
+{
+    // Two repositories on one workspace stand in for two instances of the
+    // application. QLockFile cannot tell a second lock in this process from one
+    // in another, which is exactly what makes this testable at all.
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    JsonAnnotationRepository first(dir.path().toStdString());
+    JsonAnnotationRepository second(dir.path().toStdString());
+
+    REQUIRE(first.lock({"a3f8c2e1b4d50697", 0}).status == LockStatus::Acquired);
+    const LockResult blocked = second.lock({"a3f8c2e1b4d50697", 0});
+
+    REQUIRE(blocked.status == LockStatus::HeldByOther);
+    // The holder is this very process, so the text must at least carry its id:
+    // a refusal that cannot say who holds it leaves the user with nothing to do.
+    REQUIRE_FALSE(blocked.holder.empty());
+}
+
+TEST_CASE("two scenes of one slide lock independently", "[infra][JsonAnnotationRepository]")
+{
+    // Annotations are keyed by (slide, scene) because a scene has its own
+    // coordinate space, and the lock has to be keyed the same way or opening
+    // scene 1 would lock a colleague out of scene 0.
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    JsonAnnotationRepository first(dir.path().toStdString());
+    JsonAnnotationRepository second(dir.path().toStdString());
+
+    REQUIRE(first.lock({"a3f8c2e1b4d50697", 0}).status == LockStatus::Acquired);
+    REQUIRE(second.lock({"a3f8c2e1b4d50697", 1}).status == LockStatus::Acquired);
+}
+
+TEST_CASE("unlocking releases it for the next holder", "[infra][JsonAnnotationRepository]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    JsonAnnotationRepository first(dir.path().toStdString());
+    JsonAnnotationRepository second(dir.path().toStdString());
+
+    const LockResult held = first.lock({"a3f8c2e1b4d50697", 0});
+    REQUIRE(held.status == LockStatus::Acquired);
+    REQUIRE(second.lock({"a3f8c2e1b4d50697", 0}).status == LockStatus::HeldByOther);
+
+    first.unlock();
+
+    REQUIRE_FALSE(QFileInfo::exists(QString::fromStdString(held.path)));
+    REQUIRE(second.lock({"a3f8c2e1b4d50697", 0}).status == LockStatus::Acquired);
+}
+
+TEST_CASE("unlock with nothing held does nothing", "[infra][JsonAnnotationRepository]")
+{
+    // Every path out of the service calls it without asking first, which is
+    // only safe because of this.
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    JsonAnnotationRepository repository(dir.path().toStdString());
+
+    repository.unlock();
+    repository.unlock();
+
+    REQUIRE(repository.lock({"a3f8c2e1b4d50697", 0}).status == LockStatus::Acquired);
+}
+
+TEST_CASE("a second lock replaces the first rather than leaking it",
+          "[infra][JsonAnnotationRepository]")
+{
+    // One scene is open at a time, so one lock is held at a time. Without this
+    // the first scene's lock file would survive with nothing left to release it.
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    JsonAnnotationRepository repository(dir.path().toStdString());
+
+    const LockResult first = repository.lock({"a3f8c2e1b4d50697", 0});
+    REQUIRE(first.status == LockStatus::Acquired);
+    REQUIRE(repository.lock({"a3f8c2e1b4d50697", 1}).status == LockStatus::Acquired);
+
+    REQUIRE_FALSE(QFileInfo::exists(QString::fromStdString(first.path)));
+}
+
+TEST_CASE("re-rooting the workspace gives the old root's lock up",
+          "[infra][JsonAnnotationRepository]")
+{
+    // The lock names a path under the OLD root. Keeping it would leave a file
+    // nothing will ever release, and leave the new root unlocked while this
+    // instance believed otherwise.
+    QTemporaryDir first;
+    QTemporaryDir second;
+    REQUIRE(first.isValid());
+    REQUIRE(second.isValid());
+    JsonAnnotationRepository repository(first.path().toStdString());
+
+    const LockResult held = repository.lock({"a3f8c2e1b4d50697", 0});
+    REQUIRE(held.status == LockStatus::Acquired);
+
+    repository.setWorkspaceRoot(second.path().toStdString());
+
+    REQUIRE_FALSE(QFileInfo::exists(QString::fromStdString(held.path)));
+}
+
+TEST_CASE("destroying the repository releases its lock", "[infra][JsonAnnotationRepository]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    std::string path;
+    {
+        JsonAnnotationRepository owner(dir.path().toStdString());
+        path = owner.lock({"a3f8c2e1b4d50697", 0}).path;
+        REQUIRE(QFileInfo::exists(QString::fromStdString(path)));
+    }
+
+    REQUIRE_FALSE(QFileInfo::exists(QString::fromStdString(path)));
+}
+
+TEST_CASE("an unusable slide id is refused rather than locked",
+          "[infra][JsonAnnotationRepository]")
+{
+    // The same guard load() and save() apply: a slide id becomes a path
+    // component, and save() takes its id from a hand-editable file.
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    JsonAnnotationRepository repository(dir.path().toStdString());
+
+    const LockResult result = repository.lock({"../../escape", 0});
+
+    REQUIRE(result.status == LockStatus::Unavailable);
+    REQUIRE_FALSE(result.message.empty());
+}
