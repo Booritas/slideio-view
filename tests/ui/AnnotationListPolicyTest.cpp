@@ -656,3 +656,38 @@ TEST_CASE("categoryTally counts a non-ASCII category typed in two cases as one r
     REQUIRE(rows.size() == 1);
     REQUIRE(rows.front().count == 2);
 }
+
+TEST_CASE("categoryRenameScope lets a rename through with no slide open",
+          "[ui][AnnotationListPolicy]")
+{
+    // Entry 67. The category list is a global preference, so with nothing open
+    // the rename edits that preference and retags nothing. It used to report
+    // "These annotations are open read-only and cannot be changed", which named
+    // a slide and annotations the user did not have -- because the gate asked
+    // AnnotationPersistenceService::isActive(), false for both states.
+    REQUIRE(ui::categoryRenameScope(false, false) == ui::CategoryRenameScope::VocabularyOnly);
+}
+
+TEST_CASE("categoryRenameScope ignores editability when nothing is open",
+          "[ui][AnnotationListPolicy]")
+{
+    // The second argument means nothing without a slide, and must not be able
+    // to turn the preference edit into a refusal whichever way it is reported.
+    REQUIRE(ui::categoryRenameScope(false, true) == ui::CategoryRenameScope::VocabularyOnly);
+}
+
+TEST_CASE("categoryRenameScope refuses a rename on a read-only slide",
+          "[ui][AnnotationListPolicy]")
+{
+    // Renaming the vocabulary alone here would leave the annotations on screen
+    // carrying the old word: the tally would show the new name at zero beside
+    // an unconfigured row holding the real count, and the vocabulary being
+    // global, that split would follow the user to every other slide.
+    REQUIRE(ui::categoryRenameScope(true, false) == ui::CategoryRenameScope::Refused);
+}
+
+TEST_CASE("categoryRenameScope retags when a slide is open and editable",
+          "[ui][AnnotationListPolicy]")
+{
+    REQUIRE(ui::categoryRenameScope(true, true) == ui::CategoryRenameScope::VocabularyAndAnnotations);
+}

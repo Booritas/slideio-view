@@ -126,4 +126,38 @@ struct CategoryTallyRow
 /// Over an open popup the wheel scrolls the list and commits nothing.
 [[nodiscard]] bool countingComboSwallowsWheel(bool popupVisible);
 
+/// How much of a category rename may go through, given what is open.
+enum class CategoryRenameScope
+{
+    /// A slide is open and its annotations cannot be changed. Nothing happens:
+    /// renaming the vocabulary alone would leave the annotations on screen
+    /// carrying the old word, so the tally would show the new name with a count
+    /// of zero beside an unconfigured row holding the real count -- and the
+    /// vocabulary is global, so that damage would follow the user to every
+    /// other slide.
+    Refused,
+    /// No slide is open: rename the list entry, retag nothing. There is nothing
+    /// to retag and nothing to record on the undo stack.
+    VocabularyOnly,
+    /// The ordinary case: retag the matching annotations as one undoable step,
+    /// then rename the list entry.
+    VocabularyAndAnnotations,
+};
+
+/// Whether a rename of a counting category may proceed.
+///
+/// The category list is a GLOBAL preference, shared by every slide and
+/// deliberately off the per-slide undo stack, so renaming an entry with nothing
+/// open is a legitimate edit of a preference rather than an edit of a slide.
+/// MainWindow used to ask AnnotationPersistenceService::isActive() alone, which
+/// is false both for a slide whose annotation file could not be parsed AND for
+/// no slide at all -- so renaming a category on an empty viewer answered "These
+/// annotations are open read-only and cannot be changed", naming annotations
+/// and a slide that were not there. Remove from list, which is vocabulary-only
+/// by construction, has never been gated at all; the asymmetry was the tell.
+///
+/// `annotationsEditable` is only consulted when a slide is open, which is the
+/// only time it means anything.
+[[nodiscard]] CategoryRenameScope categoryRenameScope(bool slideOpen, bool annotationsEditable);
+
 } // namespace slideio::viewer::ui

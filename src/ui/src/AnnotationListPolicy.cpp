@@ -230,6 +230,7 @@ std::vector<CategoryTallyRow> categoryTally(const std::vector<core::Annotation>&
     }
     return rows;
 }
+
 bool countingComboSwallowsKey(int key, bool popupVisible)
 {
     if (popupVisible) {
@@ -249,6 +250,15 @@ bool countingComboSwallowsKey(int key, bool popupVisible)
 bool countingComboSwallowsWheel(bool popupVisible)
 {
     return !popupVisible;
+}
+
+CategoryRenameScope categoryRenameScope(bool slideOpen, bool annotationsEditable)
+{
+    if (!slideOpen) {
+        return CategoryRenameScope::VocabularyOnly;
+    }
+    return annotationsEditable ? CategoryRenameScope::VocabularyAndAnnotations
+                               : CategoryRenameScope::Refused;
 }
 
 } // namespace slideio::viewer::ui

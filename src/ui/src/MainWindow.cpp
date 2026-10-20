@@ -14,6 +14,7 @@
 #include "slideio/viewer/ui/AboutDialog.h"
 #include "slideio/viewer/ui/AnnotationInteraction.h"
 #include "slideio/viewer/ui/AnnotationListPanel.h"
+#include "slideio/viewer/ui/AnnotationListPolicy.h"
 #include "slideio/viewer/ui/AnnotationPropertiesPanel.h"
 #include "slideio/viewer/ui/AnnotationShapeName.h"
 #include "slideio/viewer/ui/AnnotationSettings.h"
@@ -2040,12 +2041,27 @@ MainWindow::MainWindow(QWidget* parent)
 
     connect(m_impl->annotationListPanel, &AnnotationListPanel::renameCategoryRequested, this,
             [this](const std::string& from) {
-                if (m_impl->annotationPersistence != nullptr && !m_impl->annotationPersistence->isActive()) {
+                // The scope, not a plain refusal: isActive() is false for a
+                // slide whose annotation file could not be parsed AND for no
+                // slide at all, so asking it alone told a user with an empty
+                // viewer that "these annotations" were open read-only. The
+                // category list is a global preference, so with nothing open
+                // the rename is an edit of that preference and goes through,
+                // retagging nothing -- which is what Remove from list, right
+                // beside it in the same menu, has always done.
+                const bool slideOpen =
+                    m_impl->viewportWidget != nullptr && m_impl->viewportWidget->isSlideOpen();
+                const bool editable = m_impl->annotationPersistence == nullptr
+                    || m_impl->annotationPersistence->isActive();
+                const CategoryRenameScope scope = categoryRenameScope(slideOpen, editable);
+                if (scope == CategoryRenameScope::Refused) {
                     m_impl->statusBarManager->showTransientMessage(
                         tr("These annotations are open read-only and cannot be changed."));
                     return;
                 }
-                if (m_impl->undoStack == nullptr) {
+                // Only the retag needs the stack; renaming the vocabulary does
+                // not, and with no slide open there is nothing to record.
+                if (scope == CategoryRenameScope::VocabularyAndAnnotations && m_impl->undoStack == nullptr) {
                     return;
                 }
                 bool accepted = false;
@@ -2116,9 +2132,14 @@ MainWindow::MainWindow(QWidget* parent)
                     m_impl->annotationListPanel->setCurrentCategory(target);
                 }
                 if (!retagged) {
+                    // Two different facts, and the old wording stated the wrong
+                    // one with nothing open: "no annotation on this slide"
+                    // names a slide the user does not have.
                     m_impl->statusBarManager->showTransientMessage(
-                        tr("No annotation on this slide carries \"%1\"; the list entry was renamed.")
-                            .arg(QString::fromStdString(from)));
+                        slideOpen
+                            ? tr("No annotation on this slide carries \"%1\"; the list entry was renamed.")
+                                  .arg(QString::fromStdString(from))
+                            : tr("No slide is open; the list entry was renamed."));
                 }
             });
 

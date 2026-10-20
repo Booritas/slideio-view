@@ -1,10 +1,16 @@
 # Deferred minor findings — recovered index
 
 Status: recovered 2026-10-19 from the session transcript, split into seven
-batches and all seven worked by 2026-10-20: **117 of 117 triaged, 26 fixed, 23
+batches and all seven worked by 2026-10-20: **117 of 117 triaged, 27 fixed, 23
 stems unusable.** The full text of these findings is lost -- what is here is
 each one's opening clause, enough to identify it and re-derive it against the
 code, and nothing more.
+
+The sweep's own claim of 117 triaged was one short until 2026-10-20: entry 66
+carried no verdict at all, and no count caught it because the tally was kept by
+hand. `awk '/^[0-9]+\. /{ if ($0 !~ /\*\*\[/) print }'` over this file is the
+check that found it, and it is the one to re-run before claiming this index is
+complete.
 
 ## Why this file exists, and what went wrong
 
@@ -480,6 +486,43 @@ comparison fails, not a decision. The guarantee that matters is the
 serializer's `isFinitePoint`, which refuses NaN on read and on write, and that
 is tested.
 
+### Entry 67, and the one entry the sweep missed (2026-10-20)
+
+Entry 67 was left live by the sweep because it needed a decision rather than a
+repair. The gate on Rename... asked
+`annotationPersistence->isActive()`, which is false for a slide whose
+annotation file could not be parsed AND for no slide at all, so renaming a
+category on an empty viewer answered "These annotations are open read-only and
+cannot be changed" -- naming a slide and annotations the user did not have.
+
+The decision: **the two states are not the same refusal, and one of them is not
+a refusal at all.** The category list is a global preference, deliberately off
+the per-slide undo stack, so with nothing open a rename edits a preference and
+has nothing to retag. Remove from list, directly beside it in the same context
+menu, has never been gated at all -- that asymmetry is what showed the gate was
+in the wrong place rather than merely wrongly worded.
+
+With a slide open that refuses the retag, the refusal stands and is now
+deliberate (entry 66, which the sweep had left with no verdict at all).
+Renaming the vocabulary half alone there would leave the annotations on screen
+carrying the old word: the tally would show the new name at zero beside an
+unconfigured row holding the real count, and the list being global, that split
+would follow the user to every other slide.
+
+`ui::categoryRenameScope(slideOpen, annotationsEditable)` is the rule, returning
+`Refused`, `VocabularyOnly` or `VocabularyAndAnnotations` -- in ui policy rather
+than in the connect lambda, for the usual reason: no test binary creates a
+`QApplication`, so a rule inside `MainWindow` is a rule nothing will ever check.
+Four tests. The undo-stack guard moved with it, since only the retag needs a
+stack. The trailing message splits too: "No slide is open; the list entry was
+renamed" rather than the per-slide wording.
+
+Entry 66 also says something about the sweep itself. The index claimed 117 of
+117 triaged while one entry carried no verdict, because the tally was kept by
+hand and nothing checked it. The check is one line --
+`awk '/^[0-9]+\. /{ if ($0 !~ /\*\*\[/) print }'` -- and it belongs at the top
+of this file, not in a session that has already ended.
+
 ## The findings
 
 1. #10 moveOriginalGeometry's unguarded `if (picked)` could **[CLOSED - the else branch resets moveOriginal, ViewportWidget.cpp:4675, so a capture from an earlier drag cannot be restored onto this annotation]**
@@ -547,8 +590,8 @@ is tested.
 63. ragged comment line-wrapping left by the edits **[NOT ACTIONABLE as an entry - it names no site. Treated as a standing rule instead: reflow what an edit leaves ragged, which these batches have done as they went]**
 64. rebuild() runs on every annotationChanged. If a move-drag **[FIXED 2026-10-20 - setGeometry emits a separate annotationGeometryChanged; the list panel does not connect it, the viewport, properties panel and persistence service do]**
 65. rectangles are not clamped to the slide extent. Recorded as **[LIVE, ACCEPTED 2026-10-19 - no clamp exists. A trace running off the tissue edge is a real gesture and the slide extent is not a clinical boundary; clamping would move a vertex the user placed]**
-66. rename is refused entirely on a read-only slide including the
-67. rename with no slide open reports **[LIVE 2026-10-20 - confirmed. The gate asks annotationPersistence->isActive(), which is false both for a read-only slide and for no slide at all, so renaming a category with nothing open reports "open read-only". Needs a decision, not just a message: the category list is a global preference, so the vocabulary rename is arguably valid with no slide open]**
+66. rename is refused entirely on a read-only slide including the **[LIVE, ACCEPTED 2026-10-20 - and the one entry of the 117 that the sweep left with no annotation at all, found by grepping for lines carrying no verdict. The refusal is now deliberate and named: ui::CategoryRenameScope::Refused. Renaming the vocabulary half alone on a read-only slide would leave the annotations on screen carrying the old word, so the tally would show the new name at zero beside an unconfigured row holding the real count - and the list is a GLOBAL preference, so that split would follow the user to every other slide. The vocabulary-only rename is right with NOTHING open (67), not with a slide open that refuses the retag]**
+67. rename with no slide open reports **[FIXED 2026-10-20 - ui::categoryRenameScope(slideOpen, annotationsEditable) decides, and MainWindow asks it instead of asking isActive() alone. With no slide open the rename goes through as a vocabulary-only edit, retagging nothing and recording no undo step, which is what Remove from list - beside it in the same menu, never gated - has always done. The trailing message splits too: "No slide is open; the list entry was renamed" rather than naming a slide the user does not have. Four tests]**
 68. resizableBoxGeometry computes boundingBox before the **[STILL LIVE - ViewportWidget.cpp:1641 vs :1645]**
 69. setAnnotationModel(nullptr) on an already-null model returns **[CLOSED - benign: both are null, so there is nothing to disconnect and nothing to clear; the panel is already showing nothing]**
 70. snprintf buffer truncation rather than overrun for extreme **[FIXED 2026-10-19 - kNumberBufferSize is 352, enough for %.0f of DBL_MAX; see 104]**
