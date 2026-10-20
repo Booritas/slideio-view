@@ -517,6 +517,12 @@ Four tests. The undo-stack guard moved with it, since only the retag needs a
 stack. The trailing message splits too: "No slide is open; the list entry was
 renamed" rather than the per-slide wording.
 
+The rule is tested; the wiring that asks it is not, and cannot be. So this was
+run by hand against the built viewer on 2026-10-20 and passed, and it went into
+group AC of the counting spec as **AC31** rather than being reported once and
+forgotten -- a manual check that lives only in a session is a check nobody will
+ever run again.
+
 Entry 66 also says something about the sweep itself. The index claimed 117 of
 117 triaged while one entry carried no verdict, because the tally was kept by
 hand and nothing checked it. The check is one line --
@@ -591,7 +597,7 @@ of this file, not in a session that has already ended.
 64. rebuild() runs on every annotationChanged. If a move-drag **[FIXED 2026-10-20 - setGeometry emits a separate annotationGeometryChanged; the list panel does not connect it, the viewport, properties panel and persistence service do]**
 65. rectangles are not clamped to the slide extent. Recorded as **[LIVE, ACCEPTED 2026-10-19 - no clamp exists. A trace running off the tissue edge is a real gesture and the slide extent is not a clinical boundary; clamping would move a vertex the user placed]**
 66. rename is refused entirely on a read-only slide including the **[LIVE, ACCEPTED 2026-10-20 - and the one entry of the 117 that the sweep left with no annotation at all, found by grepping for lines carrying no verdict. The refusal is now deliberate and named: ui::CategoryRenameScope::Refused. Renaming the vocabulary half alone on a read-only slide would leave the annotations on screen carrying the old word, so the tally would show the new name at zero beside an unconfigured row holding the real count - and the list is a GLOBAL preference, so that split would follow the user to every other slide. The vocabulary-only rename is right with NOTHING open (67), not with a slide open that refuses the retag]**
-67. rename with no slide open reports **[FIXED 2026-10-20 - ui::categoryRenameScope(slideOpen, annotationsEditable) decides, and MainWindow asks it instead of asking isActive() alone. With no slide open the rename goes through as a vocabulary-only edit, retagging nothing and recording no undo step, which is what Remove from list - beside it in the same menu, never gated - has always done. The trailing message splits too: "No slide is open; the list entry was renamed" rather than naming a slide the user does not have. Four tests]**
+67. rename with no slide open reports **[FIXED 2026-10-20 - ui::categoryRenameScope(slideOpen, annotationsEditable) decides, and MainWindow asks it instead of asking isActive() alone. With no slide open the rename goes through as a vocabulary-only edit, retagging nothing and recording no undo step, which is what Remove from list - beside it in the same menu, never gated - has always done. The trailing message splits too: "No slide is open; the list entry was renamed" rather than naming a slide the user does not have. Four tests, and OBSERVED in the running application 2026-10-20 by the project owner -- group AC31 in the counting spec, since no suite can reach the wiring that asks the rule]**
 68. resizableBoxGeometry computes boundingBox before the **[STILL LIVE - ViewportWidget.cpp:1641 vs :1645]**
 69. setAnnotationModel(nullptr) on an already-null model returns **[CLOSED - benign: both are null, so there is nothing to disconnect and nothing to clear; the panel is already showing nothing]**
 70. snprintf buffer truncation rather than overrun for extreme **[FIXED 2026-10-19 - kNumberBufferSize is 352, enough for %.0f of DBL_MAX; see 104]**

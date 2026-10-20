@@ -419,6 +419,11 @@ the session's other windows began competing for the viewer's focus, and a
 further run on 2026-10-19 finished the six checks that were left and re-ran
 AC26 against the fixed binary. Every row records what was seen.
 
+**AC31 was added 2026-10-20** when deferred entry 67 was closed -- renaming a
+category with no slide open -- and run the same day: **31 of 31**. The list
+grows when a defect is found outside it, which is the point of keeping it in
+the spec rather than in a session.
+
 Conditions: `Philips-1.tiff` (27 annotations) and `S1303802-11-HE-DX1.svs`
 (empty, used for AC22 and AC23), workspace `D:/tmp/third`, configured categories
 `Tumor | Apoptosis | Ki67`. The fixtures and the configured list were restored
@@ -456,6 +461,7 @@ afterwards.
 | AC28 | Rename a category and press Ctrl+Z only, not Ctrl+Y: the annotations revert and the category list stays renamed. This is intended, not a defect (§6.4). | **Pass** — and Lymphocyte came back as an *unconfigured* tally row, which is what §6.4 predicts. |
 | AC29 | Right-click a tally row: the menu appears at the row under the cursor. (As first written the check also demanded that the keyboard Menu key open it on the selected row; that clause was struck 2026-10-19 — see below.) | **Pass** — the menu appears at the row under the cursor. |
 | AC30 | The transient refusal messages (empty rename target; "Unclassified is not a category") reach the status bar and are legible there. | **Pass** |
+| AC31 | With **no slide open**, right-click a configured tally row and choose Rename...: the rename is accepted, the list entry changes, and the status bar reports that the list entry was renamed rather than claiming the annotations are open read-only. | **Pass** — run by the project owner 2026-10-20 against `91a2fd8`. This is deferred entry 67, and nothing in any suite can reach it: `ui::categoryRenameScope` is tested, the wiring that asks it is not. |
 
 #### AC26 — the failure this list existed to catch
 
