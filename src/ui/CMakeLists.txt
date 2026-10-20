@@ -9,6 +9,7 @@ configure_file(
 add_library(slideio-viewer-ui STATIC
     src/AboutDialog.cpp
     src/AboutInfo.cpp
+    src/AnnotationCountExport.cpp
     src/AnnotationInteraction.cpp
     src/AnnotationShapeName.cpp
     src/AnnotationListPolicy.cpp

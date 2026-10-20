@@ -12,6 +12,7 @@
 #include "slideio/viewer/infra/QSettingsAnnotationCategoryStore.h"
 #include "slideio/viewer/infra/QSettingsColorProfileOverrideStore.h"
 #include "slideio/viewer/ui/AboutDialog.h"
+#include "slideio/viewer/ui/AnnotationCountExport.h"
 #include "slideio/viewer/ui/AnnotationInteraction.h"
 #include "slideio/viewer/ui/AnnotationListPanel.h"
 #include "slideio/viewer/ui/AnnotationListPolicy.h"
@@ -202,6 +203,7 @@ struct MainWindow::Impl
     QAction* arrowToolAction = nullptr;
     QAction* preferencesAction = nullptr;
     QAction* openAnnotationsFolderAction = nullptr;
+    QAction* exportCountsAction = nullptr;
     QAction* aboutAction = nullptr;
 
     // Why the configured default ICC profile cannot be used, if it cannot.
@@ -274,6 +276,11 @@ struct MainWindow::Impl
     /// silently changes a set of clinical findings is not acceptable; the count
     /// is the receipt.
     void reportWorkspaceSwitch(const app::WorkspaceSwitchResult& result);
+
+    /// Writes the counting tally to a CSV file the user picks. Builds its rows
+    /// with the same categoryTally() call the strip uses, on the same two
+    /// inputs, so the file cannot disagree with what was on screen.
+    void exportCounts();
 
     void createActions()
     {
@@ -442,6 +449,16 @@ struct MainWindow::Impl
         pointToolAction->setEnabled(false);
         arrowToolAction->setEnabled(false);
 
+        exportCountsAction = new QAction("&Export Counts...", owner);
+        exportCountsAction->setStatusTip(
+            "Write this scene's category counts to a CSV file");
+        // Enabled by a slide being open, NOT by annotations being editable: a
+        // read-only slide's counts are exactly what a reader opening one wants,
+        // which is the same reasoning that keeps the tally visible there while
+        // the counting combo is disabled. It is therefore absent from
+        // applyAnnotationAvailability and paired with closeAction instead.
+        exportCountsAction->setEnabled(false);
+
         openAnnotationsFolderAction = new QAction("Open &Annotations Folder", owner);
         openAnnotationsFolderAction->setStatusTip(
             "Show the folder where annotation files are saved");
@@ -472,6 +489,7 @@ struct MainWindow::Impl
 
         fileMenu->addAction(closeAction);
         fileMenu->addSeparator();
+        fileMenu->addAction(exportCountsAction);
         fileMenu->addAction(openAnnotationsFolderAction);
         fileMenu->addAction(openLogAction);
         fileMenu->addSeparator();
@@ -533,8 +551,10 @@ struct MainWindow::Impl
         toolsMenu->addAction(freehandToolAction);
         toolsMenu->addAction(pointToolAction);
         toolsMenu->addAction(arrowToolAction);
-        // There is no Edit menu, so Preferences lives here. setMenuRole() moves
-        // it to the application menu on macOS regardless.
+        // Preferences lives here rather than under Edit, which holds only Undo
+        // and Redo. setMenuRole() moves it to the application menu on macOS
+        // regardless. (The comment here used to say there was no Edit menu at
+        // all, which stopped being true when Undo and Redo got one.)
         toolsMenu->addSeparator();
         toolsMenu->addAction(preferencesAction);
 
@@ -578,6 +598,9 @@ struct MainWindow::Impl
             // listener above, which closeSlide() emits before it flushes.
             viewportWidget->closeSlide();
             closeAction->setEnabled(false);
+            // Paired with closeAction at all three sites: the counts belong to
+            // the open scene, so the action lives and dies with it.
+            exportCountsAction->setEnabled(false);
             // Nothing is open now, so the title stops naming a slide. Done here
             // and not from the slideClosed signal, which also fires at the start
             // of every open: openSlide() sets the title before the viewport
@@ -706,6 +729,10 @@ struct MainWindow::Impl
             openPreferences();
         });
 
+        QObject::connect(exportCountsAction, &QAction::triggered, owner, [this]() {
+            exportCounts();
+        });
+
         QObject::connect(openAnnotationsFolderAction, &QAction::triggered, owner, [this]() {
             const QString workspace = annotationSettings->workspaceDirectory();
             const QString annotations = workspace + QStringLiteral("/annotations");
@@ -811,6 +838,7 @@ struct MainWindow::Impl
                 const bool sameFile = (filePath == lastOpenedFilePath);
                 lastOpenedFilePath = filePath;
                 closeAction->setEnabled(true);
+                exportCountsAction->setEnabled(true);
                 // The Rectangle tool is NOT enabled here: an associated image
                 // opens through this path too, and so does a slide whose
                 // annotations could not be read. Its enabled state comes from
@@ -1021,6 +1049,7 @@ struct MainWindow::Impl
             pointToolAction->setEnabled(false);
             arrowToolAction->setEnabled(false);
             closeAction->setEnabled(false);
+            exportCountsAction->setEnabled(false);
             minimapWidget->clearThumbnail();
             statusBarManager->updateCursorPosition(0.0, 0.0);
             statusBarManager->updateMagnification(1.0, 0.0);
@@ -1803,6 +1832,78 @@ void MainWindow::Impl::applyAnnotationAvailability(bool available, const QString
     if (!reason.isEmpty()) {
         statusBarManager->showTransientMessage(reason);
     }
+}
+
+void MainWindow::Impl::exportCounts()
+{
+    // The action is only enabled with a slide open, so this is defence in depth
+    // rather than a live gate -- but the counts of nothing are a file full of
+    // zeros that names no slide, and that is worse than no file.
+    if (!viewportWidget->isSlideOpen()) {
+        return;
+    }
+
+    // The SAME call the strip makes, on the same two inputs. Not a second
+    // counting pass that agrees by inspection: a report that can drift from the
+    // screen it was read off is a clinical trap, and this one cannot.
+    const std::vector<CategoryTallyRow> rows =
+        categoryTally(annotations->annotations(), categoryStore->categories());
+
+    const std::string slidePath = viewportWidget->currentFilePath();
+    const int sceneIndex = viewportWidget->currentSceneIndex();
+    const std::string stem = countExportFileStem(
+        QFileInfo(QString::fromStdString(slidePath)).fileName().toStdString(), sceneIndex);
+    const QString suggested = QString::fromStdString(stem) + QStringLiteral(".csv");
+
+    // Offered in the annotation workspace, where the file this counts already
+    // lives. The dialog asks about overwriting; this does not second-guess it.
+    const QString workspace = annotationSettings->workspaceDirectory();
+    const QString start =
+        workspace.isEmpty() ? suggested : workspace + QStringLiteral("/") + suggested;
+    const QString chosen = QFileDialog::getSaveFileName(
+        owner, tr("Export Counts"), start, tr("Comma-separated values (*.csv);;All files (*)"));
+    if (chosen.isEmpty()) {
+        return;
+    }
+
+    CountExportContext context;
+    context.slidePath = slidePath;
+    // May be empty, for a slide that could not be identified. The column stays,
+    // which is how the file says so rather than implying a count came from
+    // somewhere it did not.
+    context.slideId = viewportWidget->currentSlideId();
+    context.sceneIndex = sceneIndex;
+    const std::string csv = categoryCountCsv(rows, context, std::chrono::system_clock::now());
+
+    const auto reportFailure = [this, &chosen](const QString& detail) {
+        QMessageBox::warning(owner, tr("Export Counts"),
+                             tr("The counts could not be written to:\n\n%1\n\n%2")
+                                 .arg(QDir::toNativeSeparators(chosen), detail));
+    };
+
+    QFile file(chosen);
+    // Truncate, never Append: the dialog has already asked about overwriting,
+    // and appending would bury a second byte-order mark and a second header row
+    // in the middle of the file.
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        reportFailure(file.errorString());
+        return;
+    }
+    const qint64 written = file.write(csv.data(), static_cast<qint64>(csv.size()));
+    // flush() and close() explicitly: a buffered write can still fail on the
+    // way out, and ~QFile has nowhere to report that. A half-written counts
+    // file that reported success is the one outcome worth this much care --
+    // it would be read as the whole count.
+    const bool flushed = file.flush();
+    const QString error = file.errorString();
+    file.close();
+    if (written != static_cast<qint64>(csv.size()) || !flushed) {
+        reportFailure(error);
+        return;
+    }
+
+    statusBarManager->showTransientMessage(
+        tr("Counts exported to %1").arg(QFileInfo(chosen).fileName()));
 }
 
 void MainWindow::Impl::reportWorkspaceSwitch(const app::WorkspaceSwitchResult& result)

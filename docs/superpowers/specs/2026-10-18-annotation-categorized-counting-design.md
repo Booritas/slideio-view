@@ -642,7 +642,11 @@ rather than only the promoted one.
 
 - **Export or report of counts.** The obvious next round, and the one a
   pathologist will ask for after using this. Left out so this round ships the
-  counting itself.
+  counting itself. **Done 2026-10-20** -- `File > Export Counts...`, one CSV per
+  scene, built from this spec's own `ui::categoryTally` so the file cannot
+  disagree with the strip. See
+  `2026-10-20-annotation-count-export-design.md`. A per-annotation export is
+  still open and is a different file with a different reader.
 - **Per-tool default classification (FR-ANN-22).** The current category is one
   value, not one per tool. Still open.
 - **The quick-classification bar (FR-ANN-21).** Still open.
