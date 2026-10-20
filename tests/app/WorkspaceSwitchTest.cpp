@@ -409,3 +409,22 @@ TEST_CASE("no resolver writes nothing and still leaves the slide saving",
     REQUIRE(h.repository.stored.count({"/new", FakeRootRepository::keyText(kKey)}) == 0);
     REQUIRE(h.persistence.isActive());
 }
+
+TEST_CASE("result.asked is false when there is no resolver to ask with",
+          "[app][WorkspaceSwitch]")
+{
+    // `asked` is read by MainWindow to decide how to report the switch. With
+    // no resolver set, run() chooses LoadNew on its own, and reporting that as
+    // a choice the user was offered would describe something that did not
+    // happen. The options still say an ask was warranted -- that is the point:
+    // the two are not the same fact.
+    Harness h;
+    h.openWith({annotation("a", 100)});
+    h.repository.forcedForRoot = "/new";
+    h.repository.forcedStatus = core::LoadStatus::Malformed;
+
+    const app::WorkspaceSwitchResult result = h.sut.run("/new", kKey, provenance());
+
+    REQUIRE_FALSE(result.asked);
+    REQUIRE(result.choice == app::WorkspaceChoice::LoadNew);
+}

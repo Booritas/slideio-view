@@ -41,6 +41,16 @@ public:
     /// nothing usable is stored. Never empty.
     [[nodiscard]] QString workspaceDirectory() const;
 
+    /// What is actually stored, before resolveWorkspaceDirectory() fills in a
+    /// default. Empty means "follow the default", which is NOT the same thing
+    /// as the default path written out: a caller that restores the resolved
+    /// path pins the workspace to today's Documents folder forever, so a user
+    /// who later moves it keeps writing annotations to the old location.
+    ///
+    /// Only for callers that restore a previous value. Everything that wants
+    /// to know where annotations go uses workspaceDirectory().
+    [[nodiscard]] QString configuredWorkspaceDirectory() const;
+
     /// An empty or whitespace-only path clears the setting rather than storing
     /// one that resolves to nothing.
     void setWorkspaceDirectory(const QString& path);

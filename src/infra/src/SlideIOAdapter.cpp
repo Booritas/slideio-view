@@ -310,6 +310,33 @@ slideio::viewer::core::ColorProfileInfo convertColorProfileInfo(const ::slideio:
 // passes -- it would then ICC-transform three intensity channels as though they
 // were R/G/B. Only the viewer knows the channels are fluorescence, so only the
 // viewer can refuse.
+/// Records where the colour profile in use came from, when it was the supplied
+/// one that got used.
+///
+/// The condition mirrors the one inside buildManagedScene: supplying bytes is
+/// not the same as using them, because a default handed to a slide that embeds
+/// its own profile is ignored, and reporting that slide as shown through the
+/// default setting would be a lie the properties panel then tells the user.
+///
+/// One mirror, not two. This block stood verbatim in both open paths, which
+/// made three copies of a rule in total and nothing to keep them in step --
+/// and the thing that silently drifts is what the panel says the user is
+/// looking at.
+void applySuppliedProfileOrigin(const slideio::viewer::core::SuppliedColorProfile& supplied,
+                                slideio::viewer::core::SlideInfo& info)
+{
+    const bool suppliedWasUsed =
+        !supplied.bytes.empty()
+        && (supplied.isSlideOverride || !info.colorProfileInfo.present)
+        && info.colorManagement == slideio::viewer::core::ColorManagementAvailability::Available;
+    if (!suppliedWasUsed) {
+        return;
+    }
+    info.colorProfileOrigin = supplied.isSlideOverride ? slideio::viewer::core::ColorProfileOrigin::SlideOverride
+                                                       : slideio::viewer::core::ColorProfileOrigin::DefaultSetting;
+    info.displacedEmbeddedProfile = supplied.isSlideOverride && info.colorProfileInfo.present;
+}
+
 slideio::viewer::core::ColorManagementAvailability buildManagedScene(
     const std::shared_ptr<::slideio::Scene>& scene,
     const slideio::viewer::core::SlideInfo& info,
@@ -643,22 +670,7 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
     // fluorescence slides.
     m_slideInfo.colorManagement = buildManagedScene(m_scene, m_slideInfo, supplied,
                                                     m_managedScene, m_slideInfo.colorManagementDetail);
-    // Mirrors the condition inside buildManagedScene exactly. Supplying bytes
-    // is not the same as using them: a default handed to a slide that embeds
-    // its own profile is ignored, and reporting that slide as shown through
-    // the default setting would be a lie the panel then tells the user.
-    const bool suppliedWasUsed =
-        !supplied.bytes.empty()
-        && (supplied.isSlideOverride || !m_slideInfo.colorProfileInfo.present)
-        && m_slideInfo.colorManagement == core::ColorManagementAvailability::Available;
-
-    if (suppliedWasUsed) {
-        m_slideInfo.colorProfileOrigin = supplied.isSlideOverride
-            ? core::ColorProfileOrigin::SlideOverride
-            : core::ColorProfileOrigin::DefaultSetting;
-        m_slideInfo.displacedEmbeddedProfile =
-            supplied.isSlideOverride && m_slideInfo.colorProfileInfo.present;
-    }
+    applySuppliedProfileOrigin(supplied, m_slideInfo);
     m_slideInfo.isBrightfield = !fluorescenceHint && (
         (m_slideInfo.numChannels == 1) ||
         (m_slideInfo.numChannels == 3 && m_slideInfo.channelDataType == core::DataType::Byte));
@@ -881,22 +893,7 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
     // fluorescence slides.
     m_slideInfo.colorManagement = buildManagedScene(m_scene, m_slideInfo, supplied,
                                                     m_managedScene, m_slideInfo.colorManagementDetail);
-    // Mirrors the condition inside buildManagedScene exactly. Supplying bytes
-    // is not the same as using them: a default handed to a slide that embeds
-    // its own profile is ignored, and reporting that slide as shown through
-    // the default setting would be a lie the panel then tells the user.
-    const bool suppliedWasUsed =
-        !supplied.bytes.empty()
-        && (supplied.isSlideOverride || !m_slideInfo.colorProfileInfo.present)
-        && m_slideInfo.colorManagement == core::ColorManagementAvailability::Available;
-
-    if (suppliedWasUsed) {
-        m_slideInfo.colorProfileOrigin = supplied.isSlideOverride
-            ? core::ColorProfileOrigin::SlideOverride
-            : core::ColorProfileOrigin::DefaultSetting;
-        m_slideInfo.displacedEmbeddedProfile =
-            supplied.isSlideOverride && m_slideInfo.colorProfileInfo.present;
-    }
+    applySuppliedProfileOrigin(supplied, m_slideInfo);
     m_slideInfo.isBrightfield = !fluorescenceHint && (
         (m_slideInfo.numChannels == 1) ||
         (m_slideInfo.numChannels == 3 && m_slideInfo.channelDataType == core::DataType::Byte));

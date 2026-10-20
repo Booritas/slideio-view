@@ -38,6 +38,11 @@ QString AnnotationSettings::workspaceDirectory() const
     return resolveWorkspaceDirectory(m_settings->value(kWorkspaceKey).toString());
 }
 
+QString AnnotationSettings::configuredWorkspaceDirectory() const
+{
+    return m_settings->value(kWorkspaceKey).toString().trimmed();
+}
+
 void AnnotationSettings::setWorkspaceDirectory(const QString& path)
 {
     const QString trimmed = path.trimmed();

@@ -1653,8 +1653,12 @@ bool MainWindow::Impl::openPreferences()
             annotationPropertiesPanel->commitPendingEdit();
         }
 
-        // Captured before the setting is written, so Cancel can put it back.
-        const QString previousWorkspace = annotationSettings->workspaceDirectory();
+        // Captured before the setting is written, so Cancel can put it back --
+        // and captured RAW, not resolved. An empty setting means "follow the
+        // default"; restoring the resolved path instead would turn a Cancel
+        // into a decision to pin the workspace at today's Documents folder,
+        // which a user who later moves it would never see happen.
+        const QString previousWorkspace = annotationSettings->configuredWorkspaceDirectory();
 
         annotationSettings->setWorkspaceDirectory(entered);
         // Read the path back rather than reusing `entered`: an empty or

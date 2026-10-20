@@ -1,7 +1,7 @@
 # Deferred minor findings — recovered index
 
 Status: recovered 2026-10-19 from the session transcript; split into seven
-batches, B1 to B4 done; 60 of 117 triaged, 16 fixed. **The full text of these
+batches, B1 to B5 done; 75 of 117 triaged, 20 fixed. **The full text of these
 findings is lost.** What is here is each one's opening clause, enough to identify
 it and re-derive it against the code, and nothing more.
 
@@ -104,7 +104,7 @@ one batch. The numbers are the entry numbers in the list below.
 | B2 | AnnotationModel, undo/redo, app services | 3, 5, 6, 10, 16, 19 | 6 | **done 2026-10-20** |
 | B3 | viewport interaction and drag state | 1, 7, 11, 33, 43, 58, 60, 62, 71, 76, 84, 88, 112 | 13 | **done 2026-10-20** |
 | B4 | panels, categories, preferences | 13, 15, 18, 28, 32, 61, 64, 67, 69, 81, 83, 85, 86, 109 | 14 | **done 2026-10-20** (86 and 109 moved to B6) |
-| B5 | persistence, paths, workspace, serialization | 12, 22, 23, 31, 36, 38, 39, 40, 59, 94, 96, 99, 100, 114, 117 | 15 | not started |
+| B5 | persistence, paths, workspace, serialization | 12, 22, 23, 31, 36, 38, 39, 40, 59, 94, 96, 99, 100, 114, 117 | 15 | **done 2026-10-20** (4 stems unusable) |
 | B6 | documentation and comments | 4, 17, 20, 35, 41, 48, 63, 74, 75, 78, 79, 80, 90, 92, 95, 108, 113 | 17 | not started |
 | B7 | test quality: weak, missing or vacuous cases | 26, 45, 47, 49, 50, 51, 52, 53, 54, 55, 56, 77, 82, 87, 89, 91, 93, 97, 98, 101, 102, 103, 105, 115 | 24 | not started |
 
@@ -300,6 +300,60 @@ AC29 was struck over, already recorded), 83 (a configured category list is a
 handful of entries; the same shape in `categoryTally`, which walks every
 annotation, is the one that earned a map).
 
+### B5 — persistence, paths, workspace, serialization (2026-10-20)
+
+Fifteen entries: three already closed, four fixed, four accepted, and **four
+whose stems are too truncated to act on**. This is the first batch where that
+last group appears, and it will be most of B6 and B7. An entry like *"bad_alloc
+from the outer catch is reported as"* names neither the site nor what it is
+reported as; guessing at the rest of the sentence and fixing the guess is worse
+than leaving it indexed. Those four are marked and left.
+
+The two that mattered are both about telling the user something true:
+
+- **Entry 38.** The workspace Cancel path captured `workspaceDirectory()`,
+  which RESOLVES an empty setting to the default. Restoring that on Cancel
+  wrote the resolved path back as an explicit setting -- so a user who had
+  never chosen a workspace, opened the dialog and then cancelled, came out with
+  their workspace pinned to today's Documents folder. Move Documents later and
+  the viewer keeps writing annotations to the old location, with nothing having
+  announced the change. `configuredWorkspaceDirectory()` returns what is
+  actually stored, and Cancel restores that.
+- **Entry 39.** `result.asked` was set from `options.ask` alone, before the
+  resolver was checked. With no resolver, `run()` chooses `LoadNew` itself --
+  and `MainWindow` reads `asked` to decide how to report what happened to the
+  annotations. It would have reported a choice the user was never offered. It
+  is now `options.ask && m_resolver`, with a test.
+
+Also fixed: **entry 36**, where `defaultAnnotationWorkspaceDirectory()` built
+`documents + "/" + applicationName()` without checking that Documents resolved.
+On a Linux account with no xdg-user-dirs configuration it comes back empty and
+that produced `"/slideio-viewer"` -- a directory at the filesystem root, which
+is unwritable on any normal account and the wrong place for clinical findings
+on one where it is not. It falls back to `AppLocalDataLocation` now, where the
+log file already lives.
+
+And **entry 100**, which was three copies of one rule: the condition deciding
+whether a supplied colour profile was actually USED stood verbatim in both of
+`SlideIOAdapter`'s open paths, each with a comment saying it "mirrors the
+condition inside buildManagedScene exactly". Nothing kept them in step, and
+what drifts is what the properties panel tells the user they are looking at.
+`applySuppliedProfileOrigin` is the one mirror now.
+
+Entry 99 is worth recording as closed rather than merely silent: the serializer
+refuses an empty or duplicate id before writing anything
+(`AnnotationSerialization.cpp:662`), so the "never write a file we cannot read
+back" invariant holds against that case.
+
+Accepted: 12 (a hand-typed `fillOpacity` round-trips, because nlohmann writes
+the shortest round-tripping form of the float), 23 (`beginSlide` reads the
+annotation file on the UI thread -- real, but moving annotation I/O off it is
+architecture, and the read happens inside a slide open that already shows a
+loading overlay), 40 (Cancel must re-enter `beginSlide`, because the repoint
+just changed which file is authoritative), 117 (annotation filenames are
+`<slideId>.s<N>.annotations.json` and a slideId is FNV-1a hex, so no Windows
+reserved device name can be produced).
+
 ## The findings
 
 1. #10 moveOriginalGeometry's unguarded `if (picked)` could **[CLOSED - the else branch resets moveOriginal, ViewportWidget.cpp:4675, so a capture from an earlier drag cannot be restored onto this annotation]**
@@ -313,7 +367,7 @@ annotation, is the one that earned a map).
 9. #8 the pi literal is repeated three times in **[CLOSED - single constexpr kPi at AnnotationGeometry.cpp:15]**
 10. #8 undoing a create clears an unrelated selection -- exactly **[CLOSED - AnnotationModel::remove clears the selection only when the removed id IS the selected one, AnnotationModel.cpp:140]**
 11. a 1-pixel jitter counts as a pan and suppresses **[CLOSED - the selection test is the press-to-release distance, not whether a move event arrived; now in ui::releaseSelectsAnnotation]**
-12. a hand-edited file carrying fillOpacity 0.333 quantises and
+12. a hand-edited file carrying fillOpacity 0.333 quantises and **[ACCEPTED 2026-10-20 - fillOpacity is a float and nlohmann writes the shortest round-tripping form, so a value typed by hand comes back as itself]**
 13. accepting Preferences writes the category store even when **[ACCEPTED 2026-10-20 - the store normalises on write and on read, so the rewrite is idempotent, and re-feeding the panels is how a normalisation becomes visible]**
 14. an empty polygon's boundingBox is {0,0,0,0} — a real rect at **[ACCEPTED 2026-10-19 - documented as a sentinel at AnnotationGeometry.cpp:76; no reachable path builds an empty polygon, so std::optional would make every caller handle a case none can meet]**
 15. an empty/whitespace-only `to` retags to an empty **[CLOSED - core::retagClassification refuses an empty trimmed target and returns no changes, so no undo step is recorded either]**
@@ -323,8 +377,8 @@ annotation, is the one that earned a map).
 19. annotationsBulkChanged -> refreshAfterReset forces stored **[CLOSED - AnnotationPropertiesPanel.cpp:232 connects the bulk signal to refresh, not refreshAfterReset, so a field the user has focus in stays theirs]**
 20. AnnotationShapeName.cpp breaks alphabetical order in
 21. AnnotationType and the geometry variant are independent **[ACCEPTED 2026-10-19 - the dangerous direction is a compile error: a new variant alternative with no typeOfShape overload will not build. The reverse leaves an unreachable enumerator]**
-22. bad_alloc from the outer catch is reported as
-23. beginSlide's file read is on the UI thread; a
+22. bad_alloc from the outer catch is reported as **[STEM TOO TRUNCATED - the clause names neither the site nor what it is reported as. Re-derive if the load/save error paths are touched]**
+23. beginSlide's file read is on the UI thread; a **[LIVE, ACCEPTED 2026-10-20 - confirmed at AnnotationPersistenceService.cpp:94. Moving annotation I/O off the UI thread is architecture, not a repair; the read happens inside a slide open that already shows a loading overlay, and these files are small]**
 24. categories() does not normalise on read, so a hand-edited **[CLOSED - categories() calls core::normalizeCategoryList on read, QSettingsAnnotationCategoryStore.cpp:44]**
 25. categoryTally recomputes on every filter keystroke though **[FIXED 2026-10-19 - rebuild() split; the filter and sort combos call rebuildRows(), which does not touch the tally]**
 26. ceiling test 2 is vacuous on MSVC and libc++ — its
@@ -332,16 +386,16 @@ annotation, is the one that earned a map).
 28. clearing the user name (setUserName( **[CLOSED - setUserName removes the key rather than storing an empty string, so hasUserName() answers correctly afterwards]**
 29. collinearity is exact (d == 0.0), no epsilon. Correct and **[ACCEPTED 2026-10-19 - an epsilon would make "collinear" depend on coordinate magnitude, so a shape would change its self-intersection answer by being panned]**
 30. core::nearestBoxHandle treats a NaN distance as in **[CLOSED - BoxResize.cpp:35-39 refuses NaN deliberately]**
-31. currentSlideId() recomputes the content-size walk that
+31. currentSlideId() recomputes the content-size walk that **[CLOSED - MainWindow::currentSlideId delegates to the viewport, which kept what the background open worker computed; the comment names this finding]**
 32. displacedProfileNote takes a const SlideInfo&, so **[CLOSED - it takes a bool and a string now, in SlidePropertiesPanel.h, so it is a pure function a test can reach]**
 33. Escape is accepted unconditionally, blocking any parent **[CLOSED - with nothing in flight it falls through to QOpenGLWidget::keyPressEvent, ViewportWidget.cpp:5266]**
 34. filter folds case but the Label/Classification/Type sorts **[FIXED 2026-10-19 - the three sorts fold case, tests in AnnotationListPolicyTest.cpp]**
 35. formatIso8601Utc's header comment names only the 9999
-36. if DocumentsLocation resolves empty (rare Linux), the
+36. if DocumentsLocation resolves empty (rare Linux), the **[FIXED 2026-10-20 - it produced "/slideio-viewer" at the filesystem root; falls back to AppLocalDataLocation, where the log already lives]**
 37. item->setData(0, Qt::UserRole, row.configured) is a dead **[CLOSED - no such call remains]**
-38. M3 — `previousWorkspace` captures the resolved path, so
-39. M5 — `result.asked` is set before the resolver check,
-40. M6 — Cancel re-enters beginSlide, which re-runs the
+38. M3 — `previousWorkspace` captures the resolved path, so **[FIXED 2026-10-20 - captured raw now, through the new configuredWorkspaceDirectory(). Restoring the resolved path on Cancel pinned the workspace at today's Documents folder]**
+39. M5 — `result.asked` is set before the resolver check, **[FIXED 2026-10-20 - it is options.ask AND a resolver existing; `asked` means the user was asked, and MainWindow reports on it]**
+40. M6 — Cancel re-enters beginSlide, which re-runs the **[ACCEPTED 2026-10-20 - it has to: m_repointTo(oldRoot) just changed which file is authoritative, so the model must be reloaded from the restored root]**
 41. MainWindow.cpp now 1191 lines; mirrors its existing pattern
 42. measure() calls outline(geometry) and then measureKnown calls **[FIXED 2026-10-19 - measureOutline takes the outline measure() already built; the double build fell on freehand traces, the shapes with the most vertices]**
 43. move rebuilds geometry as RectangleGeometry from the **[CLOSED - the move applies core::translated to the captured geometry, ViewportWidget.cpp:4925]**
@@ -360,7 +414,7 @@ annotation, is the one that earned a map).
 56. no tests for case-duplicate or whitespace-padded CONFIGURED
 57. no upper bound on scale — a sub-pixel bounding box yields a **[CLOSED - ViewportController.cpp:99 clamps to kMinScale..kMaxScale right after fitToRect, with a comment saying core knows nothing of the limits]**
 58. nothing resets dragOwner when a slide closes mid-drag; **[CLOSED - resetAnnotationState clears dragOwner, dragButton and every captured original, then calls updateCursor]**
-59. openAuxImage has no live caller today (associated images go via
+59. openAuxImage has no live caller today (associated images go via **[STEM TOO TRUNCATED to act on - openAuxImageSync does have callers; whether the public ViewportWidget::openAuxImage is dead needs re-deriving]**
 60. paintAnnotations has no per-type geometry dispatch; needed **[CLOSED - it paints from core::outline and core::screenDecoration, so the dispatch is in core where the variant is]**
 61. parallel `rows`/`keys` vectors could desynchronise if a **[FIXED 2026-10-20 - an unordered_map from key to row index; the synthetic Unclassified row had already broken the invariant on purpose]**
 62. preview rectangle repeats the screenRect conversion. **[FIXED 2026-10-20 - the preview draws screenPath(core::outline(...)); the hand-rolled ellipse path loop is gone]**
@@ -395,13 +449,13 @@ annotation, is the one that earned a map).
 91. the negative test covers rectangle and arrow only; an
 92. the new include is one position out of alphabetical order in a
 93. the normalisation test covers one case; core's tests cover
-94. the pacing fix (m_lastMutation push-forward) is
+94. the pacing fix (m_lastMutation push-forward) is **[STEM TOO TRUNCATED - the clause stops before the judgement. The push-forward is at AnnotationPersistenceService.cpp:193; re-derive if autosave pacing is touched]**
 95. the Preferences tooltip says 
-96. the quit cannot be aborted — see R27.
+96. the quit cannot be aborted — see R27. **[CLOSED by reference - the finding defers to a recorded decision, R27, rather than raising anything itself]**
 97. the refused-save test does not pin the serialize-first
 98. the second new test (getter vs static resolver) is
-99. the serializer will write an empty annotation id that
-100. the suppliedWasUsed block is duplicated verbatim across both
+99. the serializer will write an empty annotation id that **[CLOSED - AnnotationSerialization.cpp:662 refuses an empty or duplicate id before writing anything, so the "never write a file we cannot read back" invariant holds]**
+100. the suppliedWasUsed block is duplicated verbatim across both **[FIXED 2026-10-20 - applySuppliedProfileOrigin is the one mirror of buildManagedScene's rule; there were three copies and nothing keeping them in step]**
 101. the tie-break tests depend on std::sort actually reordering
 102. the unchanged-edit test's modifiedAt equality could pass
 103. the zero-translation identity test asserts x and y but not
@@ -415,8 +469,8 @@ annotation, is the one that earned a map).
 111. unused <QSettings> include in the test file. **[CLOSED - QSettings is used at QSettingsAnnotationCategoryStoreTest.cpp:84]**
 112. updateCursor has no DragOwner::MoveVertex case, so a **[CLOSED - the case exists at ViewportWidget.cpp:3862 with the reasoning beside it]**
 113. Viewport.h's doc comment does not mention the [0, 0.45]
-114. while the service is null the two emissions are
+114. while the service is null the two emissions are **[STEM TOO TRUNCATED - "the two emissions" names nothing findable. Re-derive if the persistence service's signal wiring is touched]**
 115. whitespace asymmetry in the (none) test — 
 116. window title still names the closed slide after File > Close **[CLOSED 2026-10-19 - commit 3baecc2]**
-117. Windows reserved device names (CON, NUL, AUX, PRN,
+117. Windows reserved device names (CON, NUL, AUX, PRN, **[ACCEPTED 2026-10-20 - annotation filenames are "<slideId>.s<N>.annotations.json" and a slideId is FNV-1a hex, so no reserved name can be produced. A user-chosen workspace directory is the OS's to refuse]**
 

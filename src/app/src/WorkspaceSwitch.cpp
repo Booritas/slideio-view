@@ -124,7 +124,12 @@ WorkspaceSwitchResult WorkspaceSwitch::run(const std::string& newRoot,
 
     // 4-5. Decide what may be offered, then ask.
     const core::WorkspaceSwitchOptions options = core::workspaceSwitchOptions(facts);
-    result.asked = options.ask;
+    // AND a resolver to ask with: `asked` means the user was asked, and
+    // MainWindow reports the outcome differently when they were. Without a
+    // resolver the branch below chooses LoadNew on its own, so claiming the
+    // user was consulted would make the report say something that did not
+    // happen.
+    result.asked = options.ask && static_cast<bool>(m_resolver);
     if (!options.ask || !m_resolver) {
         // Nothing at risk, or nobody to ask. Either way the outcome that writes
         // nothing is the honest one.
