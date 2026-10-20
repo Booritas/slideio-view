@@ -1,9 +1,9 @@
 # Deferred minor findings — recovered index
 
 Status: recovered 2026-10-19 from the session transcript; split into seven
-batches, B1 done; 27 of 117 triaged, 8 fixed. **The full text of these findings
-is lost.** What is here is each one's opening clause, enough to identify it and
-re-derive it against the code, and nothing more.
+batches, B1 and B2 done; 33 of 117 triaged, 9 fixed. **The full text of these
+findings is lost.** What is here is each one's opening clause, enough to identify
+it and re-derive it against the code, and nothing more.
 
 ## Why this file exists, and what went wrong
 
@@ -101,7 +101,7 @@ one batch. The numbers are the entry numbers in the list below.
 | Batch | Area | Entries | Count | State |
 |---|---|---|---|---|
 | B1 | core geometry, measurement and numerics | 8, 14, 21, 29, 42, 44, 46, 57, 65, 70, 72, 104 | 12 | **done 2026-10-19** |
-| B2 | AnnotationModel, undo/redo, app services | 3, 5, 6, 10, 16, 19 | 6 | not started |
+| B2 | AnnotationModel, undo/redo, app services | 3, 5, 6, 10, 16, 19 | 6 | **done 2026-10-20** |
 | B3 | viewport interaction and drag state | 1, 7, 11, 33, 43, 58, 60, 62, 71, 76, 84, 88, 112 | 13 | not started |
 | B4 | panels, categories, preferences | 13, 15, 18, 28, 32, 61, 64, 67, 69, 81, 83, 85, 86, 109 | 14 | not started |
 | B5 | persistence, paths, workspace, serialization | 12, 22, 23, 31, 36, 38, 39, 40, 59, 94, 96, 99, 100, 114, 117 | 15 | not started |
@@ -176,27 +176,52 @@ off the tissue edge is a real gesture).
 Closed by earlier work: 46 (`inClosedRange` calls `std::isfinite`) and 57
 (`ViewportController.cpp:99` clamps the scale straight after `fitToRect`).
 
+### B2 — AnnotationModel, undo/redo, app services (2026-10-20)
+
+Six entries, and **five were already closed** -- four of them by comments that
+now stand exactly where the finding pointed, answering it in the code rather
+than in a ledger. `setSelected` refuses an id the model does not hold and
+`AnnotationEditCommand::apply` says so at the call site; `create()` rejects a
+command recording neither state centrally, so a push site added later cannot
+forget; `remove()` clears the selection only when the removed id is the
+selected one; the bulk-retag signal reaches the properties panel's ordinary
+`refresh`, not the reset path, so a field the user has focus in stays theirs;
+and `~MainWindow` deletes the three Qt-owned widgets after `saveState()` while
+every app and infra service is a `unique_ptr` in `Impl`.
+
+Entry 16 was live and is fixed: `AnnotationEditing.cpp` used `std::nullopt`
+while reaching `<optional>` only through `AnnotationEditCommand.h`.
+
+**Found while working the batch, and not from the index: a shadowing hazard
+introduced by the rebuild() split on 2026-10-19.** The connect block in
+`AnnotationListPanel` had a local lambda *named* `rebuildRows` that calls
+`rebuild()`, from before `rebuildRows()` existed as a member with deliberately
+narrower behaviour. Every annotation signal still refreshed the tally, so
+nothing was wrong at runtime -- but the next reader to decide whether a signal
+should move a count would have read the name and got the opposite answer. It is
+`rebuildAll` now. The split was right; leaving the old name beside it was not.
+
 ## The findings
 
 1. #10 moveOriginalGeometry's unguarded `if (picked)` could
 2. #11 the front-trim loop erases one element at a time, O(n) **[CLOSED - UndoRedoStack.cpp:39-46 is one range erase, with the reasoning in a comment]**
-3. #4 setSelected() unconditional after an insert() that can drop
+3. #4 setSelected() unconditional after an insert() that can drop **[CLOSED - AnnotationModel::setSelected refuses an id the model does not hold, and AnnotationEditCommand::apply says so at the call: a dropped insert leaves the previous selection standing]**
 4. #4 Shift+Ctrl squares the box (code correct, plan
-5. #5 an invalid command is rejected by convention at the call
-6. #6 ~MainWindow nulls the persistence pointer but not
+5. #5 an invalid command is rejected by convention at the call **[CLOSED - AnnotationEditCommand::create rejects a command recording neither state, centrally, so a push site added later cannot forget]**
+6. #6 ~MainWindow nulls the persistence pointer but not **[CLOSED - the three Qt-owned widgets are deleted and nulled explicitly, after saveState; every app and infra service is a unique_ptr in Impl and dies with it]**
 7. #6 preview omits withMinimumExtent that the commit
 8. #7 normalized(EllipseGeometry) duplicates the **[FIXED 2026-10-19 - normalizedCorners(PointF, PointF) is shared by rectangle, ellipse and the arrow box]**
 9. #8 the pi literal is repeated three times in **[CLOSED - single constexpr kPi at AnnotationGeometry.cpp:15]**
-10. #8 undoing a create clears an unrelated selection -- exactly
+10. #8 undoing a create clears an unrelated selection -- exactly **[CLOSED - AnnotationModel::remove clears the selection only when the removed id IS the selected one, AnnotationModel.cpp:140]**
 11. a 1-pixel jitter counts as a pan and suppresses
 12. a hand-edited file carrying fillOpacity 0.333 quantises and
 13. accepting Preferences writes the category store even when
 14. an empty polygon's boundingBox is {0,0,0,0} — a real rect at **[ACCEPTED 2026-10-19 - documented as a sentinel at AnnotationGeometry.cpp:76; no reachable path builds an empty polygon, so std::optional would make every caller handle a case none can meet]**
 15. an empty/whitespace-only `to` retags to an empty
-16. AnnotationEditing.cpp uses std::nullopt with only an
+16. AnnotationEditing.cpp uses std::nullopt with only an **[FIXED 2026-10-20 - <optional> is included directly; it had been reaching it through AnnotationEditCommand.h]**
 17. AnnotationGeometry.h header comment 
 18. AnnotationPropertiesPanel.cpp:304 dereferences widget()->layout()
-19. annotationsBulkChanged -> refreshAfterReset forces stored
+19. annotationsBulkChanged -> refreshAfterReset forces stored **[CLOSED - AnnotationPropertiesPanel.cpp:232 connects the bulk signal to refresh, not refreshAfterReset, so a field the user has focus in stays theirs]**
 20. AnnotationShapeName.cpp breaks alphabetical order in
 21. AnnotationType and the geometry variant are independent **[ACCEPTED 2026-10-19 - the dangerous direction is a compile error: a new variant alternative with no typeOfShape overload will not build. The reverse leaves an unreachable enumerator]**
 22. bad_alloc from the outer catch is reported as

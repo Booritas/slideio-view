@@ -193,7 +193,12 @@ void AnnotationListPanel::setAnnotationModel(app::AnnotationModel* model)
         // Every signal that changes what the rows should say rebuilds them.
         // selectionChanged deliberately does not: it moves a highlight, and
         // rebuilding would destroy the item under the user's cursor mid-click.
-        const auto rebuildRows = [this]() { rebuild(); };
+        // Named for what it does, not for the member that sounds like it:
+        // rebuild() refreshes the rows AND the tally, while the member
+        // rebuildRows() deliberately refreshes only the rows. Every signal
+        // here is a change to the annotations themselves, so every one of
+        // them can move a count.
+        const auto rebuildAll = [this]() { rebuild(); };
         connect(m_impl->model, &app::AnnotationModel::annotationAdded, this, [this](const std::string& id) {
             rebuild();
             const core::Annotation* added = m_impl->model->find(id);
@@ -205,13 +210,13 @@ void AnnotationListPanel::setAnnotationModel(app::AnnotationModel* model)
                 emit categoryUsed(added->properties().classification);
             }
         });
-        connect(m_impl->model, &app::AnnotationModel::annotationRemoved, this, rebuildRows);
-        connect(m_impl->model, &app::AnnotationModel::annotationChanged, this, rebuildRows);
-        connect(m_impl->model, &app::AnnotationModel::cleared, this, rebuildRows);
-        connect(m_impl->model, &app::AnnotationModel::modelReset, this, rebuildRows);
+        connect(m_impl->model, &app::AnnotationModel::annotationRemoved, this, rebuildAll);
+        connect(m_impl->model, &app::AnnotationModel::annotationChanged, this, rebuildAll);
+        connect(m_impl->model, &app::AnnotationModel::cleared, this, rebuildAll);
+        connect(m_impl->model, &app::AnnotationModel::modelReset, this, rebuildAll);
         // A bulk retag is not a reset (MainWindow would clear the undo stack), so it has its
         // own signal -- and it must refresh the rows and the tally all the same.
-        connect(m_impl->model, &app::AnnotationModel::annotationsBulkChanged, this, rebuildRows);
+        connect(m_impl->model, &app::AnnotationModel::annotationsBulkChanged, this, rebuildAll);
         connect(m_impl->model, &app::AnnotationModel::selectionChanged, this,
                 [this](const std::string& id) { applySelection(id); });
     }

@@ -4,6 +4,7 @@
 #include "slideio/viewer/app/AnnotationModel.h"
 #include "slideio/viewer/app/UndoRedoStack.h"
 
+#include <optional>
 #include <utility>
 
 namespace slideio::viewer::app
