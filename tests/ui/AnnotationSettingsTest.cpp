@@ -153,3 +153,68 @@ TEST_CASE("the getter and the static resolver agree on a stored value",
     settings.setWorkspaceDirectory("");
     REQUIRE(settings.workspaceDirectory() == AnnotationSettings::resolveWorkspaceDirectory(""));
 }
+
+// Two settings objects over one store stand in for two running instances:
+// QSettings shares one cache per file within a process, so a write through one
+// is seen by the other at once, as a synced write by another process is.
+TEST_CASE("another instance's workspace change does not move this instance's",
+          "[ui][AnnotationSettings]")
+{
+    // The repository root is per instance; the stored setting is shared. A
+    // reader of the shared value showed instance A the folder instance B had
+    // just chosen, and pressing OK in A's Preferences unedited would then have
+    // switched A into B's folder, where B holds the lock.
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const QString ini = dir.filePath("settings.ini");
+
+    AnnotationSettings first(ini);
+    first.setWorkspaceDirectory("D:/pathology/first");
+    AnnotationSettings second(ini);
+
+    second.setWorkspaceDirectory("D:/pathology/second");
+
+    REQUIRE(first.workspaceDirectory() == "D:/pathology/first");
+    REQUIRE(first.configuredWorkspaceDirectory() == "D:/pathology/first");
+    REQUIRE(second.workspaceDirectory() == "D:/pathology/second");
+}
+
+TEST_CASE("an instance following the default is not moved by another's choice",
+          "[ui][AnnotationSettings]")
+{
+    // The empty setting is its own state -- "follow the default" -- and is the
+    // one a Cancel restores, so it has to survive another instance's write
+    // too, not only the resolved path.
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const QString ini = dir.filePath("settings.ini");
+
+    AnnotationSettings first(ini);
+    AnnotationSettings second(ini);
+
+    second.setWorkspaceDirectory("D:/pathology/second");
+
+    REQUIRE(first.workspaceDirectory()
+            == slideio::viewer::ui::defaultAnnotationWorkspaceDirectory());
+    REQUIRE(first.configuredWorkspaceDirectory().isEmpty());
+}
+
+TEST_CASE("the last instance to choose a workspace is the one the next launch reads",
+          "[ui][AnnotationSettings]")
+{
+    // What is NOT per instance: the store. A fresh start reads whichever
+    // choice was written last, which is the behaviour before this change.
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const QString ini = dir.filePath("settings.ini");
+
+    {
+        AnnotationSettings first(ini);
+        AnnotationSettings second(ini);
+        first.setWorkspaceDirectory("D:/pathology/first");
+        second.setWorkspaceDirectory("D:/pathology/second");
+    }
+
+    AnnotationSettings nextLaunch(ini);
+    REQUIRE(nextLaunch.workspaceDirectory() == "D:/pathology/second");
+}

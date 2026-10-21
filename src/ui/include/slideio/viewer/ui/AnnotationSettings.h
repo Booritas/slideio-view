@@ -39,10 +39,20 @@ public:
 
     /// The configured workspace, or defaultAnnotationWorkspaceDirectory() when
     /// nothing usable is stored. Never empty.
+    ///
+    /// THIS INSTANCE's workspace: read from the store once, at construction,
+    /// and changed afterwards only by this object's setWorkspaceDirectory().
+    /// The store is shared by every running instance while the repository
+    /// root it mirrors is not, so re-reading it showed one instance the folder
+    /// another had just chosen -- in Preferences, where an OK left unedited
+    /// would then have switched it there, into the other instance's lock. The
+    /// store is still written on every change, so the next launch reads
+    /// whichever instance chose last.
     [[nodiscard]] QString workspaceDirectory() const;
 
-    /// What is actually stored, before resolveWorkspaceDirectory() fills in a
-    /// default. Empty means "follow the default", which is NOT the same thing
+    /// This instance's setting as stored, before resolveWorkspaceDirectory()
+    /// fills in a default -- per instance, like workspaceDirectory(), so a
+    /// Cancel restores what THIS instance had. Empty means "follow the default", which is NOT the same thing
     /// as the default path written out: a caller that restores the resolved
     /// path pins the workspace to today's Documents folder forever, so a user
     /// who later moves it keeps writing annotations to the old location.
@@ -65,6 +75,9 @@ public:
 
 private:
     std::unique_ptr<QSettings> m_settings;
+    /// As stored, trimmed, before resolution; empty means "follow the default".
+    /// See workspaceDirectory() for why this is not re-read from m_settings.
+    QString m_workspace;
 };
 
 } // namespace slideio::viewer::ui

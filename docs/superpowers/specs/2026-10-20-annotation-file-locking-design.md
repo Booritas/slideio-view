@@ -201,6 +201,20 @@ same setting, so it would open in the other instance's folder too. Two instances
 are exactly what locking exists for, so this is the configuration in which it
 shows.
 
+**Fixed 2026-10-21.** `AnnotationSettings` reads the workspace from the store
+once, at construction, and only its own `setWorkspaceDirectory()` changes it
+afterwards; every change is still written to the store, so the next launch reads
+whichever instance chose last. Every writer of the setting already went through
+that one object, so Preferences, Open Annotations Folder, the Export Counts
+start folder and the save-failure folder picker all follow from it. Three tests
+in `tests/ui/AnnotationSettingsTest.cpp` drive two settings objects over one
+INI file — QSettings shares one cache per file within a process, which is what
+makes a second instance testable — and the two that pin the fix failed first.
+Rerun by hand against the installed build: after B switched to `ae-ws2`, A's
+Preferences showed `D:/tmp/ad-run`, an unedited OK neither switched A nor
+rewrote the stored value, and Open Annotations Folder in A opened
+`D:\tmp\ad-run\annotations`.
+
 ## 7. Requirements
 
 FR-ANN-32 (Must) — advisory file locking on annotation files. NFR-REL-04, the

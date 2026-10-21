@@ -17,11 +17,13 @@ constexpr const char* kUserNameKey = "annotations/userName";
 
 AnnotationSettings::AnnotationSettings()
     : m_settings(std::make_unique<QSettings>())
+    , m_workspace(m_settings->value(kWorkspaceKey).toString().trimmed())
 {
 }
 
 AnnotationSettings::AnnotationSettings(const QString& iniFilePath)
     : m_settings(std::make_unique<QSettings>(iniFilePath, QSettings::IniFormat))
+    , m_workspace(m_settings->value(kWorkspaceKey).toString().trimmed())
 {
 }
 
@@ -35,17 +37,18 @@ QString AnnotationSettings::resolveWorkspaceDirectory(const QString& stored)
 
 QString AnnotationSettings::workspaceDirectory() const
 {
-    return resolveWorkspaceDirectory(m_settings->value(kWorkspaceKey).toString());
+    return resolveWorkspaceDirectory(m_workspace);
 }
 
 QString AnnotationSettings::configuredWorkspaceDirectory() const
 {
-    return m_settings->value(kWorkspaceKey).toString().trimmed();
+    return m_workspace;
 }
 
 void AnnotationSettings::setWorkspaceDirectory(const QString& path)
 {
     const QString trimmed = path.trimmed();
+    m_workspace = trimmed;
     if (trimmed.isEmpty()) {
         m_settings->remove(kWorkspaceKey);
     } else {
