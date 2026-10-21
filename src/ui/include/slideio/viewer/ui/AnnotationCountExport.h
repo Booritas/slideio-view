@@ -56,6 +56,11 @@ struct CountExportContext
                                            const CountExportContext& context,
                                            std::chrono::system_clock::time_point exportedAt);
 
+/// `<slideFileName>.s<sceneIndex>` with the characters a file system refuses
+/// replaced -- the part of a suggested export name both exports share. Each
+/// adds its own suffix (`.counts`, `.geojson`), so the two names cannot drift.
+[[nodiscard]] std::string sceneExportFileStem(const std::string& slideFileName, int sceneIndex);
+
 /// `name` with the characters a file system refuses replaced, for the default
 /// name the save dialog offers.
 ///

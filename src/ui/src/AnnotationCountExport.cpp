@@ -126,10 +126,10 @@ std::string categoryCountCsv(const std::vector<CategoryTallyRow>& rows,
     return csv;
 }
 
-std::string countExportFileStem(const std::string& slideFileName, int sceneIndex)
+std::string sceneExportFileStem(const std::string& slideFileName, int sceneIndex)
 {
-    // Mirrors the annotation file's own naming -- "<something>.s<N>" -- so a
-    // counts file sits beside the annotations it counted and sorts next to it.
+    // Mirrors the annotation file's own naming -- "<something>.s<N>" -- so an
+    // export sits beside the annotations it came from and sorts next to them.
     std::string stem;
     stem.reserve(slideFileName.size() + 16);
     for (const char c : slideFileName) {
@@ -161,7 +161,12 @@ std::string countExportFileStem(const std::string& slideFileName, int sceneIndex
     if (stem.empty()) {
         stem = "slide";
     }
-    return stem + ".s" + std::to_string(sceneIndex) + ".counts";
+    return stem + ".s" + std::to_string(sceneIndex);
+}
+
+std::string countExportFileStem(const std::string& slideFileName, int sceneIndex)
+{
+    return sceneExportFileStem(slideFileName, sceneIndex) + ".counts";
 }
 
 } // namespace slideio::viewer::ui

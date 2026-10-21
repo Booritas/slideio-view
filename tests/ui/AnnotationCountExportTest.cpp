@@ -328,3 +328,17 @@ TEST_CASE("countExportFileStem falls back to a name rather than none",
     // reads as the dialog having failed.
     REQUIRE(ui::countExportFileStem("", 2) == "slide.s2.counts");
 }
+
+TEST_CASE("sceneExportFileStem names the scene without a purpose suffix",
+          "[ui][AnnotationCountExport]")
+{
+    // Shared by the counts and GeoJSON exports, each adding its own suffix, so
+    // the two suggested names cannot drift apart.
+    REQUIRE(ui::sceneExportFileStem("Philips-1.tiff", 0) == "Philips-1.tiff.s0");
+    REQUIRE(ui::sceneExportFileStem("Philips-1.tiff", 1) == "Philips-1.tiff.s1");
+}
+
+TEST_CASE("sceneExportFileStem replaces what a file system refuses", "[ui][AnnotationCountExport]")
+{
+    REQUIRE(ui::sceneExportFileStem("a:b*c?d\"e<f>g|h", 1) == "a_b_c_d_e_f_g_h.s1");
+}
