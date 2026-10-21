@@ -139,23 +139,69 @@ like a failure.
 
 | | Check | Result |
 |---|---|---|
-| AD1 | With no slide open, File > Export Counts is disabled. | |
-| AD2 | Open a slide: it is enabled. Close the slide: disabled again. | |
-| AD3 | Export a scene with counts: the file opens in Excel by double-click, with seven columns and one row per tally row. | |
-| AD4 | The rows and their order are exactly what the strip was showing, Unclassified last. | |
-| AD5 | The counts sum to the annotation count the dock title reports. | |
-| AD6 | A category typed in Greek or Cyrillic shows correctly in Excel, not as mojibake. | |
-| AD7 | A category holding a comma lands in one cell, not two. | |
-| AD8 | A category named `=1+1` shows as text in the cell, not as `2`. | |
-| AD9 | Type into the list's filter box, then export: the file still holds every annotation, not the filtered subset. | |
-| AD10 | Export an empty scene: a header row and the configured categories at zero. | |
-| AD11 | Export from a read-only slide: it works, and the counts are right. | |
-| AD12 | Cancel the save dialog: no file is written and nothing is reported. | |
-| AD13 | Export twice to the same name: the dialog asks before overwriting, and the second file is a complete file, not an appended one. | |
-| AD14 | Export to a path that cannot be written (a read-only folder): a warning names the path and the reason, and no partial file is left. | |
-| AD15 | The suggested name is `<slide>.s<N>.counts.csv` and the dialog opens in the annotation workspace. | |
-| AD16 | Export scene 1 of a multi-scene slide: `scene` reads 1 and the counts are that scene's. | |
-| AD17 | The status bar confirms the export and names the file. | |
+| AD1 | With no slide open, File > Export Counts is disabled. | Pass |
+| AD2 | Open a slide: it is enabled. Close the slide: disabled again. | Pass |
+| AD3 | Export a scene with counts: the file opens in Excel by double-click, with seven columns and one row per tally row. | Pass in **LibreOffice Calc** — see below |
+| AD4 | The rows and their order are exactly what the strip was showing, Unclassified last. | Pass |
+| AD5 | The counts sum to the annotation count the dock title reports. | Pass — 27 = "Annotations (27)" |
+| AD6 | A category typed in Greek or Cyrillic shows correctly in Excel, not as mojibake. | Pass in **LibreOffice Calc** — see below |
+| AD7 | A category holding a comma lands in one cell, not two. | Pass |
+| AD8 | A category named `=1+1` shows as text in the cell, not as `2`. | Pass in **LibreOffice Calc** — see below |
+| AD9 | Type into the list's filter box, then export: the file still holds every annotation, not the filtered subset. | Pass — "3 of 27" filtered, file still sums to 27 |
+| AD10 | Export an empty scene: a header row and the configured categories at zero. | Pass — and no Unclassified row |
+| AD11 | Export from a read-only slide: it works, and the counts are right. | Pass |
+| AD12 | Cancel the save dialog: no file is written and nothing is reported. | Pass |
+| AD13 | Export twice to the same name: the dialog asks before overwriting, and the second file is a complete file, not an appended one. | Pass |
+| AD14 | Export to a path that cannot be written (a read-only folder): a warning names the path and the reason, and no partial file is left. | Pass, **through a write-denied file** — see below |
+| AD15 | The suggested name is `<slide>.s<N>.counts.csv` and the dialog opens in the annotation workspace. | Pass |
+| AD16 | Export scene 1 of a multi-scene slide: `scene` reads 1 and the counts are that scene's. | Pass |
+| AD17 | The status bar confirms the export and names the file. | Pass |
+
+**Run 2026-10-21 against the installed build (sha256 `f2aa48f1…`, commit
+`016dfd5`): 17/17 passed, three of them in a stand-in and one by a different
+route.** Driven by UI Automation and synthetic input; every file was checked
+byte for byte, not only by eye.
+
+Fixtures. Philips-1 scene 0 with 27 annotations whose classifications cover the
+configured three (Tumor, Stroma, Ki67 — Stroma with none, so a zero row), four
+unconfigured spellings (`Tumor, invasive`, `=1+1`, `Νέκρωση`, `Опухоль`) and nine
+unclassified. The expected file was worked out from the annotation file before
+the export and matched it: Tumor 8, Stroma 0, Ki67 3, `"Tumor, invasive"` 2,
+`'=1+1` 1, Νέκρωση 2, Опухоль 2, Unclassified 9 — the strip's rows in the
+strip's order. UTF-8 byte-order mark, CRLF on all nine lines, seven columns.
+AD10 and AD16 used `scn/ultivue/Leica Aperio Versa 5 channel fluorescent
+image.scn` (three scenes): scene 0 untouched, scene 1 given three Stroma and two
+Ki67 markers through the counting combo and the marker tool.
+
+**AD3, AD6, AD8 ran in LibreOffice Calc 26.8, not Excel.** Excel is not
+installed on the machine; Calc is its `.csv` handler, so it is what a
+double-click opens there. Calc's import dialog detected the encoding as UTF-8
+on its own (from the byte-order mark), split seven columns, kept
+`Tumor, invasive` in one cell, and showed Greek and Cyrillic correctly. `=1+1`
+displays as `'=1+1` — the deliberate side of the trade in §3. Note that this
+does NOT prove the apostrophe is what stops evaluation in Calc: Calc's import
+leaves "Evaluate formulas" off by default, so it would not have evaluated a bare
+`=1+1` either. The apostrophe is there for Excel and Sheets, and those three
+checks remain open for Excel itself on a machine that has it.
+
+**AD14 reached the application's warning through a write-denied FILE, not a
+read-only folder.** With an unwritable folder the Windows save dialog refuses
+first ("You don't have permission to save in this location … save in the
+Documents folder instead?"), so the path never reaches `exportCounts` — that
+branch is unreachable through a folder on Windows, and the folder was left
+empty, which is the clause that matters. To reach the application's own write
+failure, an existing file had write denied by ACL; the dialog asked to replace
+it, and the export then warned "The counts could not be written to:
+D:\tmp\ad-run\ad14-locked.csv — Access is denied." The file was untouched at its
+original three bytes.
+
+AD11's read-only slide came from the lock rather than a slide-ID mismatch: a
+second viewer opened Philips-1 while the first held
+`ec83fc2ebbfbc515.s0.annotations.json.lock`, so it showed the 27 annotations
+with "Annotations disabled". Export Counts stayed enabled there and wrote the
+same eight rows. This is incidentally the first exercise of FR-ANN-32's
+contention path against the built viewer (group AE, not yet run, is its proper
+check). Both locks were released when the viewers closed.
 
 ## 7. Requirements
 
