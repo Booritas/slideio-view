@@ -323,7 +323,7 @@ Written before the run. QuPath 0.7.0 is installed on the development machine.
 | | Check | Result |
 |---|---|---|
 | AF1 | With no slide open, File > Export Annotations is disabled; open a slide: enabled; close: disabled. | Pass |
-| AF2 | The suggested name is `<slide>.s<N>.geojson` and the dialog opens in the annotation workspace. | Pass — `Philips-1.tiff.s0.geojson` in `D:	mpd-run` |
+| AF2 | The suggested name is `<slide>.s<N>.geojson` and the dialog opens in the annotation workspace. | Pass — `Philips-1.tiff.s0.geojson` in `D:\tmp\ad-run` |
 | AF3 | Export Philips-1 scene 0 (27 annotations: points, arrows, rectangles): the file parses, holds 27 features, and its ids match the annotation file's. | Pass — 27 features, ids identical and in order |
 | AF4 | Open Philips-1 in QuPath 0.7.0 and import the file: 27 objects, each on the shape the viewer shows, none offset or scaled. | Pass, by QuPath's reader rather than its window — see below |
 | AF5 | In QuPath, classifications appear by name — Greek, Cyrillic and `Tumor, invasive` intact — unclassified annotations have no class, and each object shows the colour it had in the viewer. | Pass — names byte-identical; 9 with no class |
