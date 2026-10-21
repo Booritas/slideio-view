@@ -653,6 +653,16 @@ ParseResult parseDocument(std::string_view text)
 
 } // namespace
 
+const char* annotationTypeName(const AnnotationGeometry& geometry)
+{
+    return geometryTypeName(geometry);
+}
+
+std::string formatAnnotationColor(const Color& color)
+{
+    return formatColor(color);
+}
+
 std::string serializeAnnotationDocument(const AnnotationDocument& document)
 {
     // The parser rejects an empty id and a duplicate id. Same rule as the

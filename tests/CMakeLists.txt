@@ -24,11 +24,14 @@ add_executable(slideio-viewer-core-tests
     core/AnnotationTest.cpp
     core/Iso8601Test.cpp
     core/AnnotationSerializationTest.cpp
+    core/AnnotationGeoJsonTest.cpp
     core/AutosavePolicyTest.cpp
 )
 
 target_link_libraries(slideio-viewer-core-tests
-    PRIVATE slideio-viewer-core Catch2::Catch2WithMain
+    # nlohmann for AnnotationGeoJsonTest, which parses the export back to assert
+    # on its structure; core itself links it PRIVATE and never exposes it.
+    PRIVATE slideio-viewer-core Catch2::Catch2WithMain nlohmann_json::nlohmann_json
 )
 
 add_test(NAME core-tests COMMAND slideio-viewer-core-tests)

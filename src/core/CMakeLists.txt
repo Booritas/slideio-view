@@ -22,6 +22,7 @@ add_library(slideio-viewer-core STATIC
     src/Annotation.cpp
     src/Iso8601.cpp
     src/AnnotationSerialization.cpp
+    src/AnnotationGeoJson.cpp
     src/AutosavePolicy.cpp
 )
 

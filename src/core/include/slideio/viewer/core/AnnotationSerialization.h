@@ -8,6 +8,14 @@
 namespace slideio::viewer::core
 {
 
+/// The type name a saved file gives `geometry` -- "rectangle", "ellipse",
+/// "polygon", "polyline", "point" or "arrow". Shared with the GeoJSON export so
+/// the two files name a shape the same way.
+[[nodiscard]] const char* annotationTypeName(const AnnotationGeometry& geometry);
+
+/// `color` as a saved file writes it: `#RRGGBBAA`, upper-case hex.
+[[nodiscard]] std::string formatAnnotationColor(const Color& color);
+
 /// Renders `document` as pretty-printed JSON with a trailing newline.
 ///
 /// Returns an empty string when the document cannot be represented -- that
