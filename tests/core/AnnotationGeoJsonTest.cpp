@@ -2,10 +2,12 @@
 
 #include "slideio/viewer/core/AnnotationGeoJson.h"
 #include "slideio/viewer/core/AnnotationGeometry.h"
+#include "slideio/viewer/core/Iso8601.h"
 
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <cmath>
 #include <limits>
 #include <string>
 #include <vector>
@@ -195,4 +197,153 @@ TEST_CASE("a large scene is written whole", "[core][GeoJson]")
                                  EllipseGeometry{PointF{x, 0}, PointF{x + 8, 6}});
     }
     REQUIRE(exportAndParse(annotations).at("features").size() == 2000);
+}
+
+namespace
+{
+
+Annotation withProperties(const std::string& id, const std::string& label,
+                          const std::string& classification, const std::string& notes = "")
+{
+    AnnotationProperties properties;
+    properties.label = label;
+    properties.classification = classification;
+    properties.notes = notes;
+    properties.color = Color{0xE6, 0x7E, 0x22, 0xFF};
+    AnnotationMetadata metadata;
+    metadata.author = "booritas";
+    metadata.createdAt = at(1792490669LL);
+    metadata.modifiedAt = at(1792490700LL);
+    return Annotation(id, PointGeometry{PointF{1, 1}}, properties, metadata);
+}
+
+json propertiesOf(const Annotation& annotation)
+{
+    return exportAndParse({annotation}).at("features").at(0).at("properties");
+}
+
+} // namespace
+
+TEST_CASE("unclassified annotations carry no classification", "[core][GeoJson]")
+{
+    for (const std::string& unclassified : {std::string(), std::string("   "),
+                                            std::string("unclassified"), std::string("UNCLASSIFIED")}) {
+        REQUIRE_FALSE(propertiesOf(withProperties("a1", "", unclassified)).contains("classification"));
+    }
+}
+
+TEST_CASE("a classification is written as stored, with the annotation's colour", "[core][GeoJson]")
+{
+    const json properties = propertiesOf(withProperties("a1", "", "Tumor, invasive"));
+    REQUIRE(properties.at("classification")
+            == json{{"name", "Tumor, invasive"}, {"color", json::array({230, 126, 34})}});
+}
+
+TEST_CASE("every feature carries its own colour", "[core][GeoJson]")
+{
+    REQUIRE(propertiesOf(withProperties("a1", "", "Tumor")).at("color") == json::array({230, 126, 34}));
+    REQUIRE(propertiesOf(withProperties("a1", "", "")).at("color") == json::array({230, 126, 34}));
+}
+
+TEST_CASE("an empty label is omitted and a label is the name", "[core][GeoJson]")
+{
+    REQUIRE_FALSE(propertiesOf(withProperties("a1", "", "Tumor")).contains("name"));
+    REQUIRE(propertiesOf(withProperties("a1", "Region 1", "Tumor")).at("name") == "Region 1");
+}
+
+TEST_CASE("the slideio block carries every field, empty ones included", "[core][GeoJson]")
+{
+    const json block = propertiesOf(withProperties("a1", "", "")).at("slideio");
+    REQUIRE(block.at("type") == "point");
+    REQUIRE(block.at("notes") == "");
+    REQUIRE(block.at("author") == "booritas");
+    REQUIRE(block.at("createdAt") == formatIso8601Utc(at(1792490669LL)));
+    REQUIRE(block.at("modifiedAt") == formatIso8601Utc(at(1792490700LL)));
+    REQUIRE(block.at("color") == "#E67E22FF");
+    REQUIRE(block.at("lineWidth") == 2.0);
+    REQUIRE(std::abs(block.at("fillOpacity").get<double>() - 0.3) < 1e-6);
+
+    const json arrow = exportAndParse({Annotation("a1", ArrowGeometry{PointF{0, 0}, PointF{1, 1}})});
+    REQUIRE(arrow.at("features").at(0).at("properties").at("slideio").at("type") == "arrow");
+    const json line =
+        exportAndParse({Annotation("a1", PolygonGeometry{{PointF{0, 0}, PointF{1, 1}}, false})});
+    REQUIRE(line.at("features").at(0).at("properties").at("slideio").at("type") == "polyline");
+}
+
+TEST_CASE("the collection records where it came from", "[core][GeoJson]")
+{
+    const json block = exportAndParse({}).at("slideio");
+    REQUIRE(block.at("format") == "slideio-viewer annotation export");
+    REQUIRE(block.at("formatVersion") == 1);
+    REQUIRE(block.at("slide") == "D:/slides/Philips-1.tiff");
+    REQUIRE(block.at("slideId") == "ec83fc2ebbfbc515");
+    REQUIRE(block.at("scene") == 0);
+    REQUIRE(block.at("exportedAt") == formatIso8601Utc(at(1792576800LL)));
+    REQUIRE(block.at("coordinates")
+            == "level-0 pixels of the scene; origin top-left, x right, y down");
+}
+
+TEST_CASE("pixel size is written only when known", "[core][GeoJson]")
+{
+    GeoJsonExportContext known = context();
+    known.pixelSizeMicronsX = 0.25;
+    known.pixelSizeMicronsY = 0.25;
+    const json withSize = json::parse(annotationsToGeoJson({}, known, at(1792576800LL)).text);
+    REQUIRE(withSize.at("slideio").at("pixelSizeMicrons") == json::array({0.25, 0.25}));
+
+    REQUIRE_FALSE(exportAndParse({}).at("slideio").contains("pixelSizeMicrons"));
+    GeoJsonExportContext half = context();
+    half.pixelSizeMicronsX = 0.25;
+    const json halfKnown = json::parse(annotationsToGeoJson({}, half, at(1792576800LL)).text);
+    REQUIRE_FALSE(halfKnown.at("slideio").contains("pixelSizeMicrons"));
+}
+
+TEST_CASE("Greek and Cyrillic text is written as UTF-8, unescaped", "[core][GeoJson]")
+{
+    const std::string greek = "\xCE\x9D\xCE\xAD\xCE\xBA\xCF\x81\xCF\x89\xCF\x83\xCE\xB7";  // Νέκρωση
+    const std::string cyrillic = "\xD0\x9E\xD0\xBF\xD1\x83\xD1\x85\xD0\xBE\xD0\xBB\xD1\x8C";  // Опухоль
+    const GeoJsonExportResult result =
+        annotationsToGeoJson({withProperties("a1", cyrillic, greek)}, context(), at(1792576800LL));
+    REQUIRE(result.text.find(greek) != std::string::npos);
+    REQUIRE(result.text.find(cyrillic) != std::string::npos);
+    const json properties = json::parse(result.text).at("features").at(0).at("properties");
+    REQUIRE(properties.at("classification").at("name") == greek);
+    REQUIRE(properties.at("name") == cyrillic);
+}
+
+TEST_CASE("JSON-special characters round-trip", "[core][GeoJson]")
+{
+    const std::string label = "say \"hi\"\t\\x";
+    const std::string notes = "line1\nline2";
+    const json properties = propertiesOf(withProperties("a1", label, "", notes));
+    REQUIRE(properties.at("name") == label);
+    REQUIRE(properties.at("slideio").at("notes") == notes);
+}
+
+TEST_CASE("invalid UTF-8 does not abort the export", "[core][GeoJson]")
+{
+    const GeoJsonExportResult result = annotationsToGeoJson(
+        {withProperties("a1", "", "", "ok\xFF\xFE" "end")}, context(), at(1792576800LL));
+    REQUIRE(result.error.empty());
+    const json properties = json::parse(result.text).at("features").at(0).at("properties");
+    REQUIRE(properties.at("slideio").at("notes") == "ok\xEF\xBF\xBD\xEF\xBF\xBD" "end");
+}
+
+TEST_CASE("a Windows path with non-ASCII characters round-trips", "[core][GeoJson]")
+{
+    GeoJsonExportContext windows = context();
+    windows.slidePath = "D:\\\xD1\x81\xD0\xBB\xD0\xB0\xD0\xB9\xD0\xB4\xD1\x8B\\Philips-1.tiff";  // D:\слайды\...
+    const json file = json::parse(annotationsToGeoJson({}, windows, at(1792576800LL)).text);
+    REQUIRE(file.at("slideio").at("slide") == windows.slidePath);
+}
+
+TEST_CASE("an unrepresentable timestamp fails the export", "[core][GeoJson]")
+{
+    AnnotationMetadata metadata;
+    metadata.createdAt = at(-86400LL);  // before 1970
+    metadata.modifiedAt = at(1792490700LL);
+    const Annotation old("a7", PointGeometry{PointF{1, 1}}, AnnotationProperties{}, metadata);
+    const GeoJsonExportResult result = annotationsToGeoJson({old}, context(), at(1792576800LL));
+    REQUIRE(result.text.empty());
+    REQUIRE(result.error.find("a7") != std::string::npos);
 }
