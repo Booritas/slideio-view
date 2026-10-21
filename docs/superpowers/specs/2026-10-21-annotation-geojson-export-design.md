@@ -322,21 +322,56 @@ Written before the run. QuPath 0.7.0 is installed on the development machine.
 
 | | Check | Result |
 |---|---|---|
-| AF1 | With no slide open, File > Export Annotations is disabled; open a slide: enabled; close: disabled. | |
-| AF2 | The suggested name is `<slide>.s<N>.geojson` and the dialog opens in the annotation workspace. | |
-| AF3 | Export Philips-1 scene 0 (27 annotations: points, arrows, rectangles): the file parses, holds 27 features, and its ids match the annotation file's. | |
-| AF4 | Open Philips-1 in QuPath 0.7.0 and import the file: 27 objects, each on the shape the viewer shows, none offset or scaled. | |
-| AF5 | In QuPath, classifications appear by name — Greek, Cyrillic and `Tumor, invasive` intact — unclassified annotations have no class, and each object shows the colour it had in the viewer. | |
-| AF6 | An ellipse and a closed polygon drawn in the viewer import into QuPath as areas with the same outline. | |
-| AF7 | A freehand line and an arrow import as lines; the arrow's first point is its tail. | |
-| AF8 | Export scene 1 of the 3-scene SCN, open that scene in QuPath, import: shapes on scene 1's tissue. | |
-| AF9 | Type into the list's filter box, then export: the file still holds every annotation. | |
-| AF10 | Export from a read-only slide: it works and holds every annotation. | |
-| AF11 | Export an empty scene: a valid empty collection, and QuPath imports it without error. | |
-| AF12 | Cancel the dialog: no file, no message. | |
-| AF13 | Export twice to one name: the dialog asks first, and the result is one complete file. | |
-| AF14 | Export onto a write-denied file: a warning names the path and the reason; the file is untouched. | |
-| AF15 | The status bar confirms the export and names the file. | |
+| AF1 | With no slide open, File > Export Annotations is disabled; open a slide: enabled; close: disabled. | Pass |
+| AF2 | The suggested name is `<slide>.s<N>.geojson` and the dialog opens in the annotation workspace. | Pass — `Philips-1.tiff.s0.geojson` in `D:	mpd-run` |
+| AF3 | Export Philips-1 scene 0 (27 annotations: points, arrows, rectangles): the file parses, holds 27 features, and its ids match the annotation file's. | Pass — 27 features, ids identical and in order |
+| AF4 | Open Philips-1 in QuPath 0.7.0 and import the file: 27 objects, each on the shape the viewer shows, none offset or scaled. | Pass, by QuPath's reader rather than its window — see below |
+| AF5 | In QuPath, classifications appear by name — Greek, Cyrillic and `Tumor, invasive` intact — unclassified annotations have no class, and each object shows the colour it had in the viewer. | Pass — names byte-identical; 9 with no class |
+| AF6 | An ellipse and a closed polygon drawn in the viewer import into QuPath as areas with the same outline. | Pass — ellipse bounds equal the stored box |
+| AF7 | A freehand line and an arrow import as lines; the arrow's first point is its tail. | Pass |
+| AF8 | Export scene 1 of the 3-scene SCN, open that scene in QuPath, import: shapes on scene 1's tissue. | Pass — QuPath series 1 is scene 1 |
+| AF9 | Type into the list's filter box, then export: the file still holds every annotation. | Pass — "0 of 3" filtered, 3 features written |
+| AF10 | Export from a read-only slide: it works and holds every annotation. | Pass |
+| AF11 | Export an empty scene: a valid empty collection, and QuPath imports it without error. | Pass |
+| AF12 | Cancel the dialog: no file, no message. | Pass |
+| AF13 | Export twice to one name: the dialog asks first, and the result is one complete file. | Pass |
+| AF14 | Export onto a write-denied file: a warning names the path and the reason; the file is untouched. | Pass |
+| AF15 | The status bar confirms the export and names the file. | Pass |
+
+**Run 2026-10-21 against the installed build of `ef24542`: 15/15 passed.** The
+viewer was driven by UI Automation and synthetic input; every exported file was
+parsed back, not read by eye.
+
+**QuPath was checked through its own reader, not its window.** AF4–AF8 and AF11
+ran each file through `QuPath-0.7.0 (console).exe script --image=<slide>`,
+whose Groovy script calls `PathIO.readObjects` — the reader behind QuPath's
+*Import objects* — and prints every object's id, ROI kind, class, name, colour,
+bounds and first and last point. That compares numbers where a screenshot
+compares pixels, and it is stronger for the anti-goal it guards ("shapes land
+in the wrong place"); what it does not exercise is QuPath's GUI import command
+and the drawing of the result, which a reader opening the file in QuPath's
+window would still see. Results:
+
+- Philips-1: 27 objects, every id the annotation file's, every marker, arrow
+  end and box corner at its stored coordinate to the printed precision. The
+  five-point rectangle ring came back as QuPath's own `Rectangle` ROI. Class
+  names compared as percent-encoded UTF-8: Νέκρωση and Опухоль byte-identical,
+  `Tumor, invasive` and `=1+1` intact, the 9 unclassified with no class. Every
+  object carried `#E67E22` — all 27 happen to share one colour, so per-object
+  colour was shown to arrive, not to stay distinct across a class.
+- A scratch ellipse, polygon and freehand line on `CMU-1-Small-Region.svs`:
+  the ellipse became a 513-point `Polygon` whose bounds equal the stored box
+  exactly (including its overhang past the slide's left edge) and whose area,
+  599 728 px², is within 0.003 % of the true ellipse; the polygon an area; the
+  line a `Line` starting at its stored first vertex. The arrow check came from
+  Philips-1's nine arrows, each starting at its stored tail.
+- The three-scene SCN opens in QuPath through Bio-Formats as one image per
+  series. Series 1 is 9462×14555, slideio's scene 1; its export imported there
+  with all six markers at their stored positions. Scene 2's empty export
+  imported onto series 2 as 0 objects, without error.
+
+AF14 used a write-denied file, as AD14 did, since a read-only folder is refused
+by the Windows save dialog before the application sees the path.
 
 ## 8. Requirements
 
