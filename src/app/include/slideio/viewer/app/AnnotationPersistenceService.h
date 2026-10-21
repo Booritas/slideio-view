@@ -98,6 +98,19 @@ public:
     /// used" is not.
     [[nodiscard]] bool isLockedByAnother() const;
 
+    /// True when the model holds what this scene's annotation file holds --
+    /// all of it, or nothing because nothing was ever saved. Writable or not:
+    /// a scene locked by another instance or a mismatch opened read-only is
+    /// still loaded.
+    ///
+    /// False with no slide, after endSlide() (an associated image, an
+    /// unidentified slide), after a load failure, and when a mismatch was
+    /// resolved by ignoring the stored annotations. The model is then empty
+    /// without the scene being empty, and an export of it would file a false
+    /// "this scene has no annotations" -- which is what the two exports ask
+    /// this to prevent.
+    [[nodiscard]] bool annotationsLoaded() const;
+
     /// Who holds it, in words, or empty when the holder could not be read --
     /// which is a normal outcome on a share. Only meaningful while
     /// isLockedByAnother().
@@ -151,6 +164,7 @@ private:
     std::chrono::system_clock::time_point m_createdAt{};
     bool m_active = false;
     bool m_lockedByAnother = false;
+    bool m_annotationsLoaded = false;
     QString m_lockHolder;
     bool m_dirty = false;
     bool m_loading = false;

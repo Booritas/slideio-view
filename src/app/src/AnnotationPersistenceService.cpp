@@ -112,6 +112,8 @@ void AnnotationPersistenceService::beginSlide(const core::AnnotationKey& key,
         m_loading = true;
         m_model.replaceAll({});
         m_loading = false;
+        // Nothing was ever saved, so the empty model IS the scene.
+        m_annotationsLoaded = true;
         // A scene nobody has annotated is the one the lock matters MOST for:
         // two instances would otherwise both start from empty and whichever
         // saved second would silently erase the other's work.
@@ -166,6 +168,9 @@ void AnnotationPersistenceService::beginSlide(const core::AnnotationKey& key,
     }
 
     m_loading = true;
+    // Ignore leaves the model empty over a file that is not; the other two
+    // choices show what the file holds.
+    m_annotationsLoaded = !annotations.empty() || loaded.document.annotations.empty();
     m_model.replaceAll(std::move(annotations));
     m_loading = false;
     m_dirty = false;
@@ -235,6 +240,9 @@ core::SaveResult AnnotationPersistenceService::endSlide()
         ~Restore() { flag = value; }
     } restore{m_inCloseFlush, wasInCloseFlush};
 
+    // Whatever the model holds from here on is not a scene this service read.
+    m_annotationsLoaded = false;
+
     core::SaveResult result = flush();
 
     // A close that fails silently is how a slide switch eats an hour of work.
@@ -288,6 +296,11 @@ bool AnnotationPersistenceService::isActive() const
 bool AnnotationPersistenceService::isLockedByAnother() const
 {
     return m_lockedByAnother;
+}
+
+bool AnnotationPersistenceService::annotationsLoaded() const
+{
+    return m_annotationsLoaded;
 }
 
 QString AnnotationPersistenceService::lockHolder() const

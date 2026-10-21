@@ -870,3 +870,89 @@ TEST_CASE("a locked-out slide saves nothing even when edited",
     REQUIRE(result.status == core::SaveStatus::NothingToDo);
     REQUIRE(repository.saveCount == 0);
 }
+
+// annotationsLoaded() is what the two exports ask before writing a file that
+// says what a scene holds. An empty model is only "this scene has no
+// annotations" when the scene's file was read -- or there was none to read.
+TEST_CASE("annotations count as loaded when the scene's file was read",
+          "[app][AnnotationPersistenceService]")
+{
+    FakeRepository repository;
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+
+    SECTION("a file with annotations")
+    {
+        repository.nextLoad = loadedWith("slide-1", 0, {rectangle("a1")});
+        service.beginSlide({"slide-1", 0}, provenance());
+        REQUIRE(service.annotationsLoaded());
+    }
+    SECTION("no file at all: the scene really is empty")
+    {
+        repository.nextLoad.status = core::LoadStatus::NotFound;
+        service.beginSlide({"slide-1", 0}, provenance());
+        REQUIRE(service.annotationsLoaded());
+    }
+    SECTION("held by another instance: read, just not writable")
+    {
+        repository.nextLock = {core::LockStatus::HeldByOther, "/fake/x.lock", "viewer on PC2", {}};
+        repository.nextLoad = loadedWith("slide-1", 0, {rectangle("a1")});
+        service.beginSlide({"slide-1", 0}, provenance());
+        REQUIRE(service.annotationsLoaded());
+    }
+    SECTION("a mismatch resolved read-only still shows the stored annotations")
+    {
+        service.setMismatchResolver([](const core::AnnotationDocument&, const core::SlideProvenance&) {
+            return AnnotationPersistenceService::MismatchChoice::ReadOnly;
+        });
+        repository.nextLoad = loadedWith("another-slide", 0, {rectangle("a1")});
+        service.beginSlide({"slide-1", 0}, provenance());
+        REQUIRE(service.annotationsLoaded());
+    }
+}
+
+TEST_CASE("annotations do not count as loaded when the model is empty for another reason",
+          "[app][AnnotationPersistenceService]")
+{
+    FakeRepository repository;
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+
+    SECTION("no slide")
+    {
+        REQUIRE_FALSE(service.annotationsLoaded());
+    }
+    SECTION("a file that could not be parsed")
+    {
+        repository.nextLoad.status = core::LoadStatus::Malformed;
+        service.beginSlide({"slide-1", 0}, provenance());
+        REQUIRE_FALSE(service.annotationsLoaded());
+    }
+    SECTION("a file from a newer build")
+    {
+        repository.nextLoad.status = core::LoadStatus::UnsupportedVersion;
+        service.beginSlide({"slide-1", 0}, provenance());
+        REQUIRE_FALSE(service.annotationsLoaded());
+    }
+    SECTION("an unidentified slide")
+    {
+        service.beginSlide({"", 0}, provenance());
+        REQUIRE_FALSE(service.annotationsLoaded());
+    }
+    SECTION("a mismatch resolved by ignoring the stored annotations")
+    {
+        service.setMismatchResolver([](const core::AnnotationDocument&, const core::SlideProvenance&) {
+            return AnnotationPersistenceService::MismatchChoice::Ignore;
+        });
+        repository.nextLoad = loadedWith("another-slide", 0, {rectangle("a1")});
+        service.beginSlide({"slide-1", 0}, provenance());
+        REQUIRE_FALSE(service.annotationsLoaded());
+    }
+    SECTION("endSlide, as an associated image calls it")
+    {
+        repository.nextLoad = loadedWith("slide-1", 0, {rectangle("a1")});
+        service.beginSlide({"slide-1", 0}, provenance());
+        service.endSlide();
+        REQUIRE_FALSE(service.annotationsLoaded());
+    }
+}

@@ -284,6 +284,9 @@ struct MainWindow::Impl
     /// inputs, so the file cannot disagree with what was on screen.
     void exportCounts();
     void exportAnnotations();
+    /// False, after warning, when the model is empty for a reason other than
+    /// an empty scene; see AnnotationPersistenceService::annotationsLoaded().
+    bool annotationsReadyToExport(const QString& title);
 
     void createActions()
     {
@@ -1878,6 +1881,9 @@ void MainWindow::Impl::exportCounts()
     if (!viewportWidget->isSlideOpen()) {
         return;
     }
+    if (!annotationsReadyToExport(tr("Export Counts"))) {
+        return;
+    }
 
     // The SAME call the strip makes, on the same two inputs. Not a second
     // counting pass that agrees by inspection: a report that can drift from the
@@ -1942,11 +1948,33 @@ void MainWindow::Impl::exportCounts()
         tr("Counts exported to %1").arg(QFileInfo(chosen).fileName()));
 }
 
+bool MainWindow::Impl::annotationsReadyToExport(const QString& title)
+{
+    // Both exports write a file that says what a scene holds, and an empty
+    // model says "nothing" -- true only when the scene's file was read. After
+    // a load failure, on an associated image or an unidentified slide, or with
+    // a mismatch resolved by ignoring the stored annotations, the model is
+    // empty without the scene being empty, and the export would file a
+    // complete-looking false zero. A locked or read-only scene IS loaded and
+    // stays exportable: that is what a reader wants to take away.
+    if (annotationPersistence->annotationsLoaded()) {
+        return true;
+    }
+    QMessageBox::warning(owner, title,
+                         tr("This scene's annotations were not loaded, so there is nothing "
+                            "reliable to export: a file written now would say the scene has "
+                            "none.\n\nThe status bar says why they are unavailable."));
+    return false;
+}
+
 void MainWindow::Impl::exportAnnotations()
 {
     // Defence in depth, as in exportCounts: the action is only enabled with a
     // slide open.
     if (!viewportWidget->isSlideOpen()) {
+        return;
+    }
+    if (!annotationsReadyToExport(tr("Export Annotations"))) {
         return;
     }
 
