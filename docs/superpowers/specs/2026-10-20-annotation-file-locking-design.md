@@ -148,22 +148,58 @@ suite. Written before the run.
 
 | | Check | Result |
 |---|---|---|
-| AE1 | Open a slide in instance A, then the same slide and scene in instance B: B shows the annotations and the drawing tools are disabled. | |
-| AE2 | B's status bar says another window has them open, and names the holder. | |
-| AE3 | The log in B carries a line naming the lock file and the holder. | |
-| AE4 | A `.lock` file exists beside the annotation file while A has it open. | |
-| AE5 | Close the slide in A: the `.lock` file disappears. | |
-| AE6 | Reopen the slide in B after A closed it: B can annotate, and the lock is now B's. | |
-| AE7 | Annotate in B while it is locked out — the tools are disabled, so confirm nothing can be drawn and the file on disk is unchanged. | |
-| AE8 | Open scene 0 in A and scene 1 of the same slide in B: both can annotate. | |
-| AE9 | Kill instance A from Task Manager, then open the slide in B: the lock is recognised as dead and B can annotate. | |
-| AE10 | Open a slide in A that has never been annotated: an `annotations/` folder appears with a `.lock` in it and no `.json`. | |
-| AE11 | With A holding a lock, change B's workspace in Preferences to a different folder: B can annotate there. | |
-| AE12 | With A holding a lock, change A's workspace: the old root's `.lock` is gone and a new one exists under the new root. | |
-| AE13 | A slide whose annotation file is malformed still reports "the stored file could not be used", not the lock message, and leaves no `.lock` behind. | |
-| AE14 | An associated image takes no lock. | |
-| AE15 | Export Counts works in B while it is locked out. | |
-| AE16 | Delete a stale `.lock` by hand while B has the slide open read-only, reopen the slide in B: B can annotate. | |
+| AE1 | Open a slide in instance A, then the same slide and scene in instance B: B shows the annotations and the drawing tools are disabled. | Pass — 27 shown, all six tool actions disabled |
+| AE2 | B's status bar says another window has them open, and names the holder. | Pass, on the "Annotations disabled" tooltip — see below |
+| AE3 | The log in B carries a line naming the lock file and the holder. | Pass |
+| AE4 | A `.lock` file exists beside the annotation file while A has it open. | Pass |
+| AE5 | Close the slide in A: the `.lock` file disappears. | Pass |
+| AE6 | Reopen the slide in B after A closed it: B can annotate, and the lock is now B's. | Pass — the lock file names B's pid |
+| AE7 | Annotate in B while it is locked out — the tools are disabled, so confirm nothing can be drawn and the file on disk is unchanged. | Pass — M, R and P then clicks: nothing drawn, file hash unchanged |
+| AE8 | Open scene 0 in A and scene 1 of the same slide in B: both can annotate. | Pass — each saved a marker under its own `.s0`/`.s1` lock |
+| AE9 | Kill instance A from Task Manager, then open the slide in B: the lock is recognised as dead and B can annotate. | Pass — killed by `TerminateProcess`, the `.lock` left on disk, B took it over |
+| AE10 | Open a slide in A that has never been annotated: an `annotations/` folder appears with a `.lock` in it and no `.json`. | Pass |
+| AE11 | With A holding a lock, change B's workspace in Preferences to a different folder: B can annotate there. | Pass |
+| AE12 | With A holding a lock, change A's workspace: the old root's `.lock` is gone and a new one exists under the new root. | Pass |
+| AE13 | A slide whose annotation file is malformed still reports "the stored file could not be used", not the lock message, and leaves no `.lock` behind. | Pass |
+| AE14 | An associated image takes no lock. | Pass |
+| AE15 | Export Counts works in B while it is locked out. | Pass |
+| AE16 | Delete a stale `.lock` by hand while B has the slide open read-only, reopen the slide in B: B can annotate. | Pass, with a planted remote-host lock — see below |
+
+**Run 2026-10-21 against the installed build (sha256 `f2aa48f1…`, commit
+`016dfd5`): 16/16 passed.** Driven by UI Automation and synthetic input, every
+lock state read from the `.lock` file's own contents (pid, application, host)
+rather than inferred from the UI. Fixtures: Philips-1 (scene 0, 27 annotations),
+the three-scene `scn/ultivue/Leica Aperio Versa 5 channel fluorescent image.scn`
+and the never-annotated `svs/CMU-1-Small-Region.svs`; the Philips file was
+restored from a byte-identical backup afterwards.
+
+- **AE2.** The reason reads "Another window has this slide's annotations open
+  (slideio-viewer on DESKTOP (process 9416)), so they are read-only here." It is
+  on the tooltip of the persistent "Annotations disabled" label; the transient
+  message had expired by the time it was read. Cosmetic: the holder string
+  carries its own parentheses, so the message nests them.
+- **AE16** needs a lock that is stale but not detectably dead, and a lock this
+  host took is detected dead immediately (that is AE9). So the lock was planted
+  by hand naming another host — pid 4242 on `READING-ROOM-2` — which is the real
+  case: a remote instance that crashed. B opened read-only naming that holder;
+  deleting the file and reopening gave B the lock and its tools back.
+- **AE11 and AE12** each went through the "Change annotation folder" dialog. For
+  the locked-out B it offered only *Switch without copying*, and said the
+  annotations on screen were read-only and would not be carried over; for A it
+  also offered *Copy to the new folder*, which was taken.
+- **AE14.** The Label image opened in its own window; the only `.lock` files
+  before and after were the slide's own and another instance's.
+
+**One finding, not one of the sixteen checks.** Preferences shows the workspace
+from the settings **every instance shares**, not the root this instance is using
+(`AnnotationSettings::workspaceDirectory` reads `QSettings` on each call). After
+B switched to `ae-ws2`, A's Preferences opened showing `D:/tmp/ae-ws2` while A
+was still rooted at `D:/tmp/ad-run`. Inferred from `MainWindow.cpp:1661-1663`
+and not exercised: pressing OK there without touching the field would switch A
+into B's folder, where B holds the lock. The Export Counts dialog starts from the
+same setting, so it would open in the other instance's folder too. Two instances
+are exactly what locking exists for, so this is the configuration in which it
+shows.
 
 ## 7. Requirements
 
