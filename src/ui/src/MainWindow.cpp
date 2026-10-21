@@ -6,6 +6,7 @@
 #include "slideio/viewer/app/UndoRedoStack.h"
 #include "slideio/viewer/app/WorkspaceSwitch.h"
 #include "slideio/viewer/core/AnnotationCategories.h"
+#include "slideio/viewer/core/AnnotationGeoJson.h"
 #include "slideio/viewer/core/ColorManagement.h"
 #include "slideio/viewer/core/SlideId.h"
 #include "slideio/viewer/infra/JsonAnnotationRepository.h"
@@ -204,6 +205,7 @@ struct MainWindow::Impl
     QAction* preferencesAction = nullptr;
     QAction* openAnnotationsFolderAction = nullptr;
     QAction* exportCountsAction = nullptr;
+    QAction* exportAnnotationsAction = nullptr;
     QAction* aboutAction = nullptr;
 
     // Why the configured default ICC profile cannot be used, if it cannot.
@@ -281,6 +283,7 @@ struct MainWindow::Impl
     /// with the same categoryTally() call the strip uses, on the same two
     /// inputs, so the file cannot disagree with what was on screen.
     void exportCounts();
+    void exportAnnotations();
 
     void createActions()
     {
@@ -459,6 +462,15 @@ struct MainWindow::Impl
         // applyAnnotationAvailability and paired with closeAction instead.
         exportCountsAction->setEnabled(false);
 
+        // G, not A: Open Annotations Folder already answers to Alt+A here.
+        exportAnnotationsAction = new QAction("Export Annotations as &GeoJSON...", owner);
+        exportAnnotationsAction->setStatusTip(
+            "Write this scene's annotations to a GeoJSON file QuPath can import");
+        // Gated exactly as Export Counts is, for the same reason: a read-only
+        // slide's annotations are exactly what a reader wants to take elsewhere.
+        // Every exportCountsAction->setEnabled has a twin for this one.
+        exportAnnotationsAction->setEnabled(false);
+
         openAnnotationsFolderAction = new QAction("Open &Annotations Folder", owner);
         openAnnotationsFolderAction->setStatusTip(
             "Show the folder where annotation files are saved");
@@ -490,6 +502,7 @@ struct MainWindow::Impl
         fileMenu->addAction(closeAction);
         fileMenu->addSeparator();
         fileMenu->addAction(exportCountsAction);
+        fileMenu->addAction(exportAnnotationsAction);
         fileMenu->addAction(openAnnotationsFolderAction);
         fileMenu->addAction(openLogAction);
         fileMenu->addSeparator();
@@ -601,6 +614,7 @@ struct MainWindow::Impl
             // Paired with closeAction at all three sites: the counts belong to
             // the open scene, so the action lives and dies with it.
             exportCountsAction->setEnabled(false);
+            exportAnnotationsAction->setEnabled(false);
             // Nothing is open now, so the title stops naming a slide. Done here
             // and not from the slideClosed signal, which also fires at the start
             // of every open: openSlide() sets the title before the viewport
@@ -733,6 +747,10 @@ struct MainWindow::Impl
             exportCounts();
         });
 
+        QObject::connect(exportAnnotationsAction, &QAction::triggered, owner, [this]() {
+            exportAnnotations();
+        });
+
         QObject::connect(openAnnotationsFolderAction, &QAction::triggered, owner, [this]() {
             const QString workspace = annotationSettings->workspaceDirectory();
             const QString annotations = workspace + QStringLiteral("/annotations");
@@ -839,6 +857,7 @@ struct MainWindow::Impl
                 lastOpenedFilePath = filePath;
                 closeAction->setEnabled(true);
                 exportCountsAction->setEnabled(true);
+                exportAnnotationsAction->setEnabled(true);
                 // The Rectangle tool is NOT enabled here: an associated image
                 // opens through this path too, and so does a slide whose
                 // annotations could not be read. Its enabled state comes from
@@ -1050,6 +1069,7 @@ struct MainWindow::Impl
             arrowToolAction->setEnabled(false);
             closeAction->setEnabled(false);
             exportCountsAction->setEnabled(false);
+            exportAnnotationsAction->setEnabled(false);
             minimapWidget->clearThumbnail();
             statusBarManager->updateCursorPosition(0.0, 0.0);
             statusBarManager->updateMagnification(1.0, 0.0);
@@ -1920,6 +1940,80 @@ void MainWindow::Impl::exportCounts()
 
     statusBarManager->showTransientMessage(
         tr("Counts exported to %1").arg(QFileInfo(chosen).fileName()));
+}
+
+void MainWindow::Impl::exportAnnotations()
+{
+    // Defence in depth, as in exportCounts: the action is only enabled with a
+    // slide open.
+    if (!viewportWidget->isSlideOpen()) {
+        return;
+    }
+
+    const std::string slidePath = viewportWidget->currentFilePath();
+    const int sceneIndex = viewportWidget->currentSceneIndex();
+
+    core::GeoJsonExportContext context;
+    context.slidePath = slidePath;
+    context.slideId = viewportWidget->currentSlideId();
+    context.sceneIndex = sceneIndex;
+    // SlideInfo carries metres; zero means the slide did not say, and the
+    // writer then leaves the pixel size out rather than claiming zero.
+    const core::SlideInfo& info = viewportWidget->slideInfo();
+    context.pixelSizeMicronsX = info.resolutionX * 1e6;
+    context.pixelSizeMicronsY = info.resolutionY * 1e6;
+
+    // Every annotation in the scene -- the model's, never the list's filtered
+    // view. Built before the dialog, so a scene that cannot be written is
+    // reported without first asking where to put it.
+    const core::GeoJsonExportResult result =
+        core::annotationsToGeoJson(annotations->annotations(), context, std::chrono::system_clock::now());
+    if (!result.error.empty()) {
+        QMessageBox::warning(owner, tr("Export Annotations"),
+                             tr("The annotations could not be exported.\n\n%1")
+                                 .arg(QString::fromStdString(result.error)));
+        return;
+    }
+
+    const std::string stem = sceneExportFileStem(
+        QFileInfo(QString::fromStdString(slidePath)).fileName().toStdString(), sceneIndex);
+    const QString suggested = QString::fromStdString(stem) + QStringLiteral(".geojson");
+    const QString workspace = annotationSettings->workspaceDirectory();
+    const QString start =
+        workspace.isEmpty() ? suggested : workspace + QStringLiteral("/") + suggested;
+    const QString chosen = QFileDialog::getSaveFileName(
+        owner, tr("Export Annotations"), start,
+        tr("GeoJSON (*.geojson);;JSON (*.json);;All files (*)"));
+    if (chosen.isEmpty()) {
+        return;
+    }
+
+    const auto reportFailure = [this, &chosen](const QString& detail) {
+        QMessageBox::warning(owner, tr("Export Annotations"),
+                             tr("The annotations could not be written to:\n\n%1\n\n%2")
+                                 .arg(QDir::toNativeSeparators(chosen), detail));
+    };
+
+    // The same write as exportCounts, for the same reasons: Truncate because
+    // the dialog has already asked about overwriting, and an explicit flush and
+    // close with a byte count because ~QFile cannot report a failure and a
+    // short file would be read as the whole scene.
+    QFile file(chosen);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        reportFailure(file.errorString());
+        return;
+    }
+    const qint64 written = file.write(result.text.data(), static_cast<qint64>(result.text.size()));
+    const bool flushed = file.flush();
+    const QString error = file.errorString();
+    file.close();
+    if (written != static_cast<qint64>(result.text.size()) || !flushed) {
+        reportFailure(error);
+        return;
+    }
+
+    statusBarManager->showTransientMessage(
+        tr("Annotations exported to %1").arg(QFileInfo(chosen).fileName()));
 }
 
 void MainWindow::Impl::reportWorkspaceSwitch(const app::WorkspaceSwitchResult& result)
