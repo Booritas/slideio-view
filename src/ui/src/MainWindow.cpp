@@ -1,5 +1,7 @@
 #include "slideio/viewer/ui/MainWindow.h"
 #include "slideio/viewer/app/AnnotationEditing.h"
+#include "slideio/viewer/app/AnnotationImport.h"
+#include "slideio/viewer/app/AnnotationImportCommand.h"
 #include "slideio/viewer/app/AnnotationModel.h"
 #include "slideio/viewer/app/AnnotationPersistenceService.h"
 #include "slideio/viewer/app/AnnotationRetagCommand.h"
@@ -14,6 +16,7 @@
 #include "slideio/viewer/infra/QSettingsColorProfileOverrideStore.h"
 #include "slideio/viewer/ui/AboutDialog.h"
 #include "slideio/viewer/ui/AnnotationCountExport.h"
+#include "slideio/viewer/ui/AnnotationGeoJsonImport.h"
 #include "slideio/viewer/ui/AnnotationInteraction.h"
 #include "slideio/viewer/ui/AnnotationListPanel.h"
 #include "slideio/viewer/ui/AnnotationListPolicy.h"
@@ -77,6 +80,7 @@
 #include <chrono>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace
@@ -204,6 +208,7 @@ struct MainWindow::Impl
     QAction* arrowToolAction = nullptr;
     QAction* preferencesAction = nullptr;
     QAction* openAnnotationsFolderAction = nullptr;
+    QAction* importAnnotationsAction = nullptr;
     QAction* exportCountsAction = nullptr;
     QAction* exportAnnotationsAction = nullptr;
     QAction* aboutAction = nullptr;
@@ -287,6 +292,9 @@ struct MainWindow::Impl
     /// False, after warning, when the model is empty for a reason other than
     /// an empty scene; see AnnotationPersistenceService::annotationsLoaded().
     bool annotationsReadyToExport(const QString& title);
+    /// Reads a GeoJSON file, shows what it would add, and on confirmation adds
+    /// it as one undoable step. See the GeoJSON import design spec.
+    void importAnnotations();
 
     void createActions()
     {
@@ -455,6 +463,14 @@ struct MainWindow::Impl
         pointToolAction->setEnabled(false);
         arrowToolAction->setEnabled(false);
 
+        importAnnotationsAction = new QAction("&Import Annotations from GeoJSON...", owner);
+        importAnnotationsAction->setStatusTip(
+            "Add the annotations in a QuPath or SlideIO GeoJSON file to this scene");
+        // The one menu action that creates annotations, so it is gated where
+        // creation is -- in applyAnnotationAvailability beside the drawing
+        // tools, and nowhere else. The exports below are the opposite.
+        importAnnotationsAction->setEnabled(false);
+
         exportCountsAction = new QAction("&Export Counts...", owner);
         exportCountsAction->setStatusTip(
             "Write this scene's category counts to a CSV file");
@@ -504,6 +520,7 @@ struct MainWindow::Impl
 
         fileMenu->addAction(closeAction);
         fileMenu->addSeparator();
+        fileMenu->addAction(importAnnotationsAction);
         fileMenu->addAction(exportCountsAction);
         fileMenu->addAction(exportAnnotationsAction);
         fileMenu->addAction(openAnnotationsFolderAction);
@@ -744,6 +761,10 @@ struct MainWindow::Impl
 
         QObject::connect(preferencesAction, &QAction::triggered, owner, [this]() {
             openPreferences();
+        });
+
+        QObject::connect(importAnnotationsAction, &QAction::triggered, owner, [this]() {
+            importAnnotations();
         });
 
         QObject::connect(exportCountsAction, &QAction::triggered, owner, [this]() {
@@ -1842,6 +1863,8 @@ void MainWindow::Impl::applyAnnotationAvailability(bool available, const QString
     freehandToolAction->setEnabled(available);
     pointToolAction->setEnabled(available);
     arrowToolAction->setEnabled(available);
+    // Import creates annotations, so it follows the tools, not the exports.
+    importAnnotationsAction->setEnabled(available);
     // Same gate for the properties editor's fields. A read-only slide still
     // shows its annotations and still lets them be selected; what it refuses is
     // changing them, and a field that cannot be used should not look as though
@@ -2042,6 +2065,91 @@ void MainWindow::Impl::exportAnnotations()
 
     statusBarManager->showTransientMessage(
         tr("Annotations exported to %1").arg(QFileInfo(chosen).fileName()));
+}
+
+void MainWindow::Impl::importAnnotations()
+{
+    // Defence in depth, as commitPendingShape does: the action is only enabled
+    // where annotations may be created, and an inactive service never writes,
+    // so an import past it would be on screen and silently never saved.
+    const auto editable = [this]() {
+        return viewportWidget->isSlideOpen() && annotationPersistence != nullptr && annotationPersistence->isActive();
+    };
+    if (!editable() || undoStack == nullptr) {
+        return;
+    }
+
+    const QString title = tr("Import Annotations");
+    const QString chosen = QFileDialog::getOpenFileName(owner, title, annotationSettings->workspaceDirectory(),
+                                                        tr("GeoJSON (*.geojson *.json);;All files (*)"));
+    if (chosen.isEmpty()) {
+        return;
+    }
+    const auto reportFailure = [this, &title, &chosen](const QString& detail) {
+        QMessageBox::warning(owner, title,
+                             tr("The annotations could not be read from:\n\n%1\n\n%2")
+                                 .arg(QDir::toNativeSeparators(chosen), detail));
+    };
+
+    QFile file(chosen);
+    if (!file.open(QIODevice::ReadOnly)) {
+        reportFailure(file.errorString());
+        return;
+    }
+    const QByteArray bytes = file.readAll();
+    if (file.error() != QFileDevice::NoError) {
+        reportFailure(file.errorString());
+        return;
+    }
+    file.close();
+
+    // Everything is read and converted before anything is shown or changed: a
+    // file that cannot be read changes nothing.
+    const core::GeoJsonImportResult result = core::geoJsonToAnnotations(
+        std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())),
+        std::chrono::system_clock::now());
+    if (!result.error.empty()) {
+        reportFailure(QString::fromStdString(result.error));
+        return;
+    }
+
+    app::ImportPlan plan = app::planImport(result.annotations, *annotations);
+    const core::SlideInfo& info = viewportWidget->slideInfo();
+    GeoJsonImportSummaryInput summary;
+    summary.fileName = QFileInfo(chosen).fileName();
+    summary.result = &result;
+    summary.toAdd = static_cast<int>(plan.toAdd.size());
+    summary.alreadyPresent = plan.alreadyPresent;
+    summary.outsideScene = countOutsideScene(plan.toAdd, info.width, info.height);
+    summary.openSlideId = viewportWidget->currentSlideId();
+    summary.openScene = viewportWidget->currentSceneIndex();
+    const QString text = geoJsonImportSummary(summary);
+
+    if (plan.toAdd.empty()) {
+        QMessageBox::information(owner, title, text);
+        return;
+    }
+    QMessageBox confirm(QMessageBox::Question, title, text, QMessageBox::NoButton, owner);
+    QPushButton* importButton = confirm.addButton(tr("&Import"), QMessageBox::AcceptRole);
+    QPushButton* cancelButton = confirm.addButton(QMessageBox::Cancel);
+    confirm.setDefaultButton(cancelButton);
+    confirm.exec();
+    if (confirm.clickedButton() != importButton || !editable()) {
+        return;
+    }
+
+    // The model changes first and the command is recorded after, as every
+    // other edit here is: execute() runs only on redo. One insertMany, so one
+    // annotationsBulkChanged -- one list rebuild, and the autosave the
+    // persistence service already arms on that signal.
+    const int count = static_cast<int>(plan.toAdd.size());
+    annotations->clearSelection();
+    annotations->insertMany(plan.toAdd);
+    const QString what = count == 1 ? tr("Import 1 annotation") : tr("Import %1 annotations").arg(count);
+    undoStack->push(app::AnnotationImportCommand::create(*annotations, std::move(plan.toAdd), what.toStdString()));
+    const QString name = QFileInfo(chosen).fileName();
+    statusBarManager->showTransientMessage(count == 1 ? tr("Imported 1 annotation from %1").arg(name)
+                                                      : tr("Imported %1 annotations from %2").arg(count).arg(name));
 }
 
 void MainWindow::Impl::reportWorkspaceSwitch(const app::WorkspaceSwitchResult& result)
