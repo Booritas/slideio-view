@@ -45,6 +45,7 @@ add_executable(slideio-viewer-app-tests
     app/AnnotationEditCommandTest.cpp
     app/AnnotationRetagCommandTest.cpp
     app/AnnotationImportCommandTest.cpp
+    app/AnnotationImportTest.cpp
     app/AnnotationEditingTest.cpp
     app/WorkspaceSwitchTest.cpp
 )
@@ -75,6 +76,7 @@ add_test(NAME infra-tests COMMAND slideio-viewer-infra-tests)
 add_executable(slideio-viewer-ui-tests
     ui/AboutInfoTest.cpp
     ui/AnnotationCountExportTest.cpp
+    ui/AnnotationGeoJsonImportTest.cpp
     ui/AnnotationInteractionTest.cpp
     ui/AnnotationListPolicyTest.cpp
     ui/AnnotationPropertiesEditTest.cpp
