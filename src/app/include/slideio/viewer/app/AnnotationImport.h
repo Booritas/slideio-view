@@ -2,6 +2,7 @@
 
 #include "slideio/viewer/core/Annotation.h"
 
+#include <string>
 #include <vector>
 
 namespace slideio::viewer::app
@@ -22,12 +23,19 @@ struct ImportPlan
 
 /// Turns what the GeoJSON reader returned into what an import adds.
 ///
-/// An annotation with an empty id -- the reader leaves one wherever the file
-/// gave none, since core cannot mint a UUID -- gets a fresh one, exactly as
-/// AnnotationModel::add() makes them. An id the scene already holds is the
-/// SAME annotation, imported before or exported from here, so it is skipped
-/// rather than added twice: that is what keeps a second import of one file
-/// from doubling a clinical count with nothing visibly wrong.
-[[nodiscard]] ImportPlan planImport(std::vector<core::Annotation> imported, const AnnotationModel& model);
+/// Each annotation's id is settled first. A non-empty `idSeeds[i]` -- the
+/// reader gives one to every part of a multi-part feature -- becomes a
+/// name-based (version 5) UUID, so the same part of the same QuPath class gets
+/// the same id on every import. Otherwise the annotation keeps the id it
+/// carries, or, if that is empty, gets a fresh random one exactly as
+/// AnnotationModel::add() makes them. `idSeeds` may be shorter than
+/// `imported`, or empty; a missing seed is an empty one.
+///
+/// An id the scene already holds is then the SAME annotation, imported before
+/// or exported from here, so it is skipped rather than added twice: that is
+/// what keeps a second import of one file from doubling a clinical count with
+/// nothing visibly wrong.
+[[nodiscard]] ImportPlan planImport(std::vector<core::Annotation> imported, std::vector<std::string> idSeeds,
+                                    const AnnotationModel& model);
 
 } // namespace slideio::viewer::app

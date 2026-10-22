@@ -79,6 +79,19 @@ struct GeoJsonImportResult
     /// In file order. An EMPTY id means the caller must mint one: core is
     /// Qt-free and cannot make a UUID.
     std::vector<Annotation> annotations;
+    /// Parallel to `annotations`. Non-empty for each part of a multi-part
+    /// geometry (MultiPoint, MultiLineString, MultiPolygon) whose feature has
+    /// an id: the feature's id, the part's own coordinates, and which repeat
+    /// of those coordinates it is. The caller turns it into the part's UUID.
+    ///
+    /// Not the part's position in the list: QuPath writes a whole Points class
+    /// as ONE feature and keeps its id when the class is edited, so after a
+    /// point is deleted every later position names a different point. A seed
+    /// from where the part IS makes a re-import recognise every unchanged
+    /// point and add only the new ones. A real UUID rather than "id#n",
+    /// because QuPath reads an object id as a UUID and would drop anything
+    /// else on the way back.
+    std::vector<std::string> idSeeds;
     int featuresRead = 0;
     /// Features that produced at least one annotation.
     int featuresImported = 0;
@@ -97,8 +110,9 @@ struct GeoJsonImportResult
     /// top level, so outside the accounting identity above.
     int nestedObjects = 0;
     GeoJsonImportProvenance provenance;
-    /// Non-empty when the file could not be read at all: then every other
-    /// field is empty.
+    /// Non-empty when the file could not be read at all -- not JSON, not
+    /// UTF-8, not GeoJSON, or nested deeper than any GeoJSON file needs:
+    /// then every other field is empty.
     std::string error;
 };
 

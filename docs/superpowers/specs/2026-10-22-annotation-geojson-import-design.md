@@ -110,7 +110,9 @@ exports.
   Lines with a zero count are not shown. With nothing to add, the dialog is an
   information box with *OK* only, and nothing changes.
 - **A file that cannot be read** — not JSON, not UTF-8, not a Feature,
-  FeatureCollection or array of Features — is a warning naming the file and
+  FeatureCollection or array of Features, or nested more than 256 levels deep
+  (far beyond any GeoJSON file, far short of what overflows the stack) — is a
+  warning naming the file and
   the reason, and nothing changes.
 - **On Import**: the annotations are appended to the model in file order, in
   one call that emits one `annotationsBulkChanged` (not one signal per
@@ -153,21 +155,39 @@ Coordinates are taken as level-0 pixels of the scene, unchanged.
 | `GeometryCollection`, null geometry | skipped, counted "unsupported geometry" |
 
 **A multi-part feature becomes several annotations.** Each part carries the
-feature's properties and an id derived from the feature's: the first part the
-id itself, part *i* the id followed by `#i`. A re-import then finds **every**
-part already present. (This section first said the later parts get fresh ids;
-the final review found that a second import of a QuPath Points class would
-then add all but one of its points again — the doubled count §2 forbids — and
-it was corrected 2026-10-22.) A feature with no id gets fresh ids for every
-part. The summary counts annotations added, which may exceed features read;
-that is why it says "annotations", not "features".
+feature's properties. **Each part of a Multi\* geometry whose feature has an
+id gets a version-5 UUID made from the feature's id and that part's own
+coordinates** (and which repeat of them it is, so two parts at one place stay
+two) — even a Multi\* geometry of one part, which a later version of the same
+QuPath class may outgrow. A re-import then recognises every unchanged part,
+and after the class was edited in QuPath — a point deleted, one added — adds
+exactly the new points: QuPath keeps an object's id when its ROI is edited,
+so the id cannot tell the old points from the new, and where a point is can.
+A feature with no id gets fresh random ids for every part; a single geometry
+keeps the feature's id.
+
+This rule was corrected twice on 2026-10-22. It first gave the first part the
+feature's id and the rest fresh ones, which re-added all but one point of a
+Points class on every re-import. It then gave part *i* the id plus `#i`,
+which loses a new point after an edit (the list shifts, so the new point
+inherits an old index) and which QuPath cannot read back: QuPath parses an
+object id as a UUID and replaced `84a08285#1` with a random one when this was
+tried. A UUID made from the coordinates has neither fault.
+
+The summary counts annotations added, which may exceed features read; that is
+why it says "annotations", not "features".
 
 **Rejected shapes**, counted "invalid geometry" and skipped: a non-finite or
 non-numeric coordinate, a position with fewer than two numbers (a third, `z`,
-is ignored), a polygon ring with fewer than `kMinPolygonVertices` distinct
-positions after the closing repeat is dropped, a line with fewer than
-`kMinPolylineVertices`. These are the serializer's own limits, so an imported
-annotation is always one the application can save and read back.
+is ignored), a polygon ring with fewer than `kMinPolygonVertices` positions
+after the closing repeat is dropped (counted, not de-duplicated, as the
+serializer counts), a line with fewer than `kMinPolylineVertices`, and a ring
+or line whose width or height overflows although every coordinate is finite
+(corners near the edge of the double range: the outline, bounding box and
+measurement subtract, and would produce infinities and NaNs). These are the
+serializer's own limits and the geometry functions' own preconditions, so an
+imported annotation is always one the application can save, draw, export and
+read back.
 
 **Self-intersecting rings are imported as they are**, as the export writes
 them: the viewer treats them as valid data.

@@ -6,7 +6,10 @@
 #include "slideio/viewer/core/AnnotationGeometry.h"
 #include "slideio/viewer/core/AnnotationSerialization.h"
 
+#include <algorithm>
 #include <chrono>
+#include <iterator>
+#include <set>
 #include <string>
 #include <variant>
 #include <vector>
@@ -211,7 +214,8 @@ TEST_CASE("a byte-order mark is skipped", "[core][GeoJsonImport]")
 TEST_CASE("a QuPath file maps by geometry", "[core][GeoJsonImport]")
 {
     const std::string props =
-        R"({"objectType":"annotation","name":"Region","classification":{"name":"Stroma","color":[1,1,1]},"color":[10,20,30]})";
+        R"({"objectType":"annotation","name":"Region",)"
+        R"("classification":{"name":"Stroma","color":[1,1,1]},"color":[10,20,30]})";
 
     const Annotation box = only(R"({"type":"Polygon","coordinates":[[[0,0],[40,0],[40,30],[0,30],[0,0]]]})", props);
     const auto* rectangle = std::get_if<RectangleGeometry>(&box.geometry());
@@ -249,13 +253,13 @@ TEST_CASE("multi-part geometries become one annotation per part", "[core][GeoJso
         R"({"type":"MultiPoint","coordinates":[[1,1],[2,2],[3,3],[4,4],[5,5]]})",
         R"({"classification":{"name":"Tumor"}})", R"("m")")}));
     REQUIRE(points.annotations.size() == 5);
-    CHECK(points.annotations[0].id() == "m");
+    REQUIRE(points.idSeeds.size() == 5);
     for (std::size_t i = 0; i < 5; ++i) {
         CHECK(std::holds_alternative<PointGeometry>(points.annotations[i].geometry()));
         CHECK(points.annotations[i].properties().classification == "Tumor");
-        if (i > 0) {
-            CHECK(points.annotations[i].id() == "m#" + std::to_string(i));
-        }
+        // Every part's id is minted by the caller from its seed.
+        CHECK(points.annotations[i].id().empty());
+        CHECK_FALSE(points.idSeeds[i].empty());
     }
     CHECK(points.featuresRead == 1);
     CHECK(points.featuresImported == 1);
@@ -283,7 +287,8 @@ TEST_CASE("holes, collections and null geometry are skipped under their reasons"
 {
     const GeoJsonImportResult result = readOk(collection({
         feature(R"({"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[2,2],[3,2],[3,3],[2,2]]]})"),
-        feature(R"({"type":"MultiPolygon","coordinates":[[[[0,0],[9,0],[5,7],[0,0]]],[[[20,0],[29,0],[25,7],[20,0]],[[21,1],[22,1],[22,2],[21,1]]]]})"),
+        feature(R"({"type":"MultiPolygon","coordinates":[[[[0,0],[9,0],[5,7],[0,0]]],)"
+                R"([[[20,0],[29,0],[25,7],[20,0]],[[21,1],[22,1],[22,2],[21,1]]]]})"),
         feature(R"({"type":"GeometryCollection","geometries":[]})"),
         feature("null"),
     }));
@@ -492,31 +497,100 @@ TEST_CASE("every feature is accounted for", "[core][GeoJsonImport]")
     CHECK(result.featuresRead == result.featuresImported + skippedCount(result));
 }
 
-TEST_CASE("every part of a multi-part feature has an id derived from the feature's", "[core][GeoJsonImport]")
+namespace
 {
-    // A re-import must find EVERY part already present, not just the first:
-    // QuPath writes a whole Points class as one MultiPoint, and a second
-    // import adding all but one again would double a clinical count.
-    const GeoJsonImportResult withId = readOk(collection({feature(
-        R"({"type":"MultiPoint","coordinates":[[1,1],[2,2],[3,3]]})", "{}", R"("m")")}));
-    REQUIRE(withId.annotations.size() == 3);
-    CHECK(withId.annotations[0].id() == "m");
-    CHECK(withId.annotations[1].id() == "m#1");
-    CHECK(withId.annotations[2].id() == "m#2");
 
-    const GeoJsonImportResult withoutId =
-        readOk(collection({feature(R"({"type":"MultiPoint","coordinates":[[1,1],[2,2]]})")}));
-    REQUIRE(withoutId.annotations.size() == 2);
-    CHECK(withoutId.annotations[0].id().empty());
-    CHECK(withoutId.annotations[1].id().empty());
+std::vector<std::string> sortedSeeds(const GeoJsonImportResult& result)
+{
+    std::vector<std::string> seeds = result.idSeeds;
+    std::sort(seeds.begin(), seeds.end());
+    return seeds;
 }
 
-TEST_CASE("a box at the edge of the double range stays storable", "[core][GeoJsonImport]")
+GeoJsonImportResult multiPoint(const std::string& coordinates, const std::string& id = R"("m")")
 {
-    const std::string ring = R"([[[-1.7e308,-1.7e308],[1.7e308,-1.7e308],[1.7e308,1.7e308],[-1.7e308,1.7e308],[-1.7e308,-1.7e308]]])";
+    return readOk(collection({feature(R"({"type":"MultiPoint","coordinates":)" + coordinates + "}", "{}", id)}));
+}
+
+} // namespace
+
+TEST_CASE("the parts of a multi-part feature are seeded from its id and their own coordinates",
+          "[core][GeoJsonImport]")
+{
+    // QuPath writes a whole Points class as ONE feature with one id, and keeps
+    // that id when the class is edited. A part's identity is therefore the
+    // feature's id plus where the part is -- never its position in the list,
+    // which shifts when a point is deleted.
+    const GeoJsonImportResult abc = multiPoint("[[1,1],[2,2],[3,3]]");
+    REQUIRE(abc.idSeeds.size() == 3);
+    for (const Annotation& part : abc.annotations) {
+        CHECK(part.id().empty());
+    }
+    CHECK(sortedSeeds(abc) == sortedSeeds(multiPoint("[[1,1],[2,2],[3,3]]")));
+    CHECK(sortedSeeds(abc) == sortedSeeds(multiPoint("[[3,3],[1,1],[2,2]]")));
+    CHECK(std::set<std::string>(abc.idSeeds.begin(), abc.idSeeds.end()).size() == 3);
+
+    const GeoJsonImportResult bcd = multiPoint("[[2,2],[3,3],[4,4]]");
+    std::vector<std::string> shared;
+    const std::vector<std::string> a = sortedSeeds(abc);
+    const std::vector<std::string> b = sortedSeeds(bcd);
+    std::set_intersection(a.begin(), a.end(), b.begin(), b.end(), std::back_inserter(shared));
+    CHECK(shared.size() == 2);
+
+    const GeoJsonImportResult otherClass = multiPoint("[[1,1],[2,2],[3,3]]", R"("n")");
+    CHECK(sortedSeeds(otherClass) != sortedSeeds(abc));
+
+    const GeoJsonImportResult twice = multiPoint("[[1,1],[1,1]]");
+    REQUIRE(twice.idSeeds.size() == 2);
+    CHECK(twice.idSeeds[0] != twice.idSeeds[1]);
+
+    const GeoJsonImportResult polygons = readOk(collection({feature(
+        R"({"type":"MultiPolygon","coordinates":[[[[0,0],[9,0],[5,7],[0,0]]],[[[0,0],[9,0],[5,8],[0,0]]]]})",
+        "{}", R"("p")")}));
+    REQUIRE(polygons.idSeeds.size() == 2);
+    CHECK(polygons.idSeeds[0] != polygons.idSeeds[1]);
+}
+
+TEST_CASE("only the parts of an identified multi-part feature are seeded", "[core][GeoJsonImport]")
+{
+    const GeoJsonImportResult anonymous = multiPoint("[[1,1],[2,2]]", "");
+    REQUIRE(anonymous.idSeeds.size() == 2);
+    CHECK(anonymous.idSeeds[0].empty());
+    CHECK(anonymous.idSeeds[1].empty());
+
+    const GeoJsonImportResult single =
+        readOk(collection({feature(R"({"type":"Point","coordinates":[1,2]})", "{}", R"("p")")}));
+    REQUIRE(single.annotations.size() == 1);
+    CHECK(single.annotations[0].id() == "p");
+    REQUIRE(single.idSeeds.size() == 1);
+    CHECK(single.idSeeds[0].empty());
+}
+
+TEST_CASE("a shape whose extent overflows is invalid geometry", "[core][GeoJsonImport]")
+{
+    // Every corner is a finite number, but the width is not: the outline, the
+    // bounding box and measure() all subtract, and would paint, hit-test and
+    // export infinities and NaNs.
+    const std::string ring = R"([[[-1.7e308,-1.7e308],[1.7e308,-1.7e308],)"
+                             R"([1.7e308,1.7e308],[-1.7e308,1.7e308],[-1.7e308,-1.7e308]]])";
+    const std::string line = R"([[-1.7e308,0],[1.7e308,0]])";
     const GeoJsonImportResult result = readOk(collection({
         feature(R"({"type":"Polygon","coordinates":)" + ring + "}"),
         feature(R"({"type":"Polygon","coordinates":)" + ring + "}", R"({"slideio":{"type":"ellipse"}})"),
+        feature(R"({"type":"Polygon","coordinates":[[[-1.7e308,0],[1.7e308,0],[0,5],[-1.7e308,0]]]})"),
+        feature(R"({"type":"LineString","coordinates":)" + line + "}"),
+        feature(R"({"type":"LineString","coordinates":)" + line + "}", R"({"slideio":{"type":"arrow"}})"),
+    }));
+    CHECK(result.annotations.empty());
+    CHECK(result.invalidGeometry == 5);
+}
+
+TEST_CASE("a large but finite shape imports and exports", "[core][GeoJsonImport]")
+{
+    const std::string ring = R"([[[-8e307,-8e307],[8e307,-8e307],[8e307,8e307],[-8e307,8e307],[-8e307,-8e307]]])";
+    const GeoJsonImportResult result = readOk(collection({
+        feature(R"({"type":"Polygon","coordinates":)" + ring + "}", "{}", R"("r")"),
+        feature(R"({"type":"Polygon","coordinates":)" + ring + "}", R"({"slideio":{"type":"ellipse"}})", R"("e")"),
     }));
     REQUIRE(result.annotations.size() == 2);
     CHECK(result.annotations[0].type() == AnnotationType::Rectangle);
@@ -524,15 +598,13 @@ TEST_CASE("a box at the edge of the double range stays storable", "[core][GeoJso
 
     AnnotationDocument document;
     document.slideId = "s";
-    document.annotations = {Annotation("r", result.annotations[0].geometry()),
-                            Annotation("e", result.annotations[1].geometry())};
+    document.annotations = result.annotations;
     CHECK_FALSE(serializeAnnotationDocument(document).empty());
+    CHECK(annotationsToGeoJson(result.annotations, GeoJsonExportContext{}, kImportedAt).error.empty());
 }
 
-TEST_CASE("deeply nested input is read, not a crash", "[core][GeoJsonImport]")
+TEST_CASE("nesting deeper than any GeoJSON file needs is refused, not a crash", "[core][GeoJsonImport]")
 {
-    // nlohmann parses and destroys this depth; copying the parsed value, or
-    // recursing over it, overflows the stack.
     constexpr int kDepth = 20000;
     std::string children;
     for (int i = 0; i < kDepth; ++i) {
@@ -541,20 +613,32 @@ TEST_CASE("deeply nested input is read, not a crash", "[core][GeoJsonImport]")
     for (int i = 0; i < kDepth; ++i) {
         children += "]}}";
     }
+    GeoJsonImportResult nested;
+    REQUIRE_NOTHROW(nested = read(collection(
+        {feature(R"({"type":"Point","coordinates":[1,2]})", R"({"childObjects":[)" + children + "]}")})));
+    CHECK_FALSE(nested.error.empty());
+    CHECK(nested.annotations.empty());
+
+    const std::string deep = std::string(kDepth, '[') + std::string(kDepth, ']');
+    GeoJsonImportResult coordinates;
+    REQUIRE_NOTHROW(coordinates = read(collection({feature(R"({"type":"Polygon","coordinates":)" + deep + "}")})));
+    CHECK_FALSE(coordinates.error.empty());
+}
+
+TEST_CASE("nesting as deep as a QuPath hierarchy is read", "[core][GeoJsonImport]")
+{
+    constexpr int kLevels = 30;
+    std::string children;
+    for (int i = 0; i < kLevels; ++i) {
+        children += R"({"type":"Feature","geometry":null,"properties":{"childObjects":[)";
+    }
+    for (int i = 0; i < kLevels; ++i) {
+        children += "]}}";
+    }
     const GeoJsonImportResult nested = readOk(
         collection({feature(R"({"type":"Point","coordinates":[1,2]})", R"({"childObjects":[)" + children + "]}")}));
     CHECK(nested.annotations.size() == 1);
-    CHECK(nested.nestedObjects == kDepth);
-
-    std::string deep(kDepth, '[');
-    deep += std::string(kDepth, ']');
-    for (const char* type : {"Polygon", "MultiPolygon", "LineString", "MultiLineString", "MultiPoint", "Point"}) {
-        INFO(type);
-        const GeoJsonImportResult result =
-            readOk(collection({feature(std::string(R"({"type":")") + type + R"(","coordinates":)" + deep + "}")}));
-        CHECK(result.annotations.empty());
-        CHECK(result.invalidGeometry == 1);
-    }
+    CHECK(nested.nestedObjects == kLevels);
 }
 
 TEST_CASE("a large detection export is skipped whole", "[core][GeoJsonImport]")

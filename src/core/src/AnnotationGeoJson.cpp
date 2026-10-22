@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <optional>
@@ -237,6 +238,10 @@ struct GeometryRead
 {
     std::vector<AnnotationGeometry> parts;
     GeometrySkip skip = GeometrySkip::None;
+    /// A Multi* geometry, whose parts are identified by seed rather than by
+    /// the feature's id -- even when it has only one part, which a later
+    /// version of the same QuPath class may not.
+    bool multi = false;
 };
 
 GeometryRead skipped(GeometrySkip reason)
@@ -294,10 +299,39 @@ bool readPositions(const InJson& value, std::vector<PointF>& out)
     return true;
 }
 
+/// The smallest and largest corner of `points`, taken as they are. Never
+/// rebuilt as origin plus extent, which can overflow where the corners do not.
+std::pair<PointF, PointF> cornersOf(const std::vector<PointF>& points)
+{
+    PointF low = points.front();
+    PointF high = low;
+    for (const PointF& p : points) {
+        low.x = std::min(low.x, p.x);
+        low.y = std::min(low.y, p.y);
+        high.x = std::max(high.x, p.x);
+        high.y = std::max(high.y, p.y);
+    }
+    return {low, high};
+}
+
+/// False when the shape's width or height is not a finite number although
+/// every coordinate is -- corners near the edge of the double range. The
+/// outline, the bounding box and measure() all subtract, so such a shape
+/// would paint, hit-test and export infinities and NaNs, and the export
+/// refuses a whole scene over one of them.
+bool hasFiniteExtent(const std::vector<PointF>& points)
+{
+    if (points.empty()) {
+        return true;
+    }
+    const auto [low, high] = cornersOf(points);
+    return std::isfinite(high.x - low.x) && std::isfinite(high.y - low.y);
+}
+
 /// A polygon's exterior ring, its closing repeat dropped, or false when it
-/// has fewer vertices than a saved polygon may. Counted, not de-duplicated:
-/// the serializer counts stored vertices, and a degenerate polygon this
-/// application saved and exported must come back.
+/// has fewer vertices than a saved polygon may or no finite extent. Counted,
+/// not de-duplicated: the serializer counts stored vertices, and a degenerate
+/// polygon this application saved and exported must come back.
 bool readRing(const InJson& value, std::vector<PointF>& out)
 {
     if (!readPositions(value, out)) {
@@ -306,7 +340,14 @@ bool readRing(const InJson& value, std::vector<PointF>& out)
     if (out.size() > 1 && out.front().x == out.back().x && out.front().y == out.back().y) {
         out.pop_back();
     }
-    return out.size() >= kMinPolygonVertices;
+    return out.size() >= kMinPolygonVertices && hasFiniteExtent(out);
+}
+
+/// A line's positions, or false when it has fewer than a saved line may or no
+/// finite extent.
+bool readLine(const InJson& value, std::vector<PointF>& out)
+{
+    return readPositions(value, out) && out.size() >= kMinPolylineVertices && hasFiniteExtent(out);
 }
 
 /// The four corners of an axis-aligned rectangle, as QuPath writes its
@@ -336,23 +377,6 @@ bool isAxisAlignedBox(const std::vector<PointF>& ring)
     return xs.size() == 2 && ys.size() == 2;
 }
 
-/// The smallest and largest corner of `points`, taken as they are. Never
-/// rebuilt as origin plus extent: at the edge of the double range the extent
-/// overflows to infinity, and a corner of infinity is one the serializer
-/// refuses -- after which the scene could not be saved at all.
-std::pair<PointF, PointF> cornersOf(const std::vector<PointF>& points)
-{
-    PointF low = points.front();
-    PointF high = low;
-    for (const PointF& p : points) {
-        low.x = std::min(low.x, p.x);
-        low.y = std::min(low.y, p.y);
-        high.x = std::max(high.x, p.x);
-        high.y = std::max(high.y, p.y);
-    }
-    return {low, high};
-}
-
 /// A closed ring as the viewer's shape for it: a rectangle when it is one.
 AnnotationGeometry areaFrom(std::vector<PointF> ring)
 {
@@ -364,8 +388,9 @@ AnnotationGeometry areaFrom(std::vector<PointF> ring)
 }
 
 /// Stands in for a member the file left out, by reference. Nothing parsed is
-/// ever copied: nlohmann copies recursively, so copying a deeply nested value
-/// overflows the stack where parsing and destroying it did not.
+/// copied: nlohmann copies recursively. The parse itself caps the depth, so
+/// this is no longer what keeps a deep file from crashing -- only what keeps a
+/// large one from being duplicated in memory.
 const InJson& absent()
 {
     static const InJson kNull;
@@ -397,24 +422,20 @@ GeometrySkip readPolygonRings(const InJson& coordinates, std::vector<PointF>& ex
     return readRing(coordinates[0], exterior) ? GeometrySkip::None : GeometrySkip::Invalid;
 }
 
-/// Calls `read` on `coordinates` itself, or on each of its parts for a
-/// Multi* geometry -- without building the one-element array a single
-/// geometry would otherwise need, which would copy it.
-template<typename ReadPart>
-bool forEachPart(const InJson& coordinates, bool multi, ReadPart read)
+/// The coordinates of each part: `coordinates` itself for a single geometry,
+/// each of its elements for a Multi* one. Empty when a Multi* geometry has no
+/// list of parts. Pointers, so a single geometry needs no one-element array.
+std::vector<const InJson*> partsOf(const InJson& coordinates, bool multi)
 {
+    std::vector<const InJson*> parts;
     if (!multi) {
-        return read(coordinates);
-    }
-    if (!coordinates.is_array() || coordinates.empty()) {
-        return false;
-    }
-    for (const InJson& part : coordinates) {
-        if (!read(part)) {
-            return false;
+        parts.push_back(&coordinates);
+    } else if (coordinates.is_array()) {
+        for (const InJson& part : coordinates) {
+            parts.push_back(&part);
         }
     }
-    return true;
+    return parts;
 }
 
 /// The geometry by its GeoJSON type alone -- a QuPath file, or anything else.
@@ -440,38 +461,39 @@ GeometryRead readGeometry(const InJson& geometry)
         for (const PointF& point : points) {
             read.parts.emplace_back(PointGeometry{point});
         }
+        read.multi = true;
     } else if (type == "LineString" || type == "MultiLineString") {
-        const bool readable = forEachPart(coordinates, type == "MultiLineString", [&read](const InJson& line) {
-            std::vector<PointF> points;
-            if (!readPositions(line, points) || points.size() < kMinPolylineVertices) {
-                return false;
-            }
-            read.parts.emplace_back(PolygonGeometry{std::move(points), false});
-            return true;
-        });
-        if (!readable) {
+        read.multi = type == "MultiLineString";
+        const std::vector<const InJson*> lines = partsOf(coordinates, read.multi);
+        if (lines.empty()) {
             return skipped(GeometrySkip::Invalid);
         }
+        for (const InJson* line : lines) {
+            std::vector<PointF> points;
+            if (!readLine(*line, points)) {
+                return skipped(GeometrySkip::Invalid);
+            }
+            read.parts.emplace_back(PolygonGeometry{std::move(points), false});
+        }
     } else if (type == "Polygon" || type == "MultiPolygon") {
+        read.multi = type == "MultiPolygon";
+        const std::vector<const InJson*> polygons = partsOf(coordinates, read.multi);
+        if (polygons.empty()) {
+            return skipped(GeometrySkip::Invalid);
+        }
         // Every part is looked at, so a holed part is reported as holed even
         // after an invalid one.
         GeometrySkip worst = GeometrySkip::None;
-        const bool shaped = forEachPart(coordinates, type == "MultiPolygon", [&read, &worst](const InJson& polygon) {
+        for (const InJson* polygon : polygons) {
             std::vector<PointF> ring;
-            const GeometrySkip skip = readPolygonRings(polygon, ring);
+            const GeometrySkip skip = readPolygonRings(*polygon, ring);
             if (skip == GeometrySkip::Holes) {
                 worst = GeometrySkip::Holes;
-            } else if (skip == GeometrySkip::Invalid) {
-                if (worst == GeometrySkip::None) {
-                    worst = GeometrySkip::Invalid;
-                }
-            } else {
+            } else if (skip == GeometrySkip::Invalid && worst == GeometrySkip::None) {
+                worst = GeometrySkip::Invalid;
+            } else if (skip == GeometrySkip::None) {
                 read.parts.push_back(areaFrom(std::move(ring)));
             }
-            return true;
-        });
-        if (!shaped) {
-            return skipped(GeometrySkip::Invalid);
         }
         if (worst != GeometrySkip::None) {
             return skipped(worst);
@@ -481,6 +503,7 @@ GeometryRead readGeometry(const InJson& geometry)
     }
     return read;
 }
+
 
 /// The shape this application exported, when the feature's `slideio.type`
 /// fits its geometry; nullopt otherwise, and the GeoJSON type decides. The
@@ -513,7 +536,7 @@ std::optional<AnnotationGeometry> readExportedShape(const std::string& slideioTy
     }
     if (type == "LineString" && slideioType == "arrow") {
         std::vector<PointF> points;
-        if (!readPositions(coordinates, points) || points.size() != 2) {
+        if (!readLine(coordinates, points) || points.size() != 2) {
             return std::nullopt;
         }
         // Tail first: the export's order is the arrow's direction.
@@ -651,6 +674,27 @@ void readProperties(const InJson& properties, std::chrono::system_clock::time_po
     outMetadata.modifiedAt = readTimestamp(slideio, "modifiedAt", now);
 }
 
+/// Separates a seed's fields; a unit separator cannot occur in a number and
+/// is vanishingly unlikely in an id.
+constexpr char kSeedSeparator = '\x1F';
+
+/// A part's identity within its feature: the feature's id and the part's own
+/// outline, written exactly. std::to_chars rather than a stream or printf,
+/// which read the C locale and could write a decimal comma.
+std::string partSeed(const std::string& featureId, const AnnotationGeometry& part)
+{
+    std::string seed = featureId;
+    char buffer[64];
+    for (const PointF& point : outline(part).points) {
+        for (const double value : {point.x, point.y}) {
+            const auto written = std::to_chars(buffer, buffer + sizeof(buffer), value);
+            seed += kSeedSeparator;
+            seed.append(buffer, written.ptr);
+        }
+    }
+    return seed;
+}
+
 std::string readId(const InJson& feature)
 {
     const InJson* id = member(feature, "id");
@@ -737,16 +781,23 @@ void readFeature(const InJson& feature, std::chrono::system_clock::time_point im
     AnnotationMetadata metadata;
     readProperties(properties, importedAt, annotationProperties, metadata);
 
-    // Every part carries the feature's properties, and an id derived from the
-    // feature's -- the first part the id itself, part i the id + "#i" -- so a
-    // re-import finds EVERY part already present. Minting fresh ids for the
-    // later parts would let a second import of one QuPath Points class add
-    // all but one of its points again. No feature id: every part is minted.
+    // Every part carries the feature's properties. A single geometry keeps the
+    // feature's id. The parts of a Multi* geometry get none here and a seed
+    // instead -- see GeoJsonImportResult::idSeeds for why a part's identity is
+    // where it is, not where it sits in the list.
     const std::string id = readId(feature);
-    for (std::size_t i = 0; i < read.parts.size(); ++i) {
-        std::string partId = i == 0 || id.empty() ? id : id + "#" + std::to_string(i);
-        result.annotations.emplace_back(std::move(partId), std::move(read.parts[i]), annotationProperties,
+    std::map<std::string, int> repeats;
+    for (AnnotationGeometry& part : read.parts) {
+        std::string seed;
+        if (read.multi && !id.empty()) {
+            seed = partSeed(id, part);
+            // Two parts at the same place are still two findings.
+            const int repeat = repeats[seed]++;
+            seed += kSeedSeparator + std::to_string(repeat);
+        }
+        result.annotations.emplace_back(read.multi ? std::string() : id, std::move(part), annotationProperties,
                                         metadata);
+        result.idSeeds.push_back(std::move(seed));
     }
     ++result.featuresImported;
 }
@@ -758,6 +809,23 @@ GeoJsonImportResult importFailure(std::string message)
     return result;
 }
 
+/// Far deeper than GeoJSON needs -- a MultiPolygon's coordinates are four
+/// arrays deep, and each level of a QuPath hierarchy adds three -- and far
+/// shallower than the stack a recursive walk over the parsed value can take.
+constexpr int kMaxJsonDepth = 256;
+
+struct NestedTooDeeply
+{
+};
+
+bool refuseDeepNesting(int depth, InJson::parse_event_t /*event*/, InJson& /*parsed*/)
+{
+    if (depth > kMaxJsonDepth) {
+        throw NestedTooDeeply{};
+    }
+    return true;
+}
+
 } // namespace
 
 GeoJsonImportResult geoJsonToAnnotations(std::string_view text, std::chrono::system_clock::time_point importedAt)
@@ -767,8 +835,16 @@ GeoJsonImportResult geoJsonToAnnotations(std::string_view text, std::chrono::sys
         text.remove_prefix(kBom.size());
     }
     // No exceptions on the way in: a file that is not JSON, or not UTF-8, is a
-    // file we report, not one we crash on.
-    const InJson document = InJson::parse(text.begin(), text.end(), nullptr, false);
+    // file we report, not one we crash on. The depth is capped as it is
+    // parsed, which bounds every walk over the result at once -- nlohmann's
+    // copy and comparison recurse, and a file nested twenty thousand deep
+    // overflowed the stack in one of them.
+    InJson document;
+    try {
+        document = InJson::parse(text.begin(), text.end(), refuseDeepNesting, false);
+    } catch (const NestedTooDeeply&) {
+        return importFailure("the file is nested more deeply than any GeoJSON file needs");
+    }
     if (document.is_discarded()) {
         return importFailure("the file is not valid JSON");
     }

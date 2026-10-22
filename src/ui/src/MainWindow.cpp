@@ -2113,7 +2113,7 @@ void MainWindow::Impl::importAnnotations()
         return;
     }
 
-    app::ImportPlan plan = app::planImport(result.annotations, *annotations);
+    app::ImportPlan plan = app::planImport(result.annotations, result.idSeeds, *annotations);
     const core::SlideInfo& info = viewportWidget->slideInfo();
     GeoJsonImportSummaryInput summary;
     summary.fileName = QFileInfo(chosen).fileName();
