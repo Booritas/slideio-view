@@ -3,7 +3,9 @@
 #include "slideio/viewer/core/Annotation.h"
 
 #include <chrono>
+#include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace slideio::viewer::core
@@ -54,5 +56,64 @@ struct GeoJsonExportResult
 [[nodiscard]] GeoJsonExportResult annotationsToGeoJson(
     const std::vector<Annotation>& annotations, const GeoJsonExportContext& context,
     std::chrono::system_clock::time_point exportedAt);
+
+/// What the collection's own `slideio` member said about where the file came
+/// from -- present only in a file this application exported.
+struct GeoJsonImportProvenance
+{
+    bool present = false;
+    std::string slide;
+    std::string slideId;
+    /// -1 when the file does not say.
+    int scene = -1;
+};
+
+/// What a GeoJSON file turned into, and an account of everything it did not.
+///
+/// Every top-level feature is either imported (one annotation, or one per part
+/// of a multi-part geometry) or counted under exactly one skip reason, so
+/// `featuresRead == featuresImported + every skip count` and nothing leaves
+/// the file unreported.
+struct GeoJsonImportResult
+{
+    /// In file order. An EMPTY id means the caller must mint one: core is
+    /// Qt-free and cannot make a UUID.
+    std::vector<Annotation> annotations;
+    int featuresRead = 0;
+    /// Features that produced at least one annotation.
+    int featuresImported = 0;
+    /// Objects QuPath marks as something other than an annotation --
+    /// "detection", "cell", "tile" -- counted under the value it gives.
+    std::map<std::string, int> skippedObjectTypes;
+    /// A polygon with an interior ring, which the viewer has no shape for.
+    int withHoles = 0;
+    /// A GeometryCollection, a null geometry, or a type GeoJSON does not define.
+    int unsupportedGeometry = 0;
+    /// Coordinates that are not finite numbers, or too few of them for the
+    /// shape -- the serializer's own minimums, so every annotation returned
+    /// is one the application can save.
+    int invalidGeometry = 0;
+    /// QuPath `childObjects`, counted recursively. Not features of the file's
+    /// top level, so outside the accounting identity above.
+    int nestedObjects = 0;
+    GeoJsonImportProvenance provenance;
+    /// Non-empty when the file could not be read at all: then every other
+    /// field is empty.
+    std::string error;
+};
+
+/// The annotations in a GeoJSON file -- one QuPath exports, or one
+/// annotationsToGeoJson wrote (FR-ANN-33). See
+/// docs/superpowers/specs/2026-10-22-annotation-geojson-import-design.md.
+///
+/// Coordinates are taken as level-0 pixels of the scene, unchanged. A feature
+/// carrying the export's `slideio` block whose type fits its geometry comes
+/// back exactly as it was exported -- ellipse, arrow and all; the geometry
+/// wins any disagreement. Never throws.
+///
+/// `importedAt` stamps annotations whose file records no timestamps; it is a
+/// parameter so this stays pure.
+[[nodiscard]] GeoJsonImportResult geoJsonToAnnotations(
+    std::string_view text, std::chrono::system_clock::time_point importedAt);
 
 } // namespace slideio::viewer::core

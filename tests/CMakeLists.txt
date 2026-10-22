@@ -25,6 +25,7 @@ add_executable(slideio-viewer-core-tests
     core/Iso8601Test.cpp
     core/AnnotationSerializationTest.cpp
     core/AnnotationGeoJsonTest.cpp
+    core/AnnotationGeoJsonImportTest.cpp
     core/AutosavePolicyTest.cpp
 )
 

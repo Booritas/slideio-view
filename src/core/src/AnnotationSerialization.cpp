@@ -663,6 +663,21 @@ std::string formatAnnotationColor(const Color& color)
     return formatColor(color);
 }
 
+bool parseAnnotationColor(const std::string& text, Color& out)
+{
+    Color parsed;
+    if (!parseColor(text, parsed)) {
+        return false;
+    }
+    out = parsed;
+    return true;
+}
+
+bool isRepresentableStyle(const AnnotationProperties& properties)
+{
+    return isRepresentable(properties);
+}
+
 std::string serializeAnnotationDocument(const AnnotationDocument& document)
 {
     // The parser rejects an empty id and a duplicate id. Same rule as the

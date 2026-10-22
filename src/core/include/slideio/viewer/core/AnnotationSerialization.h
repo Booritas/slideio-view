@@ -16,6 +16,15 @@ namespace slideio::viewer::core
 /// `color` as a saved file writes it: `#RRGGBBAA`, upper-case hex.
 [[nodiscard]] std::string formatAnnotationColor(const Color& color);
 
+/// Reads `#RRGGBBAA` as formatAnnotationColor writes it into `out`; false, and
+/// `out` untouched, for anything else. Shared with the GeoJSON import.
+[[nodiscard]] bool parseAnnotationColor(const std::string& text, Color& out);
+
+/// True when the line width and fill opacity lie inside the ranges a saved
+/// file accepts. The GeoJSON import asks before keeping a value from a file,
+/// so it cannot build an annotation the serializer would refuse to write.
+[[nodiscard]] bool isRepresentableStyle(const AnnotationProperties& properties);
+
 /// Renders `document` as pretty-printed JSON with a trailing newline.
 ///
 /// Returns an empty string when the document cannot be represented -- that
