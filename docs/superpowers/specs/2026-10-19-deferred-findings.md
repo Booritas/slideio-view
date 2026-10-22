@@ -649,3 +649,17 @@ of this file, not in a session that has already ended.
 116. window title still names the closed slide after File > Close **[CLOSED 2026-10-19 - commit 3baecc2]**
 117. Windows reserved device names (CON, NUL, AUX, PRN, **[ACCEPTED 2026-10-20 - annotation filenames are "<slideId>.s<N>.annotations.json" and a slideId is FNV-1a hex, so no reserved name can be produced. A user-chosen workspace directory is the OS's to refuse]**
 
+
+## Appended after the recovery
+
+Findings raised after 2026-10-20 and deferred, in full rather than as stems.
+
+118. GeoJSON export (2026-10-21): a NaN or infinite `lineWidth` or `fillOpacity`, or an infinite pixel size, is written as `null` rather than refused **[DEFERRED 2026-10-21 - nothing in the application produces such a value; the serializer refuses it on save]**
+119. GeoJSON export: the classification is written untrimmed while `categoryTally` trims it, so " Tumor " becomes its own QuPath class **[DEFERRED 2026-10-21 - only a hand-edited file carries the padding]**
+120. GeoJSON export: the spec names the action "Export Annotations..." and the menu says "Export Annotations as GeoJSON..." **[DEFERRED 2026-10-21 - wording only]**
+121. GeoJSON export: invalid UTF-8 is tested only in notes, and out-of-bounds coordinates only on a point **[DEFERRED 2026-10-21 - test breadth; the code path is shared]**
+122. GeoJSON import (2026-10-22): a 206 MB, 60 000-cell QuPath detection export is skipped correctly but takes about 10 s on the UI thread, with no wait cursor; nlohmann's parse and destruction are most of it **[DEFERRED 2026-10-22 - the reader's own document copies were removed by the I2 fix; what remains is the parser]**
+123. GeoJSON import: the scene-mismatch warning chains `.arg(scene).arg(slide).arg(openScene)`, so a `%3` in the file's slide name is substituted by the last call **[DEFERRED 2026-10-22 - cosmetic; use the multi-argument arg()]**
+124. GeoJSON import: a zero-extent rectangle re-imports as a 4-vertex polygon, because `isAxisAlignedBox` requires distinct corners and the export writes coincident ones **[DEFERRED 2026-10-22 - only a cross-scene import meets it; a same-scene re-import is skipped by id]**
+125. GeoJSON import: an exported ellipse's box comes back within a few ulps, not bit-exact as the import spec's section 3 says **[DEFERRED 2026-10-22 - cx + a is not always box.x + box.width in floating point; harmless]**
+126. GeoJSON import: `slideio.lineWidth` and `fillOpacity` are converted to float before the range check, which is undefined for a value like 1e300 **[DEFERRED 2026-10-22 - MSVC yields inf and the check rejects it; read as double and check first]**
