@@ -199,6 +199,46 @@ std::size_t AnnotationModel::restoreMany(const std::vector<core::Annotation>& an
     return stored;
 }
 
+std::size_t AnnotationModel::insertMany(std::vector<core::Annotation> annotations)
+{
+    // insertAt()'s rules, without its per-annotation signal, and with one set
+    // of ids rather than a scan of the model per annotation.
+    std::set<std::string> ids;
+    for (const core::Annotation& annotation : m_annotations) {
+        ids.insert(annotation.id());
+    }
+    std::size_t stored = 0;
+    for (core::Annotation& annotation : annotations) {
+        if (annotation.id().empty() || !ids.insert(annotation.id()).second) {
+            continue;
+        }
+        m_annotations.push_back(std::move(annotation));
+        ++stored;
+    }
+    if (stored > 0) {
+        emit annotationsBulkChanged();
+    }
+    return stored;
+}
+
+std::size_t AnnotationModel::removeMany(const std::vector<std::string>& ids)
+{
+    const std::set<std::string> doomed(ids.begin(), ids.end());
+    const auto firstRemoved = std::remove_if(m_annotations.begin(), m_annotations.end(),
+                                             [&doomed](const core::Annotation& a) { return doomed.count(a.id()) > 0; });
+    const auto removed = static_cast<std::size_t>(std::distance(firstRemoved, m_annotations.end()));
+    m_annotations.erase(firstRemoved, m_annotations.end());
+    if (removed == 0) {
+        return 0;
+    }
+    if (doomed.count(m_selectedId) > 0) {
+        m_selectedId.clear();
+        emit selectionChanged(m_selectedId);
+    }
+    emit annotationsBulkChanged();
+    return removed;
+}
+
 const std::vector<core::Annotation>& AnnotationModel::annotations() const
 {
     return m_annotations;

@@ -728,3 +728,92 @@ TEST_CASE("An ordinary current category still stamps after the Unclassified rule
 
     REQUIRE(model.find(id)->properties().classification == "Unclassified cells");
 }
+
+namespace
+{
+
+core::Annotation plain(std::string id)
+{
+    return core::Annotation{std::move(id), rect(0.0, 0.0, 10.0, 10.0)};
+}
+
+std::vector<std::string> idsOf(const app::AnnotationModel& model)
+{
+    std::vector<std::string> ids;
+    for (const core::Annotation& annotation : model.annotations()) {
+        ids.push_back(annotation.id());
+    }
+    return ids;
+}
+
+} // namespace
+
+TEST_CASE("insertMany appends in order and signals once", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    model.insert(plain("x"));
+    int bulk = 0;
+    int added = 0;
+    QObject::connect(&model, &app::AnnotationModel::annotationsBulkChanged, [&bulk]() { ++bulk; });
+    QObject::connect(&model, &app::AnnotationModel::annotationAdded, [&added](const std::string&) { ++added; });
+
+    REQUIRE(model.insertMany({plain("a"), plain("b"), plain("c")}) == 3);
+
+    REQUIRE(idsOf(model) == std::vector<std::string>{"x", "a", "b", "c"});
+    REQUIRE(bulk == 1);
+    REQUIRE(added == 0);
+}
+
+TEST_CASE("insertMany drops empty and repeated ids", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    model.insert(plain("x"));
+
+    REQUIRE(model.insertMany({plain(""), plain("x"), plain("a"), plain("a")}) == 1);
+
+    REQUIRE(idsOf(model) == std::vector<std::string>{"x", "a"});
+}
+
+TEST_CASE("insertMany of nothing storable emits nothing", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    int bulk = 0;
+    QObject::connect(&model, &app::AnnotationModel::annotationsBulkChanged, [&bulk]() { ++bulk; });
+
+    REQUIRE(model.insertMany({plain("")}) == 0);
+    REQUIRE(bulk == 0);
+}
+
+TEST_CASE("removeMany removes the named ids and signals once", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    model.insertMany({plain("x"), plain("a"), plain("b")});
+    model.setSelected("a");
+    int bulk = 0;
+    int removed = 0;
+    std::vector<std::string> selections;
+    QObject::connect(&model, &app::AnnotationModel::annotationsBulkChanged, [&bulk]() { ++bulk; });
+    QObject::connect(&model, &app::AnnotationModel::annotationRemoved,
+                     [&removed](const std::string&) { ++removed; });
+    QObject::connect(&model, &app::AnnotationModel::selectionChanged,
+                     [&selections](const std::string& id) { selections.push_back(id); });
+
+    REQUIRE(model.removeMany({"a", "b", "zz"}) == 2);
+
+    REQUIRE(idsOf(model) == std::vector<std::string>{"x"});
+    REQUIRE(model.selectedId().empty());
+    REQUIRE(selections == std::vector<std::string>{""});
+    REQUIRE(bulk == 1);
+    REQUIRE(removed == 0);
+}
+
+TEST_CASE("removeMany of nothing known emits nothing", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    model.insert(plain("x"));
+    int bulk = 0;
+    QObject::connect(&model, &app::AnnotationModel::annotationsBulkChanged, [&bulk]() { ++bulk; });
+
+    REQUIRE(model.removeMany({"zz"}) == 0);
+    REQUIRE(bulk == 0);
+}

@@ -112,6 +112,22 @@ public:
     /// through 500 restore() calls would rebuild a 500-row tree 500 times.
     std::size_t restoreMany(const std::vector<core::Annotation>& annotations);
 
+    /// Appends every annotation in `annotations`, in order, under the ids they
+    /// carry, and emits annotationsBulkChanged() ONCE if any was stored --
+    /// never annotationAdded(), for restoreMany's reason: an import of several
+    /// hundred annotations would otherwise rebuild the list panel's tree once
+    /// per annotation. Each annotation is subject to insert()'s rules: an empty
+    /// id, or one already in the model or earlier in `annotations`, is dropped
+    /// silently. Returns how many were stored.
+    std::size_t insertMany(std::vector<core::Annotation> annotations);
+
+    /// Removes every annotation whose id is in `ids`, unknown ids skipped, and
+    /// emits annotationsBulkChanged() ONCE if any was removed -- the inverse of
+    /// insertMany(), which is what undoing an import calls. Clears the
+    /// selection, emitting selectionChanged() as remove() does, if it named one
+    /// of them. Returns how many were removed.
+    std::size_t removeMany(const std::vector<std::string>& ids);
+
     [[nodiscard]] const std::vector<core::Annotation>& annotations() const;
 
     /// Null when `id` is unknown. The pointer is invalidated by any mutation.

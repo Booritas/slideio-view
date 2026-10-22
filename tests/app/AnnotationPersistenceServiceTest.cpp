@@ -181,6 +181,19 @@ TEST_CASE("a mutation marks the model dirty", "[app][AnnotationPersistenceServic
     }
 }
 
+TEST_CASE("a bulk insert marks the open document dirty", "[app][AnnotationPersistenceService]")
+{
+    FakeRepository repository;
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+    service.beginSlide({"slide-1", 0}, provenance());
+    REQUIRE_FALSE(service.isDirty());
+
+    model.insertMany({rectangle("imported")});
+
+    REQUIRE(service.isDirty());
+}
+
 TEST_CASE("changing the selection does not mark the model dirty",
           "[app][AnnotationPersistenceService]")
 {
