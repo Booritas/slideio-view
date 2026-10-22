@@ -2,7 +2,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "slideio/viewer/core/AnnotationGeoJson.h"
+#include "slideio/viewer/core/AnnotationDocument.h"
 #include "slideio/viewer/core/AnnotationGeometry.h"
+#include "slideio/viewer/core/AnnotationSerialization.h"
 
 #include <chrono>
 #include <string>
@@ -252,7 +254,7 @@ TEST_CASE("multi-part geometries become one annotation per part", "[core][GeoJso
         CHECK(std::holds_alternative<PointGeometry>(points.annotations[i].geometry()));
         CHECK(points.annotations[i].properties().classification == "Tumor");
         if (i > 0) {
-            CHECK(points.annotations[i].id().empty());
+            CHECK(points.annotations[i].id() == "m#" + std::to_string(i));
         }
     }
     CHECK(points.featuresRead == 1);
@@ -488,6 +490,71 @@ TEST_CASE("every feature is accounted for", "[core][GeoJsonImport]")
     CHECK(result.featuresImported == 5);
     CHECK(result.annotations.size() == 7);
     CHECK(result.featuresRead == result.featuresImported + skippedCount(result));
+}
+
+TEST_CASE("every part of a multi-part feature has an id derived from the feature's", "[core][GeoJsonImport]")
+{
+    // A re-import must find EVERY part already present, not just the first:
+    // QuPath writes a whole Points class as one MultiPoint, and a second
+    // import adding all but one again would double a clinical count.
+    const GeoJsonImportResult withId = readOk(collection({feature(
+        R"({"type":"MultiPoint","coordinates":[[1,1],[2,2],[3,3]]})", "{}", R"("m")")}));
+    REQUIRE(withId.annotations.size() == 3);
+    CHECK(withId.annotations[0].id() == "m");
+    CHECK(withId.annotations[1].id() == "m#1");
+    CHECK(withId.annotations[2].id() == "m#2");
+
+    const GeoJsonImportResult withoutId =
+        readOk(collection({feature(R"({"type":"MultiPoint","coordinates":[[1,1],[2,2]]})")}));
+    REQUIRE(withoutId.annotations.size() == 2);
+    CHECK(withoutId.annotations[0].id().empty());
+    CHECK(withoutId.annotations[1].id().empty());
+}
+
+TEST_CASE("a box at the edge of the double range stays storable", "[core][GeoJsonImport]")
+{
+    const std::string ring = R"([[[-1.7e308,-1.7e308],[1.7e308,-1.7e308],[1.7e308,1.7e308],[-1.7e308,1.7e308],[-1.7e308,-1.7e308]]])";
+    const GeoJsonImportResult result = readOk(collection({
+        feature(R"({"type":"Polygon","coordinates":)" + ring + "}"),
+        feature(R"({"type":"Polygon","coordinates":)" + ring + "}", R"({"slideio":{"type":"ellipse"}})"),
+    }));
+    REQUIRE(result.annotations.size() == 2);
+    CHECK(result.annotations[0].type() == AnnotationType::Rectangle);
+    CHECK(result.annotations[1].type() == AnnotationType::Ellipse);
+
+    AnnotationDocument document;
+    document.slideId = "s";
+    document.annotations = {Annotation("r", result.annotations[0].geometry()),
+                            Annotation("e", result.annotations[1].geometry())};
+    CHECK_FALSE(serializeAnnotationDocument(document).empty());
+}
+
+TEST_CASE("deeply nested input is read, not a crash", "[core][GeoJsonImport]")
+{
+    // nlohmann parses and destroys this depth; copying the parsed value, or
+    // recursing over it, overflows the stack.
+    constexpr int kDepth = 20000;
+    std::string children;
+    for (int i = 0; i < kDepth; ++i) {
+        children += R"({"type":"Feature","geometry":null,"properties":{"childObjects":[)";
+    }
+    for (int i = 0; i < kDepth; ++i) {
+        children += "]}}";
+    }
+    const GeoJsonImportResult nested = readOk(
+        collection({feature(R"({"type":"Point","coordinates":[1,2]})", R"({"childObjects":[)" + children + "]}")}));
+    CHECK(nested.annotations.size() == 1);
+    CHECK(nested.nestedObjects == kDepth);
+
+    std::string deep(kDepth, '[');
+    deep += std::string(kDepth, ']');
+    for (const char* type : {"Polygon", "MultiPolygon", "LineString", "MultiLineString", "MultiPoint", "Point"}) {
+        INFO(type);
+        const GeoJsonImportResult result =
+            readOk(collection({feature(std::string(R"({"type":")") + type + R"(","coordinates":)" + deep + "}")}));
+        CHECK(result.annotations.empty());
+        CHECK(result.invalidGeometry == 1);
+    }
 }
 
 TEST_CASE("a large detection export is skipped whole", "[core][GeoJsonImport]")

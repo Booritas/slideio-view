@@ -153,10 +153,14 @@ Coordinates are taken as level-0 pixels of the scene, unchanged.
 | `GeometryCollection`, null geometry | skipped, counted "unsupported geometry" |
 
 **A multi-part feature becomes several annotations.** Each part carries the
-feature's properties; the first part keeps the feature's id and the rest get
-fresh ones, so a re-import still finds the first part already present. The
-summary counts annotations added, which may exceed features read; that is why
-it says "annotations", not "features".
+feature's properties and an id derived from the feature's: the first part the
+id itself, part *i* the id followed by `#i`. A re-import then finds **every**
+part already present. (This section first said the later parts get fresh ids;
+the final review found that a second import of a QuPath Points class would
+then add all but one of its points again — the doubled count §2 forbids — and
+it was corrected 2026-10-22.) A feature with no id gets fresh ids for every
+part. The summary counts annotations added, which may exceed features read;
+that is why it says "annotations", not "features".
 
 **Rejected shapes**, counted "invalid geometry" and skipped: a non-finite or
 non-numeric coordinate, a position with fewer than two numbers (a third, `z`,

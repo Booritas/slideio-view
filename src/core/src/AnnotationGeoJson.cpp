@@ -13,6 +13,7 @@
 #include <optional>
 #include <set>
 #include <type_traits>
+#include <utility>
 #include <variant>
 
 namespace slideio::viewer::core
@@ -335,29 +336,52 @@ bool isAxisAlignedBox(const std::vector<PointF>& ring)
     return xs.size() == 2 && ys.size() == 2;
 }
 
-RectF boundsOf(const std::vector<PointF>& points)
+/// The smallest and largest corner of `points`, taken as they are. Never
+/// rebuilt as origin plus extent: at the edge of the double range the extent
+/// overflows to infinity, and a corner of infinity is one the serializer
+/// refuses -- after which the scene could not be saved at all.
+std::pair<PointF, PointF> cornersOf(const std::vector<PointF>& points)
 {
-    double minX = points.front().x;
-    double maxX = minX;
-    double minY = points.front().y;
-    double maxY = minY;
+    PointF low = points.front();
+    PointF high = low;
     for (const PointF& p : points) {
-        minX = std::min(minX, p.x);
-        maxX = std::max(maxX, p.x);
-        minY = std::min(minY, p.y);
-        maxY = std::max(maxY, p.y);
+        low.x = std::min(low.x, p.x);
+        low.y = std::min(low.y, p.y);
+        high.x = std::max(high.x, p.x);
+        high.y = std::max(high.y, p.y);
     }
-    return RectF{minX, minY, maxX - minX, maxY - minY};
+    return {low, high};
 }
 
 /// A closed ring as the viewer's shape for it: a rectangle when it is one.
 AnnotationGeometry areaFrom(std::vector<PointF> ring)
 {
     if (isAxisAlignedBox(ring)) {
-        const RectF box = boundsOf(ring);
-        return RectangleGeometry{PointF{box.x, box.y}, PointF{box.x + box.width, box.y + box.height}};
+        const auto [low, high] = cornersOf(ring);
+        return RectangleGeometry{low, high};
     }
     return PolygonGeometry{std::move(ring), true};
+}
+
+/// Stands in for a member the file left out, by reference. Nothing parsed is
+/// ever copied: nlohmann copies recursively, so copying a deeply nested value
+/// overflows the stack where parsing and destroying it did not.
+const InJson& absent()
+{
+    static const InJson kNull;
+    return kNull;
+}
+
+const InJson& emptyObject()
+{
+    static const InJson kEmpty = InJson::object();
+    return kEmpty;
+}
+
+const InJson& coordinatesOf(const InJson& geometry)
+{
+    const InJson* coordinates = member(geometry, "coordinates");
+    return coordinates != nullptr ? *coordinates : absent();
 }
 
 /// A Polygon's rings. Holes are refused before validity, so a holed polygon
@@ -373,12 +397,31 @@ GeometrySkip readPolygonRings(const InJson& coordinates, std::vector<PointF>& ex
     return readRing(coordinates[0], exterior) ? GeometrySkip::None : GeometrySkip::Invalid;
 }
 
+/// Calls `read` on `coordinates` itself, or on each of its parts for a
+/// Multi* geometry -- without building the one-element array a single
+/// geometry would otherwise need, which would copy it.
+template<typename ReadPart>
+bool forEachPart(const InJson& coordinates, bool multi, ReadPart read)
+{
+    if (!multi) {
+        return read(coordinates);
+    }
+    if (!coordinates.is_array() || coordinates.empty()) {
+        return false;
+    }
+    for (const InJson& part : coordinates) {
+        if (!read(part)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /// The geometry by its GeoJSON type alone -- a QuPath file, or anything else.
 GeometryRead readGeometry(const InJson& geometry)
 {
     const std::string type = stringMember(geometry, "type");
-    const InJson* coordinatesMember = member(geometry, "coordinates");
-    const InJson coordinates = coordinatesMember != nullptr ? *coordinatesMember : InJson();
+    const InJson& coordinates = coordinatesOf(geometry);
 
     GeometryRead read;
     if (type == "Point") {
@@ -398,26 +441,22 @@ GeometryRead readGeometry(const InJson& geometry)
             read.parts.emplace_back(PointGeometry{point});
         }
     } else if (type == "LineString" || type == "MultiLineString") {
-        const bool multi = type == "MultiLineString";
-        if (multi && (!coordinates.is_array() || coordinates.empty())) {
-            return skipped(GeometrySkip::Invalid);
-        }
-        const InJson lines = multi ? coordinates : InJson::array({coordinates});
-        for (const InJson& line : lines) {
+        const bool readable = forEachPart(coordinates, type == "MultiLineString", [&read](const InJson& line) {
             std::vector<PointF> points;
             if (!readPositions(line, points) || points.size() < kMinPolylineVertices) {
-                return skipped(GeometrySkip::Invalid);
+                return false;
             }
             read.parts.emplace_back(PolygonGeometry{std::move(points), false});
-        }
-    } else if (type == "Polygon" || type == "MultiPolygon") {
-        const bool multi = type == "MultiPolygon";
-        if (multi && (!coordinates.is_array() || coordinates.empty())) {
+            return true;
+        });
+        if (!readable) {
             return skipped(GeometrySkip::Invalid);
         }
-        const InJson polygons = multi ? coordinates : InJson::array({coordinates});
+    } else if (type == "Polygon" || type == "MultiPolygon") {
+        // Every part is looked at, so a holed part is reported as holed even
+        // after an invalid one.
         GeometrySkip worst = GeometrySkip::None;
-        for (const InJson& polygon : polygons) {
+        const bool shaped = forEachPart(coordinates, type == "MultiPolygon", [&read, &worst](const InJson& polygon) {
             std::vector<PointF> ring;
             const GeometrySkip skip = readPolygonRings(polygon, ring);
             if (skip == GeometrySkip::Holes) {
@@ -429,6 +468,10 @@ GeometryRead readGeometry(const InJson& geometry)
             } else {
                 read.parts.push_back(areaFrom(std::move(ring)));
             }
+            return true;
+        });
+        if (!shaped) {
+            return skipped(GeometrySkip::Invalid);
         }
         if (worst != GeometrySkip::None) {
             return skipped(worst);
@@ -446,8 +489,7 @@ GeometryRead readGeometry(const InJson& geometry)
 std::optional<AnnotationGeometry> readExportedShape(const std::string& slideioType, const InJson& geometry)
 {
     const std::string type = stringMember(geometry, "type");
-    const InJson* coordinatesMember = member(geometry, "coordinates");
-    const InJson coordinates = coordinatesMember != nullptr ? *coordinatesMember : InJson();
+    const InJson& coordinates = coordinatesOf(geometry);
 
     if (type == "Polygon" && (slideioType == "rectangle" || slideioType == "ellipse" || slideioType == "polygon")) {
         std::vector<PointF> ring;
@@ -463,9 +505,7 @@ std::optional<AnnotationGeometry> readExportedShape(const std::string& slideioTy
         }
         // The 512-gon's vertices include the box's four extremes, so its
         // bounds are the ellipse's box; a rectangle's are its corners.
-        const RectF box = boundsOf(ring);
-        const PointF topLeft{box.x, box.y};
-        const PointF bottomRight{box.x + box.width, box.y + box.height};
+        const auto [topLeft, bottomRight] = cornersOf(ring);
         if (slideioType == "rectangle") {
             return AnnotationGeometry{RectangleGeometry{topLeft, bottomRight}};
         }
@@ -572,7 +612,7 @@ void readProperties(const InJson& properties, std::chrono::system_clock::time_po
                     AnnotationProperties& outProperties, AnnotationMetadata& outMetadata)
 {
     const InJson* slideioMember = member(properties, "slideio");
-    const InJson slideio = slideioMember != nullptr && slideioMember->is_object() ? *slideioMember : InJson::object();
+    const InJson& slideio = slideioMember != nullptr && slideioMember->is_object() ? *slideioMember : emptyObject();
 
     outProperties = AnnotationProperties{};
     outProperties.label = stringMember(properties, "name");
@@ -623,17 +663,25 @@ std::string readId(const InJson& feature)
     return id->is_number() ? id->dump() : std::string();
 }
 
-/// QuPath's nested objects, wherever its version put them, counted to the bottom.
+/// QuPath's nested objects, wherever its version put them, counted to the
+/// bottom. With a work list rather than recursion, so no depth a file can
+/// reach overflows the stack.
 int countNested(const InJson& feature)
 {
     int count = 0;
-    for (const InJson* holder : {&feature, member(feature, "properties")}) {
-        const InJson* children = holder != nullptr ? member(*holder, "childObjects") : nullptr;
-        if (children == nullptr || !children->is_array()) {
-            continue;
-        }
-        for (const InJson& child : *children) {
-            count += 1 + countNested(child);
+    std::vector<const InJson*> pending{&feature};
+    while (!pending.empty()) {
+        const InJson* object = pending.back();
+        pending.pop_back();
+        for (const InJson* holder : {object, member(*object, "properties")}) {
+            const InJson* children = holder != nullptr ? member(*holder, "childObjects") : nullptr;
+            if (children == nullptr || !children->is_array()) {
+                continue;
+            }
+            for (const InJson& child : *children) {
+                ++count;
+                pending.push_back(&child);
+            }
         }
     }
     return count;
@@ -646,8 +694,8 @@ void readFeature(const InJson& feature, std::chrono::system_clock::time_point im
     result.nestedObjects += countNested(feature);
 
     const InJson* propertiesMember = member(feature, "properties");
-    const InJson properties =
-        propertiesMember != nullptr && propertiesMember->is_object() ? *propertiesMember : InJson::object();
+    const InJson& properties =
+        propertiesMember != nullptr && propertiesMember->is_object() ? *propertiesMember : emptyObject();
 
     // No object type at all is a plain GeoJSON file from another tool: a set
     // of annotations to the person importing it.
@@ -661,7 +709,7 @@ void readFeature(const InJson& feature, std::chrono::system_clock::time_point im
     }
 
     const InJson* geometryMember = member(feature, "geometry");
-    const InJson geometry = geometryMember != nullptr ? *geometryMember : InJson();
+    const InJson& geometry = geometryMember != nullptr ? *geometryMember : absent();
     const InJson* slideio = member(properties, "slideio");
     const std::string slideioType = slideio != nullptr ? stringMember(*slideio, "type") : std::string();
 
@@ -689,13 +737,16 @@ void readFeature(const InJson& feature, std::chrono::system_clock::time_point im
     AnnotationMetadata metadata;
     readProperties(properties, importedAt, annotationProperties, metadata);
 
-    // Every part carries the feature's properties. The first keeps the
-    // feature's id, so a re-import still finds it already present; the rest
-    // are new.
+    // Every part carries the feature's properties, and an id derived from the
+    // feature's -- the first part the id itself, part i the id + "#i" -- so a
+    // re-import finds EVERY part already present. Minting fresh ids for the
+    // later parts would let a second import of one QuPath Points class add
+    // all but one of its points again. No feature id: every part is minted.
     const std::string id = readId(feature);
     for (std::size_t i = 0; i < read.parts.size(); ++i) {
-        result.annotations.emplace_back(i == 0 ? id : std::string(), std::move(read.parts[i]),
-                                        annotationProperties, metadata);
+        std::string partId = i == 0 || id.empty() ? id : id + "#" + std::to_string(i);
+        result.annotations.emplace_back(std::move(partId), std::move(read.parts[i]), annotationProperties,
+                                        metadata);
     }
     ++result.featuresImported;
 }
@@ -725,17 +776,18 @@ GeoJsonImportResult geoJsonToAnnotations(std::string_view text, std::chrono::sys
     try {
         GeoJsonImportResult result;
         const std::string type = stringMember(document, "type");
-        InJson features;
+        const InJson* features = nullptr;
         if (document.is_array()) {
-            features = document;
+            features = &document;
         } else if (type == "Feature") {
-            features = InJson::array({document});
+            readFeature(document, importedAt, result);
+            return result;
         } else if (type == "FeatureCollection") {
             const InJson* listed = member(document, "features");
             if (listed == nullptr || !listed->is_array()) {
                 return importFailure("the FeatureCollection has no list of features");
             }
-            features = *listed;
+            features = listed;
             if (const InJson* slideio = member(document, "slideio"); slideio != nullptr && slideio->is_object()) {
                 result.provenance.present = true;
                 result.provenance.slide = stringMember(*slideio, "slide");
@@ -749,7 +801,7 @@ GeoJsonImportResult geoJsonToAnnotations(std::string_view text, std::chrono::sys
             return importFailure("the file is not a GeoJSON Feature, FeatureCollection or list of Features");
         }
 
-        for (const InJson& feature : features) {
+        for (const InJson& feature : *features) {
             readFeature(feature, importedAt, result);
         }
         return result;

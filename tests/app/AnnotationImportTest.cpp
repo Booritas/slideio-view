@@ -70,6 +70,23 @@ TEST_CASE("planImport skips an id repeated in the file", "[app][AnnotationImport
     REQUIRE(plan.alreadyPresent == 1);
 }
 
+TEST_CASE("re-importing a QuPath Points class adds nothing", "[app][AnnotationImport]")
+{
+    const std::string file =
+        R"({"type":"FeatureCollection","features":[{"type":"Feature","id":"84a08285",)"
+        R"("geometry":{"type":"MultiPoint","coordinates":[[1,1],[2,2],[3,3],[4,4],[5,5]]},)"
+        R"("properties":{"objectType":"annotation","classification":{"name":"Ki67"}}}]})";
+    const auto now = std::chrono::system_clock::now();
+    AnnotationModel model;
+    model.insertMany(planImport(core::geoJsonToAnnotations(file, now).annotations, model).toAdd);
+    REQUIRE(model.annotations().size() == 5);
+
+    const ImportPlan again = planImport(core::geoJsonToAnnotations(file, now).annotations, model);
+
+    REQUIRE(again.toAdd.empty());
+    REQUIRE(again.alreadyPresent == 5);
+}
+
 TEST_CASE("re-importing an export adds nothing", "[app][AnnotationImport]")
 {
     AnnotationModel model;
