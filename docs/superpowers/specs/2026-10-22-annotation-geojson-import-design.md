@@ -324,18 +324,50 @@ Written before the run.
 
 | | Check | Result |
 |---|---|---|
-| AG1 | With no slide open, Import is disabled; open an editable slide: enabled; a read-only slide, a scene locked by another instance, an associated image: disabled. | |
-| AG2 | Export Philips-1 scene 0, delete every annotation, import the file: the summary says 27 will be added; after Import the scene is identical — same ids, types, arrows' directions, colours, classifications, notes. | |
-| AG3 | Import the same file again: "27 already in this scene", nothing added. | |
-| AG4 | Undo after an import removes all imported annotations in one step; redo restores them. | |
-| AG5 | After an import, close and reopen the slide: the imported annotations were autosaved. | |
-| AG6 | In QuPath 0.7.0, draw a rectangle, ellipse, polygon, polyline and a Points class of 5 on CMU-1-Small-Region.svs; export as GeoJSON; import here: each shape on the same tissue, the rectangle with resize handles, 5 markers counted in the tally under the class name. | |
-| AG7 | A QuPath export containing detections: they are counted as skipped in the summary and not imported. | |
-| AG8 | Import scene 1's export of the 3-scene SCN into scene 0: the summary warns it came from scene 1 and that shapes lie outside the scene; Cancel changes nothing. | |
-| AG9 | Cancel the summary: nothing changes, nothing is dirty. | |
-| AG10 | A file that is not JSON: a warning naming the file and the reason; nothing changes. | |
-| AG11 | A file with Greek and Cyrillic classifications: they show in the list and the tally byte-identical. | |
-| AG12 | The status bar confirms the import, with the count and the file name. | |
+| AG1 | With no slide open, Import is disabled; open an editable slide: enabled; a read-only slide, a scene locked by another instance, an associated image: disabled. | Pass — no slide, a locked scene (second window on Philips-1) and an unreadable annotation file: disabled, both exports still enabled; editable Philips-1: enabled. The associated-image clause is unreachable from the UI (below) |
+| AG2 | Export Philips-1 scene 0, delete every annotation, import the file: the summary says 27 will be added; after Import the scene is identical — same ids, types, arrows' directions, colours, classifications, notes. | Pass — every one of the 27 saved annotations equal field for field to the original file |
+| AG3 | Import the same file again: "27 already in this scene", nothing added. | Pass — information box with OK only; file not rewritten |
+| AG4 | Undo after an import removes all imported annotations in one step; redo restores them. | Pass — 27 → 0 → 27, each autosaved |
+| AG5 | After an import, close and reopen the slide: the imported annotations were autosaved. | Pass |
+| AG6 | In QuPath 0.7.0, draw a rectangle, ellipse, polygon, polyline and a Points class of 5 on CMU-1-Small-Region.svs; export as GeoJSON; import here: each shape on the same tissue, the rectangle with resize handles, 5 markers counted in the tally under the class name. | Pass — fixture made by a QuPath script; rectangle with 8 handles, ellipse as a polygon, Ki67 counted 5 |
+| AG7 | A QuPath export containing detections: they are counted as skipped in the summary and not imported. | Pass — `2 objects of type "detection"` |
+| AG8 | Import scene 1's export of the 3-scene SCN into scene 0: the summary warns it came from scene 1 and that shapes lie outside the scene; Cancel changes nothing. | Pass — both warnings; 1 of 6 wholly outside scene 0 |
+| AG9 | Cancel the summary: nothing changes, nothing is dirty. | Pass — file not rewritten |
+| AG10 | A file that is not JSON: a warning naming the file and the reason; nothing changes. | Pass — "the file is not valid JSON" |
+| AG11 | A file with Greek and Cyrillic classifications: they show in the list and the tally byte-identical. | Pass |
+| AG12 | The status bar confirms the import, with the count and the file name. | Pass — "Imported 27 annotations from ag2-philips.geojson" |
+
+**Run 2026-10-22 against the installed build of `23c5977`: 12/12 passed**, one
+clause struck as unreachable. The viewer was driven by UI Automation and
+synthetic input; dialog text and the status bar were read through UI
+Automation, and every annotation file was compared as parsed JSON, not by eye.
+
+- **AG2's "delete every annotation"** was done by closing the slide and moving
+  its annotation file aside, so the reopened scene was empty. The re-imported
+  file's 27 annotations equal the original's in every field — ids, geometry,
+  arrow direction, colours, Νέκρωση and Опухоль, notes, author and both
+  timestamps; only the document's own `createdAt`/`modifiedAt` are new.
+- **The summary's off-scene warning fired on AG2**, correctly: Philips-1 is
+  45056×35840 and 9 of the 27 test annotations, placed by earlier synthetic
+  runs, lie wholly below y = 35840. The warning is information, not a refusal,
+  and the import went ahead.
+- **AG6's fixture was written by QuPath itself**: a console Groovy script
+  created the five ROIs, a 5-point Points annotation classed Ki67 and two
+  detections, and called `PathIO.exportObjectsAsGeoJSON`. QuPath writes no
+  per-object `color` for these, only the class colour, which is what the
+  imported annotations took. The first marker kept the MultiPoint's id, the
+  other four got fresh ones.
+- **AG1's associated-image clause cannot be reached**, for the reason recorded
+  at `MainWindow.cpp`'s workspace-switch guard: the Associated Images panel
+  previews into a separate window and never replaces the slide in the
+  viewport, so `isAuxImageShown()` is false whatever the user does. Struck with
+  that reason, like AB19 and AB23, rather than left looking open.
+- The read-only case was produced two ways: a second instance on the same
+  scene (the lock), and a scene whose annotation file was temporarily replaced
+  with malformed JSON. Both disable Import and leave the exports enabled.
+
+Every fixture annotation file was restored from its backup afterwards and
+checked by hash.
 
 ## 7. Requirements
 
