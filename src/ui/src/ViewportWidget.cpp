@@ -2,6 +2,7 @@
 #include "slideio/viewer/ui/PathDisplay.h"
 #include "slideio/viewer/ui/ViewportController.h"
 #include "slideio/viewer/ui/AnnotationShapeName.h"
+#include "slideio/viewer/ui/TextAnnotationLayout.h"
 
 #include "slideio/viewer/app/AnnotationEditing.h"
 #include "slideio/viewer/app/AnnotationModel.h"
@@ -31,7 +32,11 @@
 #include <QCoreApplication>
 #include <QFileInfo>
 #include <QFocusEvent>
+#include <QFontMetricsF>
+#include <QGuiApplication>
 #include <QImage>
+#include <QKeyEvent>
+#include <QLineEdit>
 #include <QMetaObject>
 #include <QMouseEvent>
 #include <QPainter>
@@ -56,6 +61,7 @@
 #include <optional>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -1477,6 +1483,35 @@ struct ViewportWidget::Impl
     {
         return persistence == nullptr || persistence->isActive();
     }
+
+    // The inline editor of a text annotation (FR-ANN-10: click to place, no
+    // dialog). Created on first use. Like a pending trace it is not an
+    // annotation until committed: nothing is in the model while it is open
+    // for a new text.
+    QLineEdit* textEditor = nullptr;
+    /// Whether the editor is showing. Cleared FIRST when it closes: hiding a
+    /// focused widget moves focus, and the focus loss fires editingFinished,
+    /// which must not commit a second time.
+    bool textEditorOpen = false;
+    /// The text being edited; empty while placing a new one.
+    std::string textEditingId;
+    core::PointF textAnchorSlide{};
+
+    /// Every text is drawn in this, at a fixed screen size.
+    [[nodiscard]] static QFont textFont()
+    {
+        QFont font = QGuiApplication::font();
+        font.setPointSizeF(kTextPointSize);
+        return font;
+    }
+
+    /// What a text's plate shows: its words, or a placeholder that keeps a
+    /// text whose words were cleared visible and selectable.
+    [[nodiscard]] static QString textWords(const core::Annotation& annotation)
+    {
+        const QString words = QString::fromStdString(annotation.properties().label);
+        return words.isEmpty() ? QCoreApplication::translate("ViewportWidget", "(empty)") : words;
+    }
     std::string currentAuxImageName; // empty unless an aux image is shown
 
     // Async open: every slide-open call increments openOpId. Background workers
@@ -2588,6 +2623,8 @@ void ViewportWidget::closeSlide()
 {
     // Before the flush below, because a listener's whole job here is to get an
     // edit into the model while there is still something to flush it with.
+    // The viewport's own open editor is such an edit.
+    commitTextEditing();
     emit aboutToCloseSlide();
 
     // Before everything else, and specifically before resetAnnotationState() below:
@@ -3089,6 +3126,12 @@ bool ViewportWidget::commitDrawDrag()
     // refuses at a non-positive scale.
     const double toolScale = m_impl->controller ? m_impl->controller->viewport().scale() : 0.0;
 
+    // A text is created by its editor, never by a gesture: a focus loss mid-
+    // press must not fall through to the box tools below and leave a rectangle.
+    if (m_impl->activeTool == AnnotationTool::Text) {
+        return false;
+    }
+
     // The Point tool is the exact inverse of every other: a click with no
     // movement is the whole gesture, and there is no size that could be
     // insufficient, so dragExceedsMinimumSize is never consulted.
@@ -3268,6 +3311,154 @@ void ViewportWidget::pushCreateCommand(const std::string& id)
     const QString what = tr("Draw %1").arg(shapeName(after));
     m_impl->undoStack->push(app::AnnotationEditCommand::create(
         *m_impl->annotations, id, std::nullopt, std::move(after), what.toStdString()));
+}
+
+QRectF ViewportWidget::textPlateFor(const core::Annotation& annotation) const
+{
+    const auto* text = std::get_if<core::TextGeometry>(&annotation.geometry());
+    if (text == nullptr || !m_impl->controller) {
+        return {};
+    }
+    double sx = 0.0;
+    double sy = 0.0;
+    m_impl->controller->viewport().slideToScreen(text->anchor.x, text->anchor.y, sx, sy);
+    const QFontMetricsF metrics(Impl::textFont());
+    return textPlateRect(QPointF(sx, sy), metrics.horizontalAdvance(Impl::textWords(annotation)),
+                         metrics.height());
+}
+
+std::string ViewportWidget::annotationAt(QPointF screenPos) const
+{
+    if (!m_impl->controller) {
+        return {};
+    }
+    double slideX = 0.0;
+    double slideY = 0.0;
+    m_impl->controller->screenToSlide(screenPos.x(), screenPos.y(), slideX, slideY);
+    const double tolerance =
+        screenToleranceToSlide(kHitToleranceScreenPixels, m_impl->controller->viewport().scale());
+    const std::string geometric = m_impl->annotations->hitTest(core::PointF{slideX, slideY}, tolerance);
+
+    // Topmost first, as the geometric hit test searches.
+    const std::vector<core::Annotation>& annotations = m_impl->annotations->annotations();
+    std::string textHit;
+    for (auto it = annotations.rbegin(); it != annotations.rend(); ++it) {
+        if (textPlateFor(*it).contains(screenPos)) {
+            textHit = it->id();
+            break;
+        }
+    }
+    return topmostOf(geometric, textHit, annotations);
+}
+
+void ViewportWidget::openTextEditor(core::PointF anchor, const std::string& id, const QString& words)
+{
+    finishTextEditor(true);
+    if (!m_impl->annotationsEditable()) {
+        emit annotationEditBlocked(readOnlyEditMessage());
+        return;
+    }
+    if (m_impl->textEditor == nullptr) {
+        m_impl->textEditor = new QLineEdit(this);
+        m_impl->textEditor->setFont(Impl::textFont());
+        // Styled as the plate it becomes, so committing does not visibly jump.
+        m_impl->textEditor->setStyleSheet(QStringLiteral(
+            "QLineEdit { background: rgba(255, 255, 255, 220); border: 1px solid #E67E22; "
+            "border-radius: 3px; padding: 1px 2px; }"));
+        m_impl->textEditor->installEventFilter(this);
+        // Enter AND every focus loss: a click elsewhere, a window switch, a
+        // tool shortcut. Typed words are the thing most worth not losing;
+        // Escape, caught in eventFilter, is the deliberate way out.
+        connect(m_impl->textEditor, &QLineEdit::editingFinished, this, [this]() { finishTextEditor(true); });
+    }
+    m_impl->textAnchorSlide = anchor;
+    m_impl->textEditingId = id;
+    m_impl->textEditorOpen = true;
+    m_impl->textEditor->setText(words);
+    m_impl->textEditor->selectAll();
+    positionTextEditor();
+    m_impl->textEditor->show();
+    m_impl->textEditor->setFocus();
+    update();
+}
+
+void ViewportWidget::positionTextEditor()
+{
+    if (!m_impl->textEditorOpen || m_impl->textEditor == nullptr || !m_impl->controller) {
+        return;
+    }
+    double sx = 0.0;
+    double sy = 0.0;
+    m_impl->controller->viewport().slideToScreen(m_impl->textAnchorSlide.x, m_impl->textAnchorSlide.y, sx, sy);
+    const QFontMetricsF metrics(Impl::textFont());
+    const double width = std::max(160.0, metrics.horizontalAdvance(m_impl->textEditor->text()) + 40.0);
+    const QRectF plate = textPlateRect(QPointF(sx, sy), width, metrics.height());
+    const QRect geometry = plate.toAlignedRect();
+    if (m_impl->textEditor->geometry() != geometry) {
+        m_impl->textEditor->setGeometry(geometry);
+    }
+}
+
+void ViewportWidget::finishTextEditor(bool commit)
+{
+    if (!m_impl->textEditorOpen) {
+        return;
+    }
+    m_impl->textEditorOpen = false;
+    const std::string words = m_impl->textEditor->text().trimmed().toStdString();
+    const std::string id = std::exchange(m_impl->textEditingId, std::string());
+    m_impl->textEditor->hide();
+    setFocus();
+    update();
+
+    // Empty words commit nothing: a new text is not created, and an existing
+    // one keeps the words it had -- removing it is Delete.
+    if (!commit || words.empty()) {
+        return;
+    }
+    if (!m_impl->annotationsEditable()) {
+        emit annotationEditBlocked(readOnlyEditMessage());
+        return;
+    }
+    if (id.empty()) {
+        // The words go on BEFORE pushCreateCommand copies the annotation, so
+        // creating a text with its words is one undo step, not a create
+        // followed by an edit.
+        const std::string created = m_impl->annotations->add(core::TextGeometry{m_impl->textAnchorSlide});
+        if (const core::Annotation* stored = m_impl->annotations->find(created)) {
+            core::Annotation withWords = *stored;
+            core::AnnotationProperties properties = withWords.properties();
+            properties.label = words;
+            withWords.setProperties(std::move(properties));
+            m_impl->annotations->restore(std::move(withWords));
+        }
+        pushCreateCommand(created);
+        m_impl->annotations->setSelected(created);
+        return;
+    }
+    const core::Annotation* existing = m_impl->annotations->find(id);
+    if (existing == nullptr || existing->properties().label == words || m_impl->undoStack == nullptr) {
+        return;
+    }
+    core::AnnotationProperties properties = existing->properties();
+    properties.label = words;
+    app::setPropertiesWithUndo(*m_impl->annotations, *m_impl->undoStack, id, std::move(properties),
+                               tr("Edit text").toStdString());
+}
+
+void ViewportWidget::commitTextEditing()
+{
+    finishTextEditor(true);
+}
+
+bool ViewportWidget::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == m_impl->textEditor && event->type() == QEvent::KeyPress
+        && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
+        finishTextEditor(false);
+        return true;
+    }
+    return QOpenGLWidget::eventFilter(watched, event);
 }
 
 void ViewportWidget::deleteAnnotation(const std::string& id)
@@ -3458,8 +3649,49 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
     const std::string& selectedId = m_impl->annotations->selectedId();
 
     const QRect widgetRect = rect();
+    const QFont textFont = Impl::textFont();
 
     for (const core::Annotation& annotation : m_impl->annotations->annotations()) {
+        // A text is its words, not its outline, and the words reach far past
+        // the anchor's box -- so it is culled by its plate and painted here.
+        if (const auto* text = std::get_if<core::TextGeometry>(&annotation.geometry())) {
+            const core::AnnotationProperties& props = annotation.properties();
+            const QColor stroke(props.color.r, props.color.g, props.color.b, props.color.a);
+            const QPointF anchor = toScreen(text->anchor);
+            const QRectF plate = textPlateFor(annotation);
+            const double reach = kHitToleranceScreenPixels + props.lineWidth;
+            if (!plate.united(QRectF(anchor, anchor))
+                     .adjusted(-reach, -reach, reach, reach)
+                     .intersects(QRectF(widgetRect))) {
+                continue;
+            }
+            if (const std::optional<core::ScreenDecoration> glyph = core::screenDecoration(
+                    annotation.geometry(), vp.scale(), kHitToleranceScreenPixels)) {
+                paintDecoration(*glyph, core::outline(annotation.geometry()), stroke);
+            }
+            // The text being edited is drawn by its editor, in the same place.
+            if (m_impl->textEditorOpen && m_impl->textEditingId == annotation.id()) {
+                continue;
+            }
+            // White behind the words at the fill opacity, so they read on dark
+            // tissue and pale glass alike; the outline is the annotation's own.
+            QColor plateFill(0xFF, 0xFF, 0xFF);
+            plateFill.setAlphaF(props.fillOpacity);
+            painter.setBrush(QBrush(plateFill));
+            painter.setPen(props.lineWidth > 0.0 ? QPen(stroke, props.lineWidth) : QPen(Qt::NoPen));
+            painter.drawRoundedRect(plate, 3.0, 3.0);
+            QFont font = textFont;
+            if (props.label.empty()) {
+                font.setItalic(true);
+                painter.setPen(QColor(0x80, 0x80, 0x80));
+            } else {
+                painter.setPen(stroke);
+            }
+            painter.setFont(font);
+            painter.drawText(plate, Qt::AlignCenter | Qt::TextSingleLine, Impl::textWords(annotation));
+            continue;
+        }
+
         // Two transforms to decide, against transforming every vertex of a
         // trace that is not on screen. A dense freehand outline can carry
         // thousands of points and the viewport repaints on every pan frame.
@@ -3558,7 +3790,26 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
                     painter.drawEllipse(centre, radius, radius);
                 }
             }
+
+            // A text's words are what the user clicked, so the selection
+            // frames the plate too, in the same two tones.
+            const QRectF plate = textPlateFor(*selected);
+            if (!plate.isEmpty()) {
+                const QRectF frame = plate.adjusted(-kSelectionRingGapScreenPixels, -kSelectionRingGapScreenPixels,
+                                                    kSelectionRingGapScreenPixels, kSelectionRingGapScreenPixels);
+                painter.setBrush(Qt::NoBrush);
+                painter.setPen(QPen(QColor(0x00, 0x00, 0x00), kSelectionRingPenScreenPixels));
+                painter.drawRect(frame);
+                painter.setPen(QPen(QColor(0xFF, 0xFF, 0xFF), 1.0, Qt::DashLine));
+                painter.drawRect(frame);
+            }
         }
+    }
+
+    // The editor is a child widget and does not follow the slide by itself.
+    // Queued: moving a child from inside a paint would ask for another paint.
+    if (m_impl->textEditorOpen) {
+        QMetaObject::invokeMethod(this, [this]() { positionTextEditor(); }, Qt::QueuedConnection);
     }
 
     // Vertex handles, painted from the STORED vertices -- not core::outline(),
@@ -3638,7 +3889,8 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         painter.setBrush(Qt::NoBrush);
         painter.drawLine(toScreen(m_impl->drawAnchorSlide),
                          toScreen(m_impl->drawCurrentSlide));
-    } else if (m_impl->drawing && m_impl->activeTool != AnnotationTool::Point) {
+    } else if (m_impl->drawing && m_impl->activeTool != AnnotationTool::Point
+               && m_impl->activeTool != AnnotationTool::Text) {
         // The same function the release will commit through, and the same
         // core::outline the committed shape will be painted from -- so the
         // dashed preview cannot be a different shape from what lands in the
@@ -3708,6 +3960,9 @@ void ViewportWidget::setActiveTool(AnnotationTool tool)
     if (m_impl->activeTool == tool) {
         return;
     }
+    // Words being typed are kept, not dropped: a tool shortcut is not a
+    // decision to throw them away. Escape is.
+    commitTextEditing();
     // Tool changes need not touch `drawing`, which cannot outlive a press. The
     // pending shape can, so it has to be dropped here explicitly.
     discardPendingShape();
@@ -3744,6 +3999,15 @@ void ViewportWidget::resetAnnotationState()
     // one slide's marks drawn over another's tissue.
     m_impl->annotations->clear();
     m_impl->drawing = false;
+    // closeSlide() committed any open editor before the flush; anything still
+    // open here belongs to a slide whose annotations are already gone, so it
+    // is dropped -- open cleared first, since hiding a focused editor emits
+    // editingFinished.
+    if (m_impl->textEditorOpen) {
+        m_impl->textEditorOpen = false;
+        m_impl->textEditingId.clear();
+        m_impl->textEditor->hide();
+    }
     // A half-traced shape is never committed on slide close. It is not in the
     // model, persistence never sees it, and materialising a partial outline
     // into a saved file would be worse than losing it.
@@ -4514,9 +4778,7 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
         double slideX = 0.0;
         double slideY = 0.0;
         m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
-        const double tolerance = screenToleranceToSlide(kHitToleranceScreenPixels,
-                                                        m_impl->controller->viewport().scale());
-        pressHitId = m_impl->annotations->hitTest(core::PointF{slideX, slideY}, tolerance);
+        pressHitId = annotationAt(event->pos());
         m_impl->movePressSlide = core::PointF{slideX, slideY};
     }
 
@@ -4848,25 +5110,27 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
             // an ellipse.
         }
 
-        commitDrawDrag();
+        if (m_impl->activeTool == AnnotationTool::Text) {
+            // At the PRESS point, as a marker is placed: the words go where the
+            // user clicked, not where a small slip of the hand let go.
+            openTextEditor(m_impl->drawAnchorSlide, std::string(), QString());
+        } else {
+            commitDrawDrag();
+        }
         update();
     }
 
     // Spec §6: a press that did not become a shape is a selection click. The
     // decision is releaseSelectsAnnotation, which a test can reach; this does
-    // nothing but ask it.
-    if (m_impl->controller
+    // nothing but ask it. Not while words are being typed: that click placed
+    // them, and selecting under it would only take the selection elsewhere.
+    if (m_impl->controller && !m_impl->textEditorOpen
         && releaseSelectsAnnotation(event->button() == Qt::LeftButton,
                                     m_impl->dragOwner == DragOwner::MoveAnnotation,
                                     m_impl->spaceHeld,
                                     (event->pos() - m_impl->pressPos).manhattanLength(),
                                     kHitToleranceScreenPixels)) {
-        double slideX = 0.0;
-        double slideY = 0.0;
-        m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
-        const double tolerance = screenToleranceToSlide(kHitToleranceScreenPixels,
-                                                        m_impl->controller->viewport().scale());
-        const std::string hit = m_impl->annotations->hitTest(core::PointF{slideX, slideY}, tolerance);
+        const std::string hit = annotationAt(event->pos());
         if (hit.empty()) {
             m_impl->annotations->clearSelection();
         } else {
@@ -5143,17 +5407,22 @@ void ViewportWidget::mouseDoubleClickEvent(QMouseEvent* event)
         return;
     }
 
-    double slideX = 0.0;
-    double slideY = 0.0;
-    m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
-    const double tolerance =
-        screenToleranceToSlide(kHitToleranceScreenPixels, m_impl->controller->viewport().scale());
-    const std::string hit = m_impl->annotations->hitTest(core::PointF{slideX, slideY}, tolerance);
+    const std::string hit = annotationAt(event->pos());
     if (hit.empty()) {
         QOpenGLWidget::mouseDoubleClickEvent(event);
         return;
     }
     const core::Annotation* annotation = m_impl->annotations->find(hit);
+    if (annotation != nullptr) {
+        if (const auto* text = std::get_if<core::TextGeometry>(&annotation->geometry())) {
+            // A text's words are its whole content, so double-clicking one
+            // edits them, as double-clicking a trace edits its vertices.
+            m_impl->annotations->setSelected(hit);
+            openTextEditor(text->anchor, hit, QString::fromStdString(annotation->properties().label));
+            event->accept();
+            return;
+        }
+    }
     if (annotation == nullptr
         || std::get_if<core::PolygonGeometry>(&annotation->geometry()) == nullptr) {
         QOpenGLWidget::mouseDoubleClickEvent(event);

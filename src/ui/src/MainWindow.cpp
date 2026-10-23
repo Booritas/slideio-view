@@ -267,6 +267,7 @@ struct MainWindow::Impl
     QAction* freehandToolAction = nullptr;
     QAction* pointToolAction = nullptr;
     QAction* arrowToolAction = nullptr;
+    QAction* textToolAction = nullptr;
     QAction* preferencesAction = nullptr;
     QAction* openAnnotationsFolderAction = nullptr;
     QAction* importAnnotationsAction = nullptr;
@@ -500,6 +501,11 @@ struct MainWindow::Impl
         arrowToolAction->setShortcut(QKeySequence("A"));
         arrowToolAction->setStatusTip("Draw an arrow by dragging from its tail to its head");
 
+        textToolAction = new QAction("&Text", owner);
+        textToolAction->setCheckable(true);
+        textToolAction->setShortcut(QKeySequence("T"));
+        textToolAction->setStatusTip("Click to write on the slide; Enter keeps the words, Escape drops them");
+
         // These are the only bare-letter shortcuts in the application; every
         // other one here is modifier-qualified. Qt matches shortcuts before the
         // key reaches the focus widget, so at the default window scope "v" and
@@ -515,6 +521,7 @@ struct MainWindow::Impl
         freehandToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         pointToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         arrowToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        textToolAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
 
         auto* toolGroup = new QActionGroup(owner);
         toolGroup->setExclusive(true);
@@ -525,6 +532,7 @@ struct MainWindow::Impl
         toolGroup->addAction(freehandToolAction);
         toolGroup->addAction(pointToolAction);
         toolGroup->addAction(arrowToolAction);
+        toolGroup->addAction(textToolAction);
         // Spec §6: no drawing tools without a slide. Enabled and disabled from
         // ViewportWidget::annotationsAvailableChanged, which says more than
         // "a slide is open": an associated image and a slide whose annotation
@@ -535,6 +543,7 @@ struct MainWindow::Impl
         freehandToolAction->setEnabled(false);
         pointToolAction->setEnabled(false);
         arrowToolAction->setEnabled(false);
+        textToolAction->setEnabled(false);
 
         importAnnotationsAction = new QAction("&Import Annotations...", owner);
         importAnnotationsAction->setStatusTip(
@@ -665,6 +674,7 @@ struct MainWindow::Impl
         toolsMenu->addAction(freehandToolAction);
         toolsMenu->addAction(pointToolAction);
         toolsMenu->addAction(arrowToolAction);
+        toolsMenu->addAction(textToolAction);
         // Preferences lives here rather than under Edit, which holds only Undo
         // and Redo. setMenuRole() moves it to the application menu on macOS
         // regardless. (The comment here used to say there was no Edit menu at
@@ -798,6 +808,7 @@ struct MainWindow::Impl
         viewportWidget->addAction(freehandToolAction);
         viewportWidget->addAction(pointToolAction);
         viewportWidget->addAction(arrowToolAction);
+        viewportWidget->addAction(textToolAction);
 
         QObject::connect(panToolAction, &QAction::triggered, owner, [this]() {
             viewportWidget->setActiveTool(AnnotationTool::Pan);
@@ -840,6 +851,9 @@ struct MainWindow::Impl
         });
         QObject::connect(arrowToolAction, &QAction::triggered, owner, [selectDrawingTool]() {
             selectDrawingTool(AnnotationTool::Arrow);
+        });
+        QObject::connect(textToolAction, &QAction::triggered, owner, [selectDrawingTool]() {
+            selectDrawingTool(AnnotationTool::Text);
         });
 
         QObject::connect(preferencesAction, &QAction::triggered, owner, [this]() {
@@ -886,6 +900,7 @@ struct MainWindow::Impl
                              freehandToolAction->setChecked(tool == AnnotationTool::Freehand);
                              pointToolAction->setChecked(tool == AnnotationTool::Point);
                              arrowToolAction->setChecked(tool == AnnotationTool::Arrow);
+                             textToolAction->setChecked(tool == AnnotationTool::Text);
                              if (isNPointTool(tool)) {
                                  // A user who clicks once and does not know how
                                  // to finish has no affordance at all otherwise.
@@ -1179,6 +1194,7 @@ struct MainWindow::Impl
             freehandToolAction->setEnabled(false);
             pointToolAction->setEnabled(false);
             arrowToolAction->setEnabled(false);
+            textToolAction->setEnabled(false);
             closeAction->setEnabled(false);
             exportCountsAction->setEnabled(false);
             exportMeasurementsAction->setEnabled(false);
@@ -1498,6 +1514,9 @@ void MainWindow::Impl::buildAnnotationPersistence()
         }
         // One entry point for the key, with the context test in one place rather
         // than split between a shortcut and a key handler.
+        // An open text editor would otherwise be left on an annotation the undo
+        // may remove; its words are committed first, as a focus loss would.
+        viewportWidget->commitTextEditing();
         if (viewportWidget->isDragInFlight()) {
             return;
         }
@@ -1514,6 +1533,9 @@ void MainWindow::Impl::buildAnnotationPersistence()
         if (routeEditShortcutToFocusWidget(owner, /*redo=*/true)) {
             return;
         }
+        // An open text editor would otherwise be left on an annotation the undo
+        // may remove; its words are committed first, as a focus loss would.
+        viewportWidget->commitTextEditing();
         if (viewportWidget->isDragInFlight()) {
             return;
         }
@@ -1952,6 +1974,7 @@ void MainWindow::Impl::applyAnnotationAvailability(bool available, const QString
     freehandToolAction->setEnabled(available);
     pointToolAction->setEnabled(available);
     arrowToolAction->setEnabled(available);
+    textToolAction->setEnabled(available);
     // Import creates annotations, so it follows the tools, not the exports.
     importAnnotationsAction->setEnabled(available);
     // Same gate for the properties editor's fields. A read-only slide still

@@ -22,6 +22,7 @@ enum class AnnotationTool
     Freehand,
     Point,
     Arrow,
+    Text,
 };
 
 enum class DragOwner

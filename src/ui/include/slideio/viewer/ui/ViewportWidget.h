@@ -8,6 +8,8 @@
 
 #include <QImage>
 #include <QOpenGLWidget>
+#include <QPointF>
+#include <QRectF>
 
 #include <cstdint>
 #include <memory>
@@ -16,6 +18,11 @@
 #include <vector>
 
 class QPainter;
+
+namespace slideio::viewer::core
+{
+class Annotation;
+}
 
 namespace slideio::viewer::app
 {
@@ -169,6 +176,11 @@ public:
     /// involved.
     bool undoLastPendingVertex();
 
+    /// Commits the text being typed in the inline editor, if it is open -- as
+    /// any focus loss does. Undo and redo call it first, so an editor is never
+    /// left open over an annotation they removed. Safe to call when closed.
+    void commitTextEditing();
+
     /// True while a tool drag, a move drag or a pending trace with the button
     /// held is in progress. Undo and redo are refused during one: the widget
     /// caches movingId and pending-shape state, and an undo that removed the
@@ -238,9 +250,32 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
     void focusOutEvent(QFocusEvent* event) override;
+    /// Escape in the text editor, which QLineEdit does not report.
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void updateCursor();
+
+    /// The annotation under a screen point: core's geometric hit test, and the
+    /// plates of text annotations, whose extent is in screen pixels; the
+    /// topmost of the two wins (ui::topmostOf). Every selection, move and
+    /// double-click asks this rather than the model directly.
+    [[nodiscard]] std::string annotationAt(QPointF screenPos) const;
+
+    /// A text annotation's plate on screen -- the one rectangle the painter
+    /// fills and annotationAt tests. Empty for anything that is not a text.
+    [[nodiscard]] QRectF textPlateFor(const core::Annotation& annotation) const;
+
+    /// Opens the inline editor at `anchor`: for a new text when `id` is empty,
+    /// over that text otherwise. Commits any editor already open first.
+    void openTextEditor(core::PointF anchor, const std::string& id, const QString& words);
+
+    /// Closes the inline editor, creating or changing the text when `commit`
+    /// and the trimmed words are not empty. One undo step either way.
+    void finishTextEditor(bool commit);
+
+    /// Moves the editor to follow its anchor after a pan or zoom.
+    void positionTextEditor();
     void paintAnnotations(QPainter& painter);
     void resetAnnotationState();
     void commitPendingShape();
