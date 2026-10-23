@@ -27,28 +27,45 @@ rather than a fix to make now, and that file says so beside it.
 - **Fix:** extend the two tests to every text field and every geometry type.
   Small.
 
-### TD-2. A very large QuPath detection file freezes the UI while it is skipped
+### TD-2. A very large QuPath detection file freezes the UI while it is skipped — RESOLVED 2026-10-23
 
-*From deferred finding 122, 2026-10-22.*
+*From deferred finding 122, 2026-10-22. Fixed 2026-10-23 with steps 1 and 2 of
+the three below; step 3 was judged not worth its cost.*
 
-- **What:** `MainWindow::Impl::importAnnotations` reads and parses the whole
-  file on the UI thread. Measured by the final review: a 206 MB QuPath export of
-  60 000 cells takes about 10 s, of which nlohmann's parse is about 5.5 s and
-  freeing the parsed document about 2.5 s. Every cell is correctly counted as
-  skipped and nothing is imported. There is no wait cursor or progress.
-- **Cost today:** the window does not respond for the duration, which reads as
-  a hang. Annotation files people import by hand are far smaller; detection
-  exports are the case that hits it.
-- **Already done:** the reader no longer copies the parsed document (that was
-  about 1.2 s and doubled peak memory on this file).
-- **Fix, in order of cost:**
-  1. A wait cursor (`QApplication::setOverrideCursor`) around the read. Minutes.
-  2. A SAX pass with nlohmann's `sax_parse` that discards non-annotation
-     features as it meets them instead of building them into a DOM. Removes
-     most of the parse and all of the destruction cost; the reader would need
-     restructuring around events.
-  3. Parse on a worker thread with a cancellable progress dialog. Needs care:
-     the model and the persistence lock must not change under it.
+- **What it was:** `MainWindow::Impl::importAnnotations` read and parsed the
+  whole file on the UI thread. A QuPath export of 60 000 cells froze the
+  window for its whole duration, and the parsed document was held whole only to
+  be thrown away.
+- **What was done:**
+  1. **The read runs on a worker thread** (`std::async`) behind a window-modal
+     "Reading <file>..." dialog with Cancel, shown after 400 ms, and a busy
+     cursor. `core::geoJsonToAnnotations` takes an optional
+     `const std::atomic<bool>*` it polls throughout, and returns a result with
+     `cancelled` set.
+  2. **Non-annotation features are dropped while the file is parsed.** The
+     parse callback tracks which container it is in and, when a top-level
+     feature completes, counts it and discards it if its `objectType` is not
+     `annotation` -- so a detection export is never held whole. Nested
+     `childObjects` are never dropped on their own.
+- **Measured** on a generated 155 MB QuPath-style export of 60 000 cells (41-
+  point outlines, nucleus geometry, 40 measurements each), with the hidden
+  core-tests benchmark `"benchmark: reading a large GeoJSON file"`
+  (`SLIDEIO_GEOJSON_BENCHMARK=<file>`):
+
+  | | Reader time | Reader peak memory |
+  |---|---|---|
+  | Before | 13.8 s | 991 MB |
+  | After | 6.0 s | 297 MB (147 MB of it the file's text) |
+
+  In the installed viewer, the same file showed its summary after 7.0 s
+  with the window answering throughout (Windows never reported it as not
+  responding), and the whole process peaked at 418 MB with a slide open.
+  Cancel closed the dialog within about 1.7 s and changed nothing.
+- **Not done:** step 3, a streaming SAX reader that never builds a document at
+  all. What remains of the 6 s is mostly nlohmann's lexing and the building of
+  each feature before it is dropped; a SAX pass would remove some of that, but
+  it would mean restructuring the reader around events, for a wait that now
+  happens behind a dialog the user can cancel.
 
 ### TD-3. An exported ellipse comes back within a few ulps, not bit-exact
 

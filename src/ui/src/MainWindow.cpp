@@ -66,8 +66,11 @@
 #include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QMimeData>
 #include <QPlainTextEdit>
+#include <QProgressDialog>
 #include <QPushButton>
 #include <QRegion>
 #include <QScreen>
@@ -75,11 +78,15 @@
 #include <QSignalBlocker>
 #include <QStatusBar>
 #include <QTextEdit>
+#include <QTimer>
 #include <QUrl>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <future>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -139,6 +146,58 @@ bool routeEditShortcutToFocusWidget(const QWidget* window, bool redo)
         return true;
     }
     return false;
+}
+
+/// Keeps the window answering while `work` runs on another thread.
+///
+/// An event loop polls for the result, so the window repaints and the OS never
+/// marks it as not responding. A busy dialog with Cancel appears only after a
+/// moment, so a file that reads quickly never flashes one; it is window-modal,
+/// so nothing the user does can change what the worker was handed. Cancel only
+/// raises `cancel` -- this still waits for the worker, which polls the flag
+/// and returns promptly, because a worker abandoned while it reads a reference
+/// to this frame would outlive what it reads.
+template<typename T>
+void waitWithCancel(QWidget* owner, std::future<T>& work, const QString& label, const QString& title,
+                    std::atomic<bool>& cancel)
+{
+    const auto done = [&work]() { return work.wait_for(std::chrono::seconds(0)) == std::future_status::ready; };
+    if (done()) {
+        return;
+    }
+    QGuiApplication::setOverrideCursor(Qt::BusyCursor);
+    QProgressDialog progress(label, QObject::tr("Cancel"), 0, 0, owner);
+    progress.setWindowTitle(title);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setAutoReset(false);
+    progress.setAutoClose(false);
+    // Shown by the poll below, not by QProgressDialog's own timer: with no
+    // value ever set, that timer keeps its four-second default whatever
+    // setMinimumDuration says, and a read of six seconds showed nothing for
+    // four of them.
+    progress.setMinimumDuration(std::numeric_limits<int>::max());
+    constexpr qint64 kShowAfterMilliseconds = 400;
+    QElapsedTimer elapsed;
+    elapsed.start();
+
+    QEventLoop loop;
+    QObject::connect(&progress, &QProgressDialog::canceled, &loop, [&cancel, &progress]() {
+        cancel.store(true, std::memory_order_relaxed);
+        progress.setLabelText(QObject::tr("Cancelling..."));
+    });
+    QTimer poll;
+    poll.setInterval(50);
+    QObject::connect(&poll, &QTimer::timeout, &loop, [&]() {
+        if (done()) {
+            loop.quit();
+        } else if (!progress.isVisible() && !cancel.load(std::memory_order_relaxed)
+                   && elapsed.elapsed() >= kShowAfterMilliseconds) {
+            progress.show();
+        }
+    });
+    poll.start();
+    loop.exec();
+    QGuiApplication::restoreOverrideCursor();
 }
 } // anonymous namespace
 
@@ -2141,23 +2200,47 @@ void MainWindow::Impl::importAnnotations()
                                  .arg(QDir::toNativeSeparators(chosen), detail));
     };
 
-    QFile file(chosen);
-    if (!file.open(QIODevice::ReadOnly)) {
-        reportFailure(file.errorString());
-        return;
-    }
-    const QByteArray bytes = file.readAll();
-    if (file.error() != QFileDevice::NoError) {
-        reportFailure(file.errorString());
-        return;
-    }
-    file.close();
-
     // Everything is read and converted before anything is shown or changed: a
-    // file that cannot be read changes nothing.
-    const core::GeoJsonImportResult result = core::geoJsonToAnnotations(
-        std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())),
-        std::chrono::system_clock::now());
+    // file that cannot be read changes nothing. On a worker thread, because a
+    // QuPath detection export is 150 MB and takes seconds -- the window would
+    // otherwise stop answering for all of them (TD-2). The reader touches
+    // nothing but its arguments, and the dialog below is window-modal, so no
+    // slide can close and no annotation change while it runs.
+    struct ReadOutcome
+    {
+        QString fileError;
+        core::GeoJsonImportResult result;
+    };
+    std::atomic<bool> cancel{false};
+    const auto importedAt = std::chrono::system_clock::now();
+    std::future<ReadOutcome> reading = std::async(std::launch::async, [&chosen, &cancel, importedAt]() {
+        ReadOutcome outcome;
+        QFile file(chosen);
+        if (!file.open(QIODevice::ReadOnly)) {
+            outcome.fileError = file.errorString();
+            return outcome;
+        }
+        const QByteArray bytes = file.readAll();
+        if (file.error() != QFileDevice::NoError) {
+            outcome.fileError = file.errorString();
+            return outcome;
+        }
+        file.close();
+        outcome.result = core::geoJsonToAnnotations(
+            std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())), importedAt, &cancel);
+        return outcome;
+    });
+    waitWithCancel(owner, reading, tr("Reading %1...").arg(QFileInfo(chosen).fileName()), title, cancel);
+    const ReadOutcome outcome = reading.get();
+    if (!outcome.fileError.isEmpty()) {
+        reportFailure(outcome.fileError);
+        return;
+    }
+    const core::GeoJsonImportResult& result = outcome.result;
+    if (result.cancelled) {
+        // The user asked for it; nothing was changed and nothing needs saying.
+        return;
+    }
     if (!result.error.empty()) {
         reportFailure(QString::fromStdString(result.error));
         return;

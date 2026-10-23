@@ -7,7 +7,10 @@
 #include "slideio/viewer/core/AnnotationSerialization.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cstdlib>
+#include <fstream>
 #include <iterator>
 #include <set>
 #include <string>
@@ -352,6 +355,73 @@ TEST_CASE("nested child objects are counted and skipped", "[core][GeoJsonImport]
         readOk(collection({feature(point, R"({"objectType":"annotation","childObjects":[)" + child + "]}")}));
     CHECK(result.annotations.size() == 1);
     CHECK(result.nestedObjects == 2);
+    // The grandchild detection is nested, not a top-level object to skip by
+    // type: dropping objects early while parsing must not reach into children.
+    CHECK(result.skippedObjectTypes.empty());
+}
+
+TEST_CASE("skipped objects are counted wherever the file puts them", "[core][GeoJsonImport]")
+{
+    // Non-annotation objects are dropped while the file is parsed, to keep a
+    // 60 000-cell export from being held whole in memory; the counts must not
+    // notice.
+    const std::string point = R"({"type":"Point","coordinates":[1,2]})";
+    const std::string child = feature(point, R"({"objectType":"annotation"})");
+    const std::string detectionWithChild =
+        feature(point, R"({"objectType":"detection","childObjects":[)" + child + "]}");
+
+    SECTION("in a collection")
+    {
+        const GeoJsonImportResult result =
+            readOk(collection({detectionWithChild, feature(point, R"({"objectType":"cell"})"), feature(point)}));
+        CHECK(result.featuresRead == 3);
+        CHECK(result.skippedObjectTypes.at("detection") == 1);
+        CHECK(result.skippedObjectTypes.at("cell") == 1);
+        CHECK(result.nestedObjects == 1);
+        CHECK(result.annotations.size() == 1);
+    }
+    SECTION("in a top-level array")
+    {
+        const GeoJsonImportResult result =
+            readOk("[" + detectionWithChild + "," + feature(point, R"({"object_type":"tile"})") + "]");
+        CHECK(result.featuresRead == 2);
+        CHECK(result.skippedObjectTypes.at("detection") == 1);
+        CHECK(result.skippedObjectTypes.at("tile") == 1);
+        CHECK(result.nestedObjects == 1);
+        CHECK(result.annotations.empty());
+    }
+    SECTION("as the whole file")
+    {
+        const GeoJsonImportResult result = readOk(detectionWithChild);
+        CHECK(result.featuresRead == 1);
+        CHECK(result.skippedObjectTypes.at("detection") == 1);
+        CHECK(result.nestedObjects == 1);
+    }
+    SECTION("a foreign member holding feature-like objects is not counted")
+    {
+        const GeoJsonImportResult result = readOk(
+            R"({"type":"FeatureCollection","other":[)" + feature(point, R"({"objectType":"cell"})") +
+            R"(],"features":[)" + feature(point) + "]}");
+        CHECK(result.featuresRead == 1);
+        CHECK(result.skippedObjectTypes.empty());
+    }
+}
+
+TEST_CASE("a cancelled read stops and returns nothing", "[core][GeoJsonImport]")
+{
+    std::atomic<bool> cancel{true};
+    const GeoJsonImportResult result =
+        geoJsonToAnnotations(collection({feature(R"({"type":"Point","coordinates":[1,2]})")}), kImportedAt, &cancel);
+    CHECK(result.cancelled);
+    CHECK(result.error.empty());
+    CHECK(result.annotations.empty());
+    CHECK(result.featuresRead == 0);
+
+    std::atomic<bool> carryOn{false};
+    const GeoJsonImportResult read =
+        geoJsonToAnnotations(collection({feature(R"({"type":"Point","coordinates":[1,2]})")}), kImportedAt, &carryOn);
+    CHECK_FALSE(read.cancelled);
+    CHECK(read.annotations.size() == 1);
 }
 
 TEST_CASE("invalid geometry is counted, never thrown", "[core][GeoJsonImport]")
@@ -676,4 +746,30 @@ TEST_CASE("a large detection export is skipped whole", "[core][GeoJsonImport]")
     const GeoJsonImportResult result = readOk(text);
     CHECK(result.annotations.empty());
     CHECK(result.skippedObjectTypes.at("detection") == 20000);
+}
+
+// Hidden: runs only when asked for by name or tag, with the file in
+// SLIDEIO_GEOJSON_BENCHMARK. Times the reader on a real-sized file -- the
+// measurement behind docs/technical-debt.md's TD-2.
+TEST_CASE("benchmark: reading a large GeoJSON file", "[.benchmark]")
+{
+    const char* path = std::getenv("SLIDEIO_GEOJSON_BENCHMARK");
+    if (path == nullptr) {
+        SKIP("set SLIDEIO_GEOJSON_BENCHMARK to a GeoJSON file");
+    }
+    std::ifstream in(path, std::ios::binary);
+    REQUIRE(in);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    const auto start = std::chrono::steady_clock::now();
+    const GeoJsonImportResult result = geoJsonToAnnotations(text, kImportedAt);
+    const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+
+    int skipped = 0;
+    for (const auto& [kind, count] : result.skippedObjectTypes) {
+        skipped += count;
+    }
+    WARN("read " << text.size() << " bytes in " << seconds << " s: " << result.featuresRead << " features, "
+                 << result.annotations.size() << " annotations, " << skipped << " skipped by type");
+    CHECK(result.error.empty());
 }

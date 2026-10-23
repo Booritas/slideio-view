@@ -756,26 +756,50 @@ int countNested(const InJson& feature)
     return count;
 }
 
-void readFeature(const InJson& feature, std::chrono::system_clock::time_point importedAt,
-                 GeoJsonImportResult& result)
+const InJson& propertiesOf(const InJson& feature)
 {
-    ++result.featuresRead;
-    result.nestedObjects += countNested(feature);
+    const InJson* properties = member(feature, "properties");
+    return properties != nullptr && properties->is_object() ? *properties : emptyObject();
+}
 
-    const InJson* propertiesMember = member(feature, "properties");
-    const InJson& properties =
-        propertiesMember != nullptr && propertiesMember->is_object() ? *propertiesMember : emptyObject();
-
-    // No object type at all is a plain GeoJSON file from another tool: a set
-    // of annotations to the person importing it.
+/// The object type a feature is skipped for, or empty when it is imported.
+/// No object type at all is a plain GeoJSON file from another tool: a set of
+/// annotations to the person importing it.
+std::string skippedObjectType(const InJson& feature)
+{
+    const InJson& properties = propertiesOf(feature);
     std::string objectType = stringMember(properties, "objectType");
     if (objectType.empty()) {
         objectType = stringMember(properties, "object_type");
     }
-    if (!objectType.empty() && objectType != "annotation") {
-        ++result.skippedObjectTypes[objectType];
+    return objectType == "annotation" ? std::string() : objectType;
+}
+
+/// Counts a top-level feature that is not an annotation -- read, skipped by
+/// type, and its nested objects -- and says whether it was one. Shared by the
+/// parse, which drops such features as they complete, and by readFeature, which
+/// meets the rest; the counts cannot depend on which of the two saw it.
+bool countIfSkipped(const InJson& feature, GeoJsonImportResult& result)
+{
+    const std::string type = skippedObjectType(feature);
+    if (type.empty()) {
+        return false;
+    }
+    ++result.featuresRead;
+    result.nestedObjects += countNested(feature);
+    ++result.skippedObjectTypes[type];
+    return true;
+}
+
+void readFeature(const InJson& feature, std::chrono::system_clock::time_point importedAt,
+                 GeoJsonImportResult& result)
+{
+    if (countIfSkipped(feature, result)) {
         return;
     }
+    ++result.featuresRead;
+    result.nestedObjects += countNested(feature);
+    const InJson& properties = propertiesOf(feature);
 
     const InJson* geometryMember = member(feature, "geometry");
     const InJson& geometry = geometryMember != nullptr ? *geometryMember : absent();
@@ -843,17 +867,119 @@ struct NestedTooDeeply
 {
 };
 
-bool refuseDeepNesting(int depth, InJson::parse_event_t /*event*/, InJson& /*parsed*/)
+struct ReadCancelled
 {
-    if (depth > kMaxJsonDepth) {
-        throw NestedTooDeeply{};
+};
+
+bool cancelRequested(const std::atomic<bool>* cancel)
+{
+    return cancel != nullptr && cancel->load(std::memory_order_relaxed);
+}
+
+/// The parse callback. It does three things as the file streams past: stops
+/// the read when asked to, refuses nesting no GeoJSON file needs, and drops
+/// every top-level feature that is not an annotation the moment it is complete
+/// -- after counting it into `dropped`. A QuPath detection export is otherwise
+/// held whole in memory only to be thrown away: 60 000 cells peaked near a
+/// gigabyte.
+///
+/// "Top-level" is an element of the root array, or of the root object's
+/// `features`. A feature nested in another's `childObjects` is part of its
+/// parent, counted through countNested, and must never be dropped on its own --
+/// so the callback tracks the containers it is inside and the key each one
+/// hangs from.
+class ParseWatcher
+{
+public:
+    ParseWatcher(const std::atomic<bool>* cancel, GeoJsonImportResult& dropped)
+        : m_cancel(cancel), m_dropped(dropped)
+    {
     }
-    return true;
+
+    bool operator()(int depth, InJson::parse_event_t event, InJson& parsed)
+    {
+        if (cancelRequested(m_cancel)) {
+            throw ReadCancelled{};
+        }
+        if (depth > kMaxJsonDepth) {
+            throw NestedTooDeeply{};
+        }
+        switch (event) {
+        case InJson::parse_event_t::key:
+            if (!m_frames.empty() && parsed.is_string()) {
+                m_frames.back().lastKey = parsed.get<std::string>();
+            }
+            return true;
+        case InJson::parse_event_t::object_start:
+        case InJson::parse_event_t::array_start: {
+            const bool inObject = !m_frames.empty() && !m_frames.back().array;
+            m_frames.push_back(Frame{event == InJson::parse_event_t::array_start,
+                                     inObject ? m_frames.back().lastKey : std::string(), {}});
+            return true;
+        }
+        case InJson::parse_event_t::array_end:
+            if (!m_frames.empty()) {
+                m_frames.pop_back();
+            }
+            return true;
+        case InJson::parse_event_t::object_end:
+            if (!m_frames.empty()) {
+                m_frames.pop_back();
+            }
+            // False discards the finished object from its parent.
+            return !(atFeatureList() && countIfSkipped(parsed, m_dropped));
+        case InJson::parse_event_t::value:
+            return true;
+        }
+        return true;
+    }
+
+private:
+    struct Frame
+    {
+        bool array = false;
+        /// The key this container hangs from in its parent object.
+        std::string key;
+        /// The most recent key read inside this container, if it is an object.
+        std::string lastKey;
+    };
+
+    /// True when the innermost open container is the list of top-level
+    /// features: the root array, or the root object's `features` array.
+    bool atFeatureList() const
+    {
+        if (m_frames.empty() || !m_frames.back().array) {
+            return false;
+        }
+        return m_frames.size() == 1
+            || (m_frames.size() == 2 && !m_frames.front().array && m_frames.back().key == "features");
+    }
+
+    const std::atomic<bool>* m_cancel;
+    GeoJsonImportResult& m_dropped;
+    std::vector<Frame> m_frames;
+};
+
+void addCounts(GeoJsonImportResult& into, const GeoJsonImportResult& from)
+{
+    into.featuresRead += from.featuresRead;
+    into.nestedObjects += from.nestedObjects;
+    for (const auto& [kind, count] : from.skippedObjectTypes) {
+        into.skippedObjectTypes[kind] += count;
+    }
+}
+
+GeoJsonImportResult cancelledRead()
+{
+    GeoJsonImportResult result;
+    result.cancelled = true;
+    return result;
 }
 
 } // namespace
 
-GeoJsonImportResult geoJsonToAnnotations(std::string_view text, std::chrono::system_clock::time_point importedAt)
+GeoJsonImportResult geoJsonToAnnotations(std::string_view text, std::chrono::system_clock::time_point importedAt,
+                                         const std::atomic<bool>* cancel)
 {
     constexpr std::string_view kBom = "\xEF\xBB\xBF";
     if (text.substr(0, kBom.size()) == kBom) {
@@ -864,11 +990,20 @@ GeoJsonImportResult geoJsonToAnnotations(std::string_view text, std::chrono::sys
     // parsed, which bounds every walk over the result at once -- nlohmann's
     // copy and comparison recurse, and a file nested twenty thousand deep
     // overflowed the stack in one of them.
+    GeoJsonImportResult dropped;
     InJson document;
     try {
-        document = InJson::parse(text.begin(), text.end(), refuseDeepNesting, false);
+        ParseWatcher watcher(cancel, dropped);
+        document = InJson::parse(
+            text.begin(), text.end(),
+            [&watcher](int depth, InJson::parse_event_t event, InJson& parsed) {
+                return watcher(depth, event, parsed);
+            },
+            false);
     } catch (const NestedTooDeeply&) {
         return importFailure("the file is nested more deeply than any GeoJSON file needs");
+    } catch (const ReadCancelled&) {
+        return cancelledRead();
     }
     if (document.is_discarded()) {
         return importFailure("the file is not valid JSON");
@@ -876,6 +1011,7 @@ GeoJsonImportResult geoJsonToAnnotations(std::string_view text, std::chrono::sys
 
     try {
         GeoJsonImportResult result;
+        addCounts(result, dropped);
         const std::string type = stringMember(document, "type");
         const InJson* features = nullptr;
         if (document.is_array()) {
@@ -903,6 +1039,9 @@ GeoJsonImportResult geoJsonToAnnotations(std::string_view text, std::chrono::sys
         }
 
         for (const InJson& feature : *features) {
+            if (cancelRequested(cancel)) {
+                return cancelledRead();
+            }
             readFeature(feature, importedAt, result);
         }
         return result;

@@ -2,6 +2,7 @@
 
 #include "slideio/viewer/core/Annotation.h"
 
+#include <atomic>
 #include <chrono>
 #include <map>
 #include <string>
@@ -110,6 +111,9 @@ struct GeoJsonImportResult
     /// top level, so outside the accounting identity above.
     int nestedObjects = 0;
     GeoJsonImportProvenance provenance;
+    /// True when the read was stopped through `cancel`: every other field is
+    /// then empty, and nothing should be reported -- the user asked for it.
+    bool cancelled = false;
     /// Non-empty when the file could not be read at all -- not JSON, not
     /// UTF-8, not GeoJSON, or nested deeper than any GeoJSON file needs:
     /// then every other field is empty.
@@ -127,7 +131,18 @@ struct GeoJsonImportResult
 ///
 /// `importedAt` stamps annotations whose file records no timestamps; it is a
 /// parameter so this stays pure.
+///
+/// Safe to call on a worker thread: it touches nothing but its arguments.
+/// `cancel`, when given, is polled throughout the parse and the walk; setting
+/// it from another thread stops the read within a fraction of a second and
+/// returns a result with `cancelled` set. A QuPath detection export is large
+/// -- 150 MB for 60 000 cells -- so the caller should run this off the UI
+/// thread and offer a way out.
+///
+/// Objects that are not annotations are counted and dropped while the file is
+/// still being parsed, so a detection export is never held whole in memory.
 [[nodiscard]] GeoJsonImportResult geoJsonToAnnotations(
-    std::string_view text, std::chrono::system_clock::time_point importedAt);
+    std::string_view text, std::chrono::system_clock::time_point importedAt,
+    const std::atomic<bool>* cancel = nullptr);
 
 } // namespace slideio::viewer::core
