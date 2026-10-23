@@ -7,7 +7,9 @@
 #include "slideio/viewer/ui/AnnotationCountExport.h"
 #include "slideio/viewer/ui/CsvFormat.h"
 
-#include <charconv>
+#include <QLocale>
+#include <QString>
+
 #include <cmath>
 #include <optional>
 #include <string>
@@ -25,10 +27,12 @@ constexpr const char* kHeader =
 
 /// Appends one number cell, or nothing for an absent value. Fixed notation at
 /// the shortest precision that reads back as the same double: no exponent a
-/// spreadsheet might misread, no thousands separator, no display rounding, and
-/// std::to_chars rather than a stream because a stream reads the C locale and
-/// could write a decimal comma. False when the value is not finite -- JSON is
-/// not involved here, but a spreadsheet given "inf" would read text.
+/// spreadsheet might misread, no thousands separator, no display rounding.
+/// QString::number with QLocale::FloatingPointShortest, which is locale-free:
+/// the floating-point std::to_chars is unavailable below macOS 13.3, which the
+/// macOS builds target, and a stream or printf reads the C locale and could
+/// write a decimal comma. False when the value is not finite -- a spreadsheet
+/// given "inf" would read text.
 bool appendNumber(std::string& row, std::optional<double> value)
 {
     if (!value.has_value()) {
@@ -37,12 +41,7 @@ bool appendNumber(std::string& row, std::optional<double> value)
     if (!std::isfinite(*value)) {
         return false;
     }
-    char buffer[512];
-    const auto written = std::to_chars(buffer, buffer + sizeof(buffer), *value, std::chars_format::fixed);
-    if (written.ec != std::errc()) {
-        return false;
-    }
-    row.append(buffer, written.ptr);
+    row += QString::number(*value, 'f', QLocale::FloatingPointShortest).toStdString();
     return true;
 }
 

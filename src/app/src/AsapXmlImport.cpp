@@ -50,12 +50,20 @@ std::string attribute(const QXmlStreamReader& reader, const char* name)
 /// One coordinate value. A decimal comma -- written by ASAP running under a
 /// comma locale -- is read as a decimal point when the value holds a comma and
 /// no full stop: an attribute holds one number, so "1234,5" can only mean
-/// 1234.5. std::from_chars, not a stream: a stream reads the C locale.
+/// 1234.5.
+///
+/// QByteArray::toDouble, which is locale-free, rather than std::from_chars:
+/// the floating-point from_chars is missing from the libc++ the macOS builds
+/// use, and strtod or a stream would read the C locale, which Qt sets from the
+/// user's on Unix -- a decimal comma there.
 std::optional<double> parseNumber(const std::string& text)
 {
     std::string value = core::trimAsciiWhitespace(text);
     if (!value.empty() && value.front() == '+') {
         value.erase(0, 1);
+        if (!value.empty() && (value.front() == '+' || value.front() == '-')) {
+            return std::nullopt;
+        }
     }
     if (value.find(',') != std::string::npos) {
         if (value.find('.') != std::string::npos) {
@@ -66,9 +74,9 @@ std::optional<double> parseNumber(const std::string& text)
     if (value.empty()) {
         return std::nullopt;
     }
-    double parsed = 0.0;
-    const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
-    if (error != std::errc() || end != value.data() + value.size() || !std::isfinite(parsed)) {
+    bool ok = false;
+    const double parsed = QByteArray::fromStdString(value).toDouble(&ok);
+    if (!ok || !std::isfinite(parsed)) {
         return std::nullopt;
     }
     return parsed;
@@ -231,10 +239,14 @@ core::AnnotationImportResult asapXmlToAnnotations(std::string_view text,
 {
     // One streaming pass: no tree is built, so depth costs nothing. Groups
     // follow annotations in ASAP's files, so they are resolved afterwards.
-    QXmlStreamReader reader(QByteArray::fromRawData(text.data(), static_cast<int>(text.size())));
+    // qsizetype, not int: a file over 2 GB would otherwise reach the reader
+    // with a wrapped length.
+    QXmlStreamReader reader(QByteArray::fromRawData(text.data(), static_cast<qsizetype>(text.size())));
     std::vector<RawAnnotation> raws;
     std::map<std::string, std::string> groupColors;
-    std::optional<RawAnnotation> current;
+    // A stack, not one slot: ASAP never nests an <Annotation> in another, but
+    // a file that did would otherwise lose the outer one without a count.
+    std::vector<RawAnnotation> open;
     bool sawRoot = false;
 
     while (!reader.atEnd()) {
@@ -253,9 +265,9 @@ core::AnnotationImportResult asapXmlToAnnotations(std::string_view text,
                 }
                 sawRoot = true;
             } else if (name == QLatin1String("Annotation")) {
-                current = RawAnnotation{attribute(reader, "Name"), attribute(reader, "Type"),
-                                        attribute(reader, "PartOfGroup"), attribute(reader, "Color"), {}};
-            } else if (name == QLatin1String("Coordinate") && current) {
+                open.push_back(RawAnnotation{attribute(reader, "Name"), attribute(reader, "Type"),
+                                             attribute(reader, "PartOfGroup"), attribute(reader, "Color"), {}});
+            } else if (name == QLatin1String("Coordinate") && !open.empty()) {
                 RawCoordinate coordinate;
                 const std::string order = attribute(reader, "Order");
                 long long parsed = 0;
@@ -265,13 +277,14 @@ core::AnnotationImportResult asapXmlToAnnotations(std::string_view text,
                 }
                 coordinate.x = attribute(reader, "X");
                 coordinate.y = attribute(reader, "Y");
-                current->coordinates.push_back(std::move(coordinate));
+                open.back().coordinates.push_back(std::move(coordinate));
             } else if (name == QLatin1String("Group")) {
                 groupColors[attribute(reader, "Name")] = attribute(reader, "Color");
             }
-        } else if (token == QXmlStreamReader::EndElement && reader.name() == QLatin1String("Annotation") && current) {
-            raws.push_back(std::move(*current));
-            current.reset();
+        } else if (token == QXmlStreamReader::EndElement && reader.name() == QLatin1String("Annotation")
+                   && !open.empty()) {
+            raws.push_back(std::move(open.back()));
+            open.pop_back();
         }
     }
     if (reader.hasError()) {
@@ -332,12 +345,24 @@ core::AnnotationImportResult asapXmlToAnnotations(std::string_view text,
         metadata.modifiedAt = now;
 
         // Two identical annotations in one file are still two findings.
-        std::string seed = contentSeed(raw, coordinates);
-        seed += kSeedSeparator + std::to_string(repeats[seed]++);
-        for (std::size_t part = 0; part < shapes.size(); ++part) {
-            result.annotations.emplace_back(std::string(), std::move(shapes[part]), properties, metadata);
-            result.idSeeds.push_back(shapes.size() == 1 ? seed
-                                                        : seed + kSeedSeparator + "part" + std::to_string(part));
+        if (*kind == Kind::PointSet) {
+            // Each point by where it is, never by its place in the set: ASAP
+            // counts cells as one PointSet, and a seed from the whole set
+            // would give every point a new id the moment one was added or
+            // deleted -- re-importing an edited count would double it. Also
+            // what keeps a 50 000-point set from copying all its coordinates
+            // into every one of its 50 000 seeds.
+            for (std::size_t part = 0; part < shapes.size(); ++part) {
+                std::string seed = contentSeed(raw, {coordinates[part]});
+                seed += kSeedSeparator + std::to_string(repeats[seed]++);
+                result.annotations.emplace_back(std::string(), std::move(shapes[part]), properties, metadata);
+                result.idSeeds.push_back(std::move(seed));
+            }
+        } else {
+            std::string seed = contentSeed(raw, coordinates);
+            seed += kSeedSeparator + std::to_string(repeats[seed]++);
+            result.annotations.emplace_back(std::string(), std::move(shapes.front()), properties, metadata);
+            result.idSeeds.push_back(std::move(seed));
         }
         ++result.featuresImported;
     }

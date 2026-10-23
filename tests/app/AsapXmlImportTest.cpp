@@ -5,6 +5,7 @@
 #include "slideio/viewer/app/AsapXmlImport.h"
 #include "slideio/viewer/core/AnnotationGeometry.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <optional>
@@ -252,6 +253,64 @@ TEST_CASE("every annotation is seeded from its content", "[app][AsapXmlImport]")
     const app::ImportPlan again = app::planImport(std::move(twice.annotations), std::move(twice.idSeeds), model);
     CHECK(again.toAdd.empty());
     CHECK(again.alreadyPresent == 3);
+}
+
+TEST_CASE("each point of a PointSet is identified by where it is", "[app][AsapXmlImport]")
+{
+    // ASAP counts cells as one PointSet. Editing it -- deleting the first
+    // point, adding one -- must re-import as the one new point, not as a whole
+    // new set beside the old one.
+    app::AnnotationModel model;
+    core::AnnotationImportResult first =
+        readOk(asap(annotation("PointSet", {{"1", "1"}, {"2", "2"}, {"3", "3"}}, "Ki67")));
+    model.insertMany(app::planImport(std::move(first.annotations), std::move(first.idSeeds), model).toAdd);
+    REQUIRE(model.annotations().size() == 3);
+
+    core::AnnotationImportResult edited =
+        readOk(asap(annotation("PointSet", {{"2", "2"}, {"3", "3"}, {"4", "4"}}, "Ki67")));
+    const app::ImportPlan plan = app::planImport(std::move(edited.annotations), std::move(edited.idSeeds), model);
+    REQUIRE(plan.toAdd.size() == 1);
+    CHECK(plan.alreadyPresent == 2);
+    CHECK(plan.toAdd[0].boundingBox().x == 4.0);
+
+    // Two points at the same place are still two counts.
+    const core::AnnotationImportResult twice = readOk(asap(annotation("PointSet", {{"1", "1"}, {"1", "1"}})));
+    REQUIRE(twice.idSeeds.size() == 2);
+    CHECK(twice.idSeeds[0] != twice.idSeeds[1]);
+}
+
+TEST_CASE("a large PointSet is read without copying the set into every point", "[app][AsapXmlImport]")
+{
+    std::vector<std::pair<std::string, std::string>> cells;
+    for (int i = 0; i < 50000; ++i) {
+        cells.emplace_back(std::to_string(i % 500 * 4), std::to_string(i / 500 * 4));
+    }
+    const core::AnnotationImportResult result = readOk(asap(annotation("PointSet", cells, "Ki67")));
+    REQUIRE(result.annotations.size() == 50000);
+    std::size_t longest = 0;
+    for (const std::string& seed : result.idSeeds) {
+        longest = std::max(longest, seed.size());
+    }
+    CHECK(longest < 64);
+}
+
+TEST_CASE("an annotation nested in another is counted, not lost", "[app][AsapXmlImport]")
+{
+    const std::string nested =
+        "<ASAP_Annotations><Annotations>"
+        "<Annotation Name=\"outer\" Type=\"Dot\" PartOfGroup=\"A\"><Coordinates>"
+        "<Coordinate Order=\"0\" X=\"1\" Y=\"1\"/></Coordinates>"
+        "<Annotation Name=\"inner\" Type=\"Dot\" PartOfGroup=\"B\"><Coordinates>"
+        "<Coordinate Order=\"0\" X=\"2\" Y=\"2\"/></Coordinates></Annotation>"
+        "</Annotation></Annotations></ASAP_Annotations>";
+    const core::AnnotationImportResult result = readOk(nested);
+    CHECK(result.featuresRead == 2);
+    REQUIRE(result.annotations.size() == 2);
+    std::set<std::string> groups;
+    for (const core::Annotation& annotation : result.annotations) {
+        groups.insert(annotation.properties().classification);
+    }
+    CHECK(groups == std::set<std::string>{"A", "B"});
 }
 
 TEST_CASE("a file that is not ASAP fails and changes nothing", "[app][AsapXmlImport]")

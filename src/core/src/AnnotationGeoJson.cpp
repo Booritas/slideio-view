@@ -8,7 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <charconv>
+#include <cstring>
 #include <cmath>
 #include <cstdint>
 #include <optional>
@@ -637,17 +637,24 @@ void readProperties(const InJson& properties, std::chrono::system_clock::time_po
 constexpr char kSeedSeparator = '\x1F';
 
 /// A part's identity within its feature: the feature's id and the part's own
-/// outline, written exactly. std::to_chars rather than a stream or printf,
-/// which read the C locale and could write a decimal comma.
+/// outline, each coordinate as the hexadecimal of its exact bit pattern. A seed
+/// only has to be the same for the same coordinates, never read back, so this
+/// needs no number formatting at all -- the floating-point std::to_chars is
+/// unavailable below macOS 13.3, which the macOS builds target, and a stream
+/// or printf reads the C locale.
 std::string partSeed(const std::string& featureId, const AnnotationGeometry& part)
 {
+    static_assert(sizeof(double) == sizeof(std::uint64_t));
+    constexpr char kHex[] = "0123456789abcdef";
     std::string seed = featureId;
-    char buffer[64];
     for (const PointF& point : outline(part).points) {
         for (const double value : {point.x, point.y}) {
-            const auto written = std::to_chars(buffer, buffer + sizeof(buffer), value);
+            std::uint64_t bits = 0;
+            std::memcpy(&bits, &value, sizeof(bits));
             seed += kSeedSeparator;
-            seed.append(buffer, written.ptr);
+            for (int shift = 60; shift >= 0; shift -= 4) {
+                seed += kHex[(bits >> shift) & 0xF];
+            }
         }
     }
     return seed;
