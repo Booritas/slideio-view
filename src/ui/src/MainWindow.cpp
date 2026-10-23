@@ -644,8 +644,9 @@ struct MainWindow::Impl
             // listener above, which closeSlide() emits before it flushes.
             viewportWidget->closeSlide();
             closeAction->setEnabled(false);
-            // Paired with closeAction at all three sites: the counts belong to
-            // the open scene, so the action lives and dies with it.
+            // Paired with closeAction at all four of its sites -- construction,
+            // here, a successful open and a failed one: the three exports belong
+            // to the open scene, so they live and die with it.
             exportCountsAction->setEnabled(false);
             exportMeasurementsAction->setEnabled(false);
             exportAnnotationsAction->setEnabled(false);
