@@ -29,15 +29,15 @@ std::chrono::system_clock::time_point at(long long epochSeconds)
 
 const auto kImportedAt = at(1792576800LL);
 
-GeoJsonImportResult read(const std::string& text)
+AnnotationImportResult read(const std::string& text)
 {
     return geoJsonToAnnotations(text, kImportedAt);
 }
 
 /// Reads `text`, requires it to be readable, and returns the result.
-GeoJsonImportResult readOk(const std::string& text)
+AnnotationImportResult readOk(const std::string& text)
 {
-    GeoJsonImportResult result = read(text);
+    AnnotationImportResult result = read(text);
     REQUIRE(result.error.empty());
     return result;
 }
@@ -69,12 +69,12 @@ std::string collection(const std::vector<std::string>& features, const std::stri
 /// The single annotation `geometry` imports as.
 Annotation only(const std::string& geometry, const std::string& properties = "{}")
 {
-    const GeoJsonImportResult result = readOk(collection({feature(geometry, properties)}));
+    const AnnotationImportResult result = readOk(collection({feature(geometry, properties)}));
     REQUIRE(result.annotations.size() == 1);
     return result.annotations.front();
 }
 
-int skippedCount(const GeoJsonImportResult& r)
+int skippedCount(const AnnotationImportResult& r)
 {
     int total = r.withHoles + r.unsupportedGeometry + r.invalidGeometry;
     for (const auto& [kind, count] : r.skippedObjectTypes) {
@@ -134,7 +134,7 @@ TEST_CASE("every type round-trips through export and import", "[core][GeoJsonImp
     const GeoJsonExportResult exported = annotationsToGeoJson(original, GeoJsonExportContext{}, kImportedAt);
     REQUIRE(exported.error.empty());
 
-    const GeoJsonImportResult imported = readOk(exported.text);
+    const AnnotationImportResult imported = readOk(exported.text);
     REQUIRE(imported.annotations.size() == original.size());
 
     for (std::size_t i = 0; i < original.size(); ++i) {
@@ -184,7 +184,7 @@ TEST_CASE("a zero-extent rectangle round-trips as a rectangle", "[core][GeoJsonI
     const GeoJsonExportResult exported = annotationsToGeoJson(original, GeoJsonExportContext{}, kImportedAt);
     REQUIRE(exported.error.empty());
 
-    const GeoJsonImportResult imported = readOk(exported.text);
+    const AnnotationImportResult imported = readOk(exported.text);
     REQUIRE(imported.annotations.size() == original.size());
     for (std::size_t i = 0; i < original.size(); ++i) {
         INFO(original[i].id());
@@ -205,7 +205,7 @@ TEST_CASE("the top level may be a collection, a feature or an array", "[core][Ge
     CHECK(readOk(one).annotations.size() == 1);
     CHECK(readOk("[" + one + "]").annotations.size() == 1);
 
-    const GeoJsonImportResult empty = readOk("[]");
+    const AnnotationImportResult empty = readOk("[]");
     CHECK(empty.annotations.empty());
     CHECK(empty.featuresRead == 0);
 }
@@ -225,7 +225,7 @@ TEST_CASE("an unreadable file is an error and returns nothing", "[core][GeoJsonI
     };
     for (const std::string& input : inputs) {
         INFO(input);
-        GeoJsonImportResult result;
+        AnnotationImportResult result;
         REQUIRE_NOTHROW(result = read(input));
         CHECK_FALSE(result.error.empty());
         CHECK(result.annotations.empty());
@@ -276,7 +276,7 @@ TEST_CASE("a QuPath file maps by geometry", "[core][GeoJsonImport]")
 
 TEST_CASE("multi-part geometries become one annotation per part", "[core][GeoJsonImport]")
 {
-    const GeoJsonImportResult points = readOk(collection({feature(
+    const AnnotationImportResult points = readOk(collection({feature(
         R"({"type":"MultiPoint","coordinates":[[1,1],[2,2],[3,3],[4,4],[5,5]]})",
         R"({"classification":{"name":"Tumor"}})", R"("m")")}));
     REQUIRE(points.annotations.size() == 5);
@@ -291,7 +291,7 @@ TEST_CASE("multi-part geometries become one annotation per part", "[core][GeoJso
     CHECK(points.featuresRead == 1);
     CHECK(points.featuresImported == 1);
 
-    const GeoJsonImportResult polygons = readOk(collection({feature(
+    const AnnotationImportResult polygons = readOk(collection({feature(
         R"({"type":"MultiPolygon","coordinates":[[[[0,0],[9,0],[5,7],[0,0]]],[[[20,0],[29,0],[25,7],[20,0]]]]})")}));
     REQUIRE(polygons.annotations.size() == 2);
     for (const Annotation& part : polygons.annotations) {
@@ -300,7 +300,7 @@ TEST_CASE("multi-part geometries become one annotation per part", "[core][GeoJso
         CHECK(poly->closed);
     }
 
-    const GeoJsonImportResult lines = readOk(collection({feature(
+    const AnnotationImportResult lines = readOk(collection({feature(
         R"({"type":"MultiLineString","coordinates":[[[0,0],[1,1]],[[5,5],[6,6],[7,5]]]})")}));
     REQUIRE(lines.annotations.size() == 2);
     for (const Annotation& part : lines.annotations) {
@@ -312,7 +312,7 @@ TEST_CASE("multi-part geometries become one annotation per part", "[core][GeoJso
 
 TEST_CASE("holes, collections and null geometry are skipped under their reasons", "[core][GeoJsonImport]")
 {
-    const GeoJsonImportResult result = readOk(collection({
+    const AnnotationImportResult result = readOk(collection({
         feature(R"({"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[2,2],[3,2],[3,3],[2,2]]]})"),
         feature(R"({"type":"MultiPolygon","coordinates":[[[[0,0],[9,0],[5,7],[0,0]]],)"
                 R"([[[20,0],[29,0],[25,7],[20,0]],[[21,1],[22,1],[22,2],[21,1]]]]})"),
@@ -329,7 +329,7 @@ TEST_CASE("holes, collections and null geometry are skipped under their reasons"
 TEST_CASE("only annotations are imported", "[core][GeoJsonImport]")
 {
     const std::string point = R"({"type":"Point","coordinates":[1,2]})";
-    const GeoJsonImportResult result = readOk(collection({
+    const AnnotationImportResult result = readOk(collection({
         feature(point, R"({"objectType":"detection"})"),
         feature(point, R"({"objectType":"detection"})"),
         feature(point, R"({"objectType":"cell"})"),
@@ -351,7 +351,7 @@ TEST_CASE("nested child objects are counted and skipped", "[core][GeoJsonImport]
     const std::string point = R"({"type":"Point","coordinates":[1,2]})";
     const std::string grandchild = feature(point, R"({"objectType":"detection"})");
     const std::string child = feature(point, R"({"objectType":"annotation","childObjects":[)" + grandchild + "]}");
-    const GeoJsonImportResult result =
+    const AnnotationImportResult result =
         readOk(collection({feature(point, R"({"objectType":"annotation","childObjects":[)" + child + "]}")}));
     CHECK(result.annotations.size() == 1);
     CHECK(result.nestedObjects == 2);
@@ -372,7 +372,7 @@ TEST_CASE("skipped objects are counted wherever the file puts them", "[core][Geo
 
     SECTION("in a collection")
     {
-        const GeoJsonImportResult result =
+        const AnnotationImportResult result =
             readOk(collection({detectionWithChild, feature(point, R"({"objectType":"cell"})"), feature(point)}));
         CHECK(result.featuresRead == 3);
         CHECK(result.skippedObjectTypes.at("detection") == 1);
@@ -382,7 +382,7 @@ TEST_CASE("skipped objects are counted wherever the file puts them", "[core][Geo
     }
     SECTION("in a top-level array")
     {
-        const GeoJsonImportResult result =
+        const AnnotationImportResult result =
             readOk("[" + detectionWithChild + "," + feature(point, R"({"object_type":"tile"})") + "]");
         CHECK(result.featuresRead == 2);
         CHECK(result.skippedObjectTypes.at("detection") == 1);
@@ -392,14 +392,14 @@ TEST_CASE("skipped objects are counted wherever the file puts them", "[core][Geo
     }
     SECTION("as the whole file")
     {
-        const GeoJsonImportResult result = readOk(detectionWithChild);
+        const AnnotationImportResult result = readOk(detectionWithChild);
         CHECK(result.featuresRead == 1);
         CHECK(result.skippedObjectTypes.at("detection") == 1);
         CHECK(result.nestedObjects == 1);
     }
     SECTION("a foreign member holding feature-like objects is not counted")
     {
-        const GeoJsonImportResult result = readOk(
+        const AnnotationImportResult result = readOk(
             R"({"type":"FeatureCollection","other":[)" + feature(point, R"({"objectType":"cell"})") +
             R"(],"features":[)" + feature(point) + "]}");
         CHECK(result.featuresRead == 1);
@@ -410,7 +410,7 @@ TEST_CASE("skipped objects are counted wherever the file puts them", "[core][Geo
 TEST_CASE("a cancelled read stops and returns nothing", "[core][GeoJsonImport]")
 {
     std::atomic<bool> cancel{true};
-    const GeoJsonImportResult result =
+    const AnnotationImportResult result =
         geoJsonToAnnotations(collection({feature(R"({"type":"Point","coordinates":[1,2]})")}), kImportedAt, &cancel);
     CHECK(result.cancelled);
     CHECK(result.error.empty());
@@ -418,7 +418,7 @@ TEST_CASE("a cancelled read stops and returns nothing", "[core][GeoJsonImport]")
     CHECK(result.featuresRead == 0);
 
     std::atomic<bool> carryOn{false};
-    const GeoJsonImportResult read =
+    const AnnotationImportResult read =
         geoJsonToAnnotations(collection({feature(R"({"type":"Point","coordinates":[1,2]})")}), kImportedAt, &carryOn);
     CHECK_FALSE(read.cancelled);
     CHECK(read.annotations.size() == 1);
@@ -441,7 +441,7 @@ TEST_CASE("invalid geometry is counted, never thrown", "[core][GeoJsonImport]")
     };
     for (const std::string& geometry : geometries) {
         INFO(geometry);
-        GeoJsonImportResult result;
+        AnnotationImportResult result;
         REQUIRE_NOTHROW(result = read(collection({feature(geometry)})));
         CHECK(result.error.empty());
         CHECK(result.annotations.empty());
@@ -486,7 +486,7 @@ TEST_CASE("a slideio type that disagrees with the geometry is ignored", "[core][
 
 TEST_CASE("an id written as a number is kept as its text", "[core][GeoJsonImport]")
 {
-    const GeoJsonImportResult result =
+    const AnnotationImportResult result =
         readOk(collection({feature(R"({"type":"Point","coordinates":[1,2]})", "{}", "17")}));
     REQUIRE(result.annotations.size() == 1);
     CHECK(result.annotations[0].id() == "17");
@@ -547,7 +547,7 @@ TEST_CASE("missing metadata takes the import instant and no author", "[core][Geo
     CHECK(malformed.metadata().modifiedAt == kImportedAt);
 
     const auto subSecond = kImportedAt + std::chrono::milliseconds(700);
-    const GeoJsonImportResult truncated =
+    const AnnotationImportResult truncated =
         geoJsonToAnnotations(collection({feature(R"({"type":"Point","coordinates":[1,2]})")}), subSecond);
     REQUIRE(truncated.annotations.size() == 1);
     CHECK(truncated.annotations[0].metadata().createdAt == kImportedAt);
@@ -556,14 +556,14 @@ TEST_CASE("missing metadata takes the import instant and no author", "[core][Geo
 TEST_CASE("provenance is returned when the collection carries it", "[core][GeoJsonImport]")
 {
     const std::string point = feature(R"({"type":"Point","coordinates":[1,2]})");
-    const GeoJsonImportResult with =
+    const AnnotationImportResult with =
         readOk(collection({point}, R"({"slide":"D:/s/a.svs","slideId":"abc","scene":1})"));
     CHECK(with.provenance.present);
     CHECK(with.provenance.slide == "D:/s/a.svs");
     CHECK(with.provenance.slideId == "abc");
     CHECK(with.provenance.scene == 1);
 
-    const GeoJsonImportResult without = readOk(collection({point}));
+    const AnnotationImportResult without = readOk(collection({point}));
     CHECK_FALSE(without.provenance.present);
     CHECK(without.provenance.scene == -1);
 }
@@ -571,7 +571,7 @@ TEST_CASE("provenance is returned when the collection carries it", "[core][GeoJs
 TEST_CASE("every feature is accounted for", "[core][GeoJsonImport]")
 {
     const std::string point = R"({"type":"Point","coordinates":[1,2]})";
-    const GeoJsonImportResult result = readOk(collection({
+    const AnnotationImportResult result = readOk(collection({
         feature(R"({"type":"MultiPoint","coordinates":[[1,1],[2,2]]})"),
         feature(R"({"type":"MultiLineString","coordinates":[[[0,0],[1,1]],[[5,5],[6,6]]]})"),
         feature(point, R"({"objectType":"detection"})"),
@@ -594,14 +594,14 @@ TEST_CASE("every feature is accounted for", "[core][GeoJsonImport]")
 namespace
 {
 
-std::vector<std::string> sortedSeeds(const GeoJsonImportResult& result)
+std::vector<std::string> sortedSeeds(const AnnotationImportResult& result)
 {
     std::vector<std::string> seeds = result.idSeeds;
     std::sort(seeds.begin(), seeds.end());
     return seeds;
 }
 
-GeoJsonImportResult multiPoint(const std::string& coordinates, const std::string& id = R"("m")")
+AnnotationImportResult multiPoint(const std::string& coordinates, const std::string& id = R"("m")")
 {
     return readOk(collection({feature(R"({"type":"MultiPoint","coordinates":)" + coordinates + "}", "{}", id)}));
 }
@@ -615,7 +615,7 @@ TEST_CASE("the parts of a multi-part feature are seeded from its id and their ow
     // that id when the class is edited. A part's identity is therefore the
     // feature's id plus where the part is -- never its position in the list,
     // which shifts when a point is deleted.
-    const GeoJsonImportResult abc = multiPoint("[[1,1],[2,2],[3,3]]");
+    const AnnotationImportResult abc = multiPoint("[[1,1],[2,2],[3,3]]");
     REQUIRE(abc.idSeeds.size() == 3);
     for (const Annotation& part : abc.annotations) {
         CHECK(part.id().empty());
@@ -624,21 +624,21 @@ TEST_CASE("the parts of a multi-part feature are seeded from its id and their ow
     CHECK(sortedSeeds(abc) == sortedSeeds(multiPoint("[[3,3],[1,1],[2,2]]")));
     CHECK(std::set<std::string>(abc.idSeeds.begin(), abc.idSeeds.end()).size() == 3);
 
-    const GeoJsonImportResult bcd = multiPoint("[[2,2],[3,3],[4,4]]");
+    const AnnotationImportResult bcd = multiPoint("[[2,2],[3,3],[4,4]]");
     std::vector<std::string> shared;
     const std::vector<std::string> a = sortedSeeds(abc);
     const std::vector<std::string> b = sortedSeeds(bcd);
     std::set_intersection(a.begin(), a.end(), b.begin(), b.end(), std::back_inserter(shared));
     CHECK(shared.size() == 2);
 
-    const GeoJsonImportResult otherClass = multiPoint("[[1,1],[2,2],[3,3]]", R"("n")");
+    const AnnotationImportResult otherClass = multiPoint("[[1,1],[2,2],[3,3]]", R"("n")");
     CHECK(sortedSeeds(otherClass) != sortedSeeds(abc));
 
-    const GeoJsonImportResult twice = multiPoint("[[1,1],[1,1]]");
+    const AnnotationImportResult twice = multiPoint("[[1,1],[1,1]]");
     REQUIRE(twice.idSeeds.size() == 2);
     CHECK(twice.idSeeds[0] != twice.idSeeds[1]);
 
-    const GeoJsonImportResult polygons = readOk(collection({feature(
+    const AnnotationImportResult polygons = readOk(collection({feature(
         R"({"type":"MultiPolygon","coordinates":[[[[0,0],[9,0],[5,7],[0,0]]],[[[0,0],[9,0],[5,8],[0,0]]]]})",
         "{}", R"("p")")}));
     REQUIRE(polygons.idSeeds.size() == 2);
@@ -647,12 +647,12 @@ TEST_CASE("the parts of a multi-part feature are seeded from its id and their ow
 
 TEST_CASE("only the parts of an identified multi-part feature are seeded", "[core][GeoJsonImport]")
 {
-    const GeoJsonImportResult anonymous = multiPoint("[[1,1],[2,2]]", "");
+    const AnnotationImportResult anonymous = multiPoint("[[1,1],[2,2]]", "");
     REQUIRE(anonymous.idSeeds.size() == 2);
     CHECK(anonymous.idSeeds[0].empty());
     CHECK(anonymous.idSeeds[1].empty());
 
-    const GeoJsonImportResult single =
+    const AnnotationImportResult single =
         readOk(collection({feature(R"({"type":"Point","coordinates":[1,2]})", "{}", R"("p")")}));
     REQUIRE(single.annotations.size() == 1);
     CHECK(single.annotations[0].id() == "p");
@@ -668,7 +668,7 @@ TEST_CASE("a shape whose extent overflows is invalid geometry", "[core][GeoJsonI
     const std::string ring = R"([[[-1.7e308,-1.7e308],[1.7e308,-1.7e308],)"
                              R"([1.7e308,1.7e308],[-1.7e308,1.7e308],[-1.7e308,-1.7e308]]])";
     const std::string line = R"([[-1.7e308,0],[1.7e308,0]])";
-    const GeoJsonImportResult result = readOk(collection({
+    const AnnotationImportResult result = readOk(collection({
         feature(R"({"type":"Polygon","coordinates":)" + ring + "}"),
         feature(R"({"type":"Polygon","coordinates":)" + ring + "}", R"({"slideio":{"type":"ellipse"}})"),
         feature(R"({"type":"Polygon","coordinates":[[[-1.7e308,0],[1.7e308,0],[0,5],[-1.7e308,0]]]})"),
@@ -682,7 +682,7 @@ TEST_CASE("a shape whose extent overflows is invalid geometry", "[core][GeoJsonI
 TEST_CASE("a large but finite shape imports and exports", "[core][GeoJsonImport]")
 {
     const std::string ring = R"([[[-8e307,-8e307],[8e307,-8e307],[8e307,8e307],[-8e307,8e307],[-8e307,-8e307]]])";
-    const GeoJsonImportResult result = readOk(collection({
+    const AnnotationImportResult result = readOk(collection({
         feature(R"({"type":"Polygon","coordinates":)" + ring + "}", "{}", R"("r")"),
         feature(R"({"type":"Polygon","coordinates":)" + ring + "}", R"({"slideio":{"type":"ellipse"}})", R"("e")"),
     }));
@@ -707,14 +707,14 @@ TEST_CASE("nesting deeper than any GeoJSON file needs is refused, not a crash", 
     for (int i = 0; i < kDepth; ++i) {
         children += "]}}";
     }
-    GeoJsonImportResult nested;
+    AnnotationImportResult nested;
     REQUIRE_NOTHROW(nested = read(collection(
         {feature(R"({"type":"Point","coordinates":[1,2]})", R"({"childObjects":[)" + children + "]}")})));
     CHECK_FALSE(nested.error.empty());
     CHECK(nested.annotations.empty());
 
     const std::string deep = std::string(kDepth, '[') + std::string(kDepth, ']');
-    GeoJsonImportResult coordinates;
+    AnnotationImportResult coordinates;
     REQUIRE_NOTHROW(coordinates = read(collection({feature(R"({"type":"Polygon","coordinates":)" + deep + "}")})));
     CHECK_FALSE(coordinates.error.empty());
 }
@@ -729,7 +729,7 @@ TEST_CASE("nesting as deep as a QuPath hierarchy is read", "[core][GeoJsonImport
     for (int i = 0; i < kLevels; ++i) {
         children += "]}}";
     }
-    const GeoJsonImportResult nested = readOk(
+    const AnnotationImportResult nested = readOk(
         collection({feature(R"({"type":"Point","coordinates":[1,2]})", R"({"childObjects":[)" + children + "]}")}));
     CHECK(nested.annotations.size() == 1);
     CHECK(nested.nestedObjects == kLevels);
@@ -743,7 +743,7 @@ TEST_CASE("a large detection export is skipped whole", "[core][GeoJsonImport]")
         text += (i == 0 ? "" : ",") + detection;
     }
     text += "]}";
-    const GeoJsonImportResult result = readOk(text);
+    const AnnotationImportResult result = readOk(text);
     CHECK(result.annotations.empty());
     CHECK(result.skippedObjectTypes.at("detection") == 20000);
 }
@@ -762,7 +762,7 @@ TEST_CASE("benchmark: reading a large GeoJSON file", "[.benchmark]")
     const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 
     const auto start = std::chrono::steady_clock::now();
-    const GeoJsonImportResult result = geoJsonToAnnotations(text, kImportedAt);
+    const AnnotationImportResult result = geoJsonToAnnotations(text, kImportedAt);
     const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 
     int skipped = 0;

@@ -23,7 +23,7 @@ struct GeoJsonImportSummaryInput
     /// The chosen file's name, shown in the first line.
     QString fileName;
     /// The reader's result: skip counts and the file's provenance. Not null.
-    const core::GeoJsonImportResult* result = nullptr;
+    const core::AnnotationImportResult* result = nullptr;
     /// app::planImport's numbers.
     int toAdd = 0;
     int alreadyPresent = 0;

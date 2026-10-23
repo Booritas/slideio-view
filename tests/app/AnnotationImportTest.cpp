@@ -38,7 +38,7 @@ std::string pointsClass(const std::string& id, const std::string& coordinates)
 /// Reads `file` and plans its import into `model`, as MainWindow does.
 ImportPlan plan(const std::string& file, const AnnotationModel& model)
 {
-    core::GeoJsonImportResult read = core::geoJsonToAnnotations(file, std::chrono::system_clock::now());
+    core::AnnotationImportResult read = core::geoJsonToAnnotations(file, std::chrono::system_clock::now());
     REQUIRE(read.error.empty());
     return planImport(std::move(read.annotations), std::move(read.idSeeds), model);
 }

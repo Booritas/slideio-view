@@ -27,7 +27,7 @@ core::Annotation box(double x0, double y0, double x1, double y1)
 /// A summary with nothing but `toAdd`, to be adjusted by each test.
 struct Fixture
 {
-    core::GeoJsonImportResult result;
+    core::AnnotationImportResult result;
     GeoJsonImportSummaryInput input;
 
     Fixture()

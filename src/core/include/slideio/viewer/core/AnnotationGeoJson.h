@@ -1,6 +1,7 @@
 #pragma once
 
 #include "slideio/viewer/core/Annotation.h"
+#include "slideio/viewer/core/AnnotationImport.h"
 
 #include <atomic>
 #include <chrono>
@@ -58,68 +59,6 @@ struct GeoJsonExportResult
     const std::vector<Annotation>& annotations, const GeoJsonExportContext& context,
     std::chrono::system_clock::time_point exportedAt);
 
-/// What the collection's own `slideio` member said about where the file came
-/// from -- present only in a file this application exported.
-struct GeoJsonImportProvenance
-{
-    bool present = false;
-    std::string slide;
-    std::string slideId;
-    /// -1 when the file does not say.
-    int scene = -1;
-};
-
-/// What a GeoJSON file turned into, and an account of everything it did not.
-///
-/// Every top-level feature is either imported (one annotation, or one per part
-/// of a multi-part geometry) or counted under exactly one skip reason, so
-/// `featuresRead == featuresImported + every skip count` and nothing leaves
-/// the file unreported.
-struct GeoJsonImportResult
-{
-    /// In file order. An EMPTY id means the caller must mint one: core is
-    /// Qt-free and cannot make a UUID.
-    std::vector<Annotation> annotations;
-    /// Parallel to `annotations`. Non-empty for each part of a multi-part
-    /// geometry (MultiPoint, MultiLineString, MultiPolygon) whose feature has
-    /// an id: the feature's id, the part's own coordinates, and which repeat
-    /// of those coordinates it is. The caller turns it into the part's UUID.
-    ///
-    /// Not the part's position in the list: QuPath writes a whole Points class
-    /// as ONE feature and keeps its id when the class is edited, so after a
-    /// point is deleted every later position names a different point. A seed
-    /// from where the part IS makes a re-import recognise every unchanged
-    /// point and add only the new ones. A real UUID rather than "id#n",
-    /// because QuPath reads an object id as a UUID and would drop anything
-    /// else on the way back.
-    std::vector<std::string> idSeeds;
-    int featuresRead = 0;
-    /// Features that produced at least one annotation.
-    int featuresImported = 0;
-    /// Objects QuPath marks as something other than an annotation --
-    /// "detection", "cell", "tile" -- counted under the value it gives.
-    std::map<std::string, int> skippedObjectTypes;
-    /// A polygon with an interior ring, which the viewer has no shape for.
-    int withHoles = 0;
-    /// A GeometryCollection, a null geometry, or a type GeoJSON does not define.
-    int unsupportedGeometry = 0;
-    /// Coordinates that are not finite numbers, or too few of them for the
-    /// shape -- the serializer's own minimums, so every annotation returned
-    /// is one the application can save.
-    int invalidGeometry = 0;
-    /// QuPath `childObjects`, counted recursively. Not features of the file's
-    /// top level, so outside the accounting identity above.
-    int nestedObjects = 0;
-    GeoJsonImportProvenance provenance;
-    /// True when the read was stopped through `cancel`: every other field is
-    /// then empty, and nothing should be reported -- the user asked for it.
-    bool cancelled = false;
-    /// Non-empty when the file could not be read at all -- not JSON, not
-    /// UTF-8, not GeoJSON, or nested deeper than any GeoJSON file needs:
-    /// then every other field is empty.
-    std::string error;
-};
-
 /// The annotations in a GeoJSON file -- one QuPath exports, or one
 /// annotationsToGeoJson wrote (FR-ANN-33). See
 /// docs/superpowers/specs/2026-10-22-annotation-geojson-import-design.md.
@@ -141,7 +80,7 @@ struct GeoJsonImportResult
 ///
 /// Objects that are not annotations are counted and dropped while the file is
 /// still being parsed, so a detection export is never held whole in memory.
-[[nodiscard]] GeoJsonImportResult geoJsonToAnnotations(
+[[nodiscard]] AnnotationImportResult geoJsonToAnnotations(
     std::string_view text, std::chrono::system_clock::time_point importedAt,
     const std::atomic<bool>* cancel = nullptr);
 

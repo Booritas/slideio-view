@@ -12,7 +12,6 @@
 #include <cmath>
 #include <cstdint>
 #include <optional>
-#include <set>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -225,7 +224,7 @@ namespace
 using InJson = nlohmann::json;
 
 /// Why a feature's geometry produced no annotation. Each is one counter of
-/// GeoJsonImportResult.
+/// AnnotationImportResult.
 enum class GeometrySkip
 {
     None,
@@ -299,35 +298,6 @@ bool readPositions(const InJson& value, std::vector<PointF>& out)
     return true;
 }
 
-/// The smallest and largest corner of `points`, taken as they are. Never
-/// rebuilt as origin plus extent, which can overflow where the corners do not.
-std::pair<PointF, PointF> cornersOf(const std::vector<PointF>& points)
-{
-    PointF low = points.front();
-    PointF high = low;
-    for (const PointF& p : points) {
-        low.x = std::min(low.x, p.x);
-        low.y = std::min(low.y, p.y);
-        high.x = std::max(high.x, p.x);
-        high.y = std::max(high.y, p.y);
-    }
-    return {low, high};
-}
-
-/// False when the shape's width or height is not a finite number although
-/// every coordinate is -- corners near the edge of the double range. The
-/// outline, the bounding box and measure() all subtract, so such a shape
-/// would paint, hit-test and export infinities and NaNs, and the export
-/// refuses a whole scene over one of them.
-bool hasFiniteExtent(const std::vector<PointF>& points)
-{
-    if (points.empty()) {
-        return true;
-    }
-    const auto [low, high] = cornersOf(points);
-    return std::isfinite(high.x - low.x) && std::isfinite(high.y - low.y);
-}
-
 /// A polygon's exterior ring, its closing repeat dropped, or false when it
 /// has fewer vertices than a saved polygon may or no finite extent. Counted,
 /// not de-duplicated: the serializer counts stored vertices, and a degenerate
@@ -348,33 +318,6 @@ bool readRing(const InJson& value, std::vector<PointF>& out)
 bool readLine(const InJson& value, std::vector<PointF>& out)
 {
     return readPositions(value, out) && out.size() >= kMinPolylineVertices && hasFiniteExtent(out);
-}
-
-/// The four corners of an axis-aligned rectangle, as QuPath writes its
-/// Rectangle ROI and as the export writes a rectangle: four distinct points,
-/// two distinct x and two distinct y, every edge horizontal or vertical.
-bool isAxisAlignedBox(const std::vector<PointF>& ring)
-{
-    if (ring.size() != 4) {
-        return false;
-    }
-    std::set<double> xs;
-    std::set<double> ys;
-    for (std::size_t i = 0; i < 4; ++i) {
-        const PointF& a = ring[i];
-        const PointF& b = ring[(i + 1) % 4];
-        if (a.x != b.x && a.y != b.y) {
-            return false;
-        }
-        for (std::size_t j = i + 1; j < 4; ++j) {
-            if (ring[i].x == ring[j].x && ring[i].y == ring[j].y) {
-                return false;
-            }
-        }
-        xs.insert(a.x);
-        ys.insert(a.y);
-    }
-    return xs.size() == 2 && ys.size() == 2;
 }
 
 /// The four corners of a box as the export writes a rectangle, degenerate ones
@@ -400,16 +343,6 @@ bool isBoxOutline(const std::vector<PointF>& ring)
         }
     }
     return true;
-}
-
-/// A closed ring as the viewer's shape for it: a rectangle when it is one.
-AnnotationGeometry areaFrom(std::vector<PointF> ring)
-{
-    if (isAxisAlignedBox(ring)) {
-        const auto [low, high] = cornersOf(ring);
-        return RectangleGeometry{low, high};
-    }
-    return PolygonGeometry{std::move(ring), true};
 }
 
 /// Stands in for a member the file left out, by reference. Nothing parsed is
@@ -517,7 +450,7 @@ GeometryRead readGeometry(const InJson& geometry)
             } else if (skip == GeometrySkip::Invalid && worst == GeometrySkip::None) {
                 worst = GeometrySkip::Invalid;
             } else if (skip == GeometrySkip::None) {
-                read.parts.push_back(areaFrom(std::move(ring)));
+                read.parts.push_back(closedAreaFrom(std::move(ring)));
             }
         }
         if (worst != GeometrySkip::None) {
@@ -779,7 +712,7 @@ std::string skippedObjectType(const InJson& feature)
 /// type, and its nested objects -- and says whether it was one. Shared by the
 /// parse, which drops such features as they complete, and by readFeature, which
 /// meets the rest; the counts cannot depend on which of the two saw it.
-bool countIfSkipped(const InJson& feature, GeoJsonImportResult& result)
+bool countIfSkipped(const InJson& feature, AnnotationImportResult& result)
 {
     const std::string type = skippedObjectType(feature);
     if (type.empty()) {
@@ -792,7 +725,7 @@ bool countIfSkipped(const InJson& feature, GeoJsonImportResult& result)
 }
 
 void readFeature(const InJson& feature, std::chrono::system_clock::time_point importedAt,
-                 GeoJsonImportResult& result)
+                 AnnotationImportResult& result)
 {
     if (countIfSkipped(feature, result)) {
         return;
@@ -832,7 +765,7 @@ void readFeature(const InJson& feature, std::chrono::system_clock::time_point im
 
     // Every part carries the feature's properties. A single geometry keeps the
     // feature's id. The parts of a Multi* geometry get none here and a seed
-    // instead -- see GeoJsonImportResult::idSeeds for why a part's identity is
+    // instead -- see AnnotationImportResult::idSeeds for why a part's identity is
     // where it is, not where it sits in the list.
     const std::string id = readId(feature);
     std::map<std::string, int> repeats;
@@ -851,9 +784,9 @@ void readFeature(const InJson& feature, std::chrono::system_clock::time_point im
     ++result.featuresImported;
 }
 
-GeoJsonImportResult importFailure(std::string message)
+AnnotationImportResult importFailure(std::string message)
 {
-    GeoJsonImportResult result;
+    AnnotationImportResult result;
     result.error = std::move(message);
     return result;
 }
@@ -891,7 +824,7 @@ bool cancelRequested(const std::atomic<bool>* cancel)
 class ParseWatcher
 {
 public:
-    ParseWatcher(const std::atomic<bool>* cancel, GeoJsonImportResult& dropped)
+    ParseWatcher(const std::atomic<bool>* cancel, AnnotationImportResult& dropped)
         : m_cancel(cancel), m_dropped(dropped)
     {
     }
@@ -956,11 +889,11 @@ private:
     }
 
     const std::atomic<bool>* m_cancel;
-    GeoJsonImportResult& m_dropped;
+    AnnotationImportResult& m_dropped;
     std::vector<Frame> m_frames;
 };
 
-void addCounts(GeoJsonImportResult& into, const GeoJsonImportResult& from)
+void addCounts(AnnotationImportResult& into, const AnnotationImportResult& from)
 {
     into.featuresRead += from.featuresRead;
     into.nestedObjects += from.nestedObjects;
@@ -969,16 +902,16 @@ void addCounts(GeoJsonImportResult& into, const GeoJsonImportResult& from)
     }
 }
 
-GeoJsonImportResult cancelledRead()
+AnnotationImportResult cancelledRead()
 {
-    GeoJsonImportResult result;
+    AnnotationImportResult result;
     result.cancelled = true;
     return result;
 }
 
 } // namespace
 
-GeoJsonImportResult geoJsonToAnnotations(std::string_view text, std::chrono::system_clock::time_point importedAt,
+AnnotationImportResult geoJsonToAnnotations(std::string_view text, std::chrono::system_clock::time_point importedAt,
                                          const std::atomic<bool>* cancel)
 {
     constexpr std::string_view kBom = "\xEF\xBB\xBF";
@@ -990,7 +923,7 @@ GeoJsonImportResult geoJsonToAnnotations(std::string_view text, std::chrono::sys
     // parsed, which bounds every walk over the result at once -- nlohmann's
     // copy and comparison recurse, and a file nested twenty thousand deep
     // overflowed the stack in one of them.
-    GeoJsonImportResult dropped;
+    AnnotationImportResult dropped;
     InJson document;
     try {
         ParseWatcher watcher(cancel, dropped);
@@ -1010,7 +943,7 @@ GeoJsonImportResult geoJsonToAnnotations(std::string_view text, std::chrono::sys
     }
 
     try {
-        GeoJsonImportResult result;
+        AnnotationImportResult result;
         addCounts(result, dropped);
         const std::string type = stringMember(document, "type");
         const InJson* features = nullptr;

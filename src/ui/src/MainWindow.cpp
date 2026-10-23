@@ -2209,7 +2209,7 @@ void MainWindow::Impl::importAnnotations()
     struct ReadOutcome
     {
         QString fileError;
-        core::GeoJsonImportResult result;
+        core::AnnotationImportResult result;
     };
     std::atomic<bool> cancel{false};
     const auto importedAt = std::chrono::system_clock::now();
@@ -2236,7 +2236,7 @@ void MainWindow::Impl::importAnnotations()
         reportFailure(outcome.fileError);
         return;
     }
-    const core::GeoJsonImportResult& result = outcome.result;
+    const core::AnnotationImportResult& result = outcome.result;
     if (result.cancelled) {
         // The user asked for it; nothing was changed and nothing needs saying.
         return;

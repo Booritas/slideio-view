@@ -47,7 +47,7 @@ QString geoJsonImportSummary(const GeoJsonImportSummaryInput& input)
 {
     // Byte escapes, not literal characters: the sources are compiled without
     // /utf-8, so MSVC would read a raw UTF-8 dash in the machine's codepage.
-    const core::GeoJsonImportResult& result = *input.result;
+    const core::AnnotationImportResult& result = *input.result;
     QStringList lines;
     if (input.toAdd > 0) {
         lines << translate("Import annotations from %1?").arg(input.fileName) << QString();
@@ -74,7 +74,7 @@ QString geoJsonImportSummary(const GeoJsonImportSummaryInput& input)
                "%1 with invalid coordinates \xE2\x80\x94 skipped.");
 
     QStringList warnings;
-    const core::GeoJsonImportProvenance& from = result.provenance;
+    const core::AnnotationImportProvenance& from = result.provenance;
     if (from.present) {
         const QString slide = QFileInfo(QString::fromStdString(from.slide)).fileName();
         const bool otherSlide =
