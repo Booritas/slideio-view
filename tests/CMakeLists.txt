@@ -76,6 +76,7 @@ add_test(NAME infra-tests COMMAND slideio-viewer-infra-tests)
 add_executable(slideio-viewer-ui-tests
     ui/AboutInfoTest.cpp
     ui/AnnotationCountExportTest.cpp
+    ui/CsvFormatTest.cpp
     ui/AnnotationGeoJsonImportTest.cpp
     ui/AnnotationInteractionTest.cpp
     ui/AnnotationListPolicyTest.cpp
