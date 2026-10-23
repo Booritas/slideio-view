@@ -245,13 +245,42 @@ would make AI3 stronger**, and the run record will say which was used.
 
 | | Check | Result |
 |---|---|---|
-| AI1 | File > Import Annotations... offers GeoJSON and ASAP XML files; the old GeoJSON check (AG2) still passes through the renamed action. | |
-| AI2 | An ASAP file with one of each type on CMU-1-Small-Region: the summary counts them, notes the spline, and after Import every shape is where its coordinates say. | |
-| AI3 | A CAMELYON-style file (Polygon annotations in `_0`, `_1`, `_2`, `Exclusion`): the classifications appear in the tally by those names, and the colours are the groups'. | |
-| AI4 | Import the same ASAP file twice: the second summary says every annotation is already in this scene. | |
-| AI5 | Undo removes the whole ASAP import in one step; it is autosaved and survives closing and reopening the slide. | |
-| AI6 | A `.xml` that is not ASAP, and a truncated ASAP file: a warning naming the file and the reason; nothing changes. | |
-| AI7 | An ASAP file with decimal-comma coordinates imports to the same places as its full-stop twin. | |
+| AI1 | File > Import Annotations... offers GeoJSON and ASAP XML files; the old GeoJSON check (AG2) still passes through the renamed action. | Pass — a QuPath GeoJSON file still summarises as before |
+| AI2 | An ASAP file with one of each type on CMU-1-Small-Region: the summary counts them, notes the spline, and after Import every shape is where its coordinates say. | Pass — 8 added, the Ellipse named as skipped, the spline noted |
+| AI3 | A CAMELYON-style file (Polygon annotations in `_0`, `_1`, `_2`, `Exclusion`): the classifications appear in the tally by those names, and the colours are the groups'. | Pass — see below on colour |
+| AI4 | Import the same ASAP file twice: the second summary says every annotation is already in this scene. | Pass — "8 already in this scene" |
+| AI5 | Undo removes the whole ASAP import in one step; it is autosaved and survives closing and reopening the slide. | Pass |
+| AI6 | A `.xml` that is not ASAP, and a truncated ASAP file: a warning naming the file and the reason; nothing changes. | Pass |
+| AI7 | An ASAP file with decimal-comma coordinates imports to the same places as its full-stop twin. | Pass — every saved shape identical |
+
+**Run 2026-10-23 against the installed build of `24bd970`: 7/7 passed.** No
+ASAP installation or ASAP-written file was available, so the fixtures were
+written to the format in §3: one file with one annotation of each type plus an
+`Ellipse`, a CAMELYON-style file, a decimal-comma twin of the first, a
+truncated copy, and an SCN metadata file (`scn/mtd.xml`) as the non-ASAP XML.
+The viewer was driven by UI Automation; every result was read back from the
+saved annotation file with a JSON parser.
+
+- **AI2:** each shape was saved where its coordinates put it -- the dot at
+  (300.5, 300.25), the three PointSet markers, the five-vertex polygon labelled
+  "Stroma patch", the rectangle (500, 500)-(800, 700), the six-vertex spline
+  polygon, and the two-point measurement line -- with its group as the
+  classification and its `Color`. The automatic names were not kept as labels.
+- **AI3:** `_0`, `_1`, `_2` and `Exclusion` arrived as classifications and as
+  rows of the counting strip. The fixture gave every annotation its own
+  `Color`, which §3 ranks above its group's, so the saved colours were the
+  annotations'; the group fallback is covered by the reader's unit tests.
+- **AI6:** the SCN metadata file was refused as "not an ASAP annotation file"
+  and the truncated file as "not valid XML: Premature end of document."
+- **AI7:** the comma twin derived different ids -- its coordinate text
+  differs -- so it was added, and its eight shapes were byte-for-byte the
+  first file's.
+
+**AI3 with a real CAMELYON or ASAP-written file is still open** for the
+project owner.
+
+CMU-1-Small-Region's annotation file was restored from its backup afterwards
+and checked by hash.
 
 ## 7. Requirements
 
