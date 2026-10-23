@@ -20,6 +20,7 @@
 #include "slideio/viewer/ui/AnnotationInteraction.h"
 #include "slideio/viewer/ui/AnnotationListPanel.h"
 #include "slideio/viewer/ui/AnnotationListPolicy.h"
+#include "slideio/viewer/ui/AnnotationMeasurementExport.h"
 #include "slideio/viewer/ui/AnnotationPropertiesPanel.h"
 #include "slideio/viewer/ui/AnnotationShapeName.h"
 #include "slideio/viewer/ui/AnnotationSettings.h"
@@ -210,6 +211,7 @@ struct MainWindow::Impl
     QAction* openAnnotationsFolderAction = nullptr;
     QAction* importAnnotationsAction = nullptr;
     QAction* exportCountsAction = nullptr;
+    QAction* exportMeasurementsAction = nullptr;
     QAction* exportAnnotationsAction = nullptr;
     QAction* aboutAction = nullptr;
 
@@ -288,6 +290,9 @@ struct MainWindow::Impl
     /// with the same categoryTally() call the strip uses, on the same two
     /// inputs, so the file cannot disagree with what was on screen.
     void exportCounts();
+    /// One row per annotation from core::measure(), the panel's own function;
+    /// see the measurements export design spec.
+    void exportMeasurements();
     void exportAnnotations();
     /// False, after warning, when the model is empty for a reason other than
     /// an empty scene; see AnnotationPersistenceService::annotationsLoaded().
@@ -481,6 +486,13 @@ struct MainWindow::Impl
         // applyAnnotationAvailability and paired with closeAction instead.
         exportCountsAction->setEnabled(false);
 
+        exportMeasurementsAction = new QAction("Export &Measurements...", owner);
+        exportMeasurementsAction->setStatusTip(
+            "Write each annotation's area, perimeter or length in this scene to a CSV file");
+        // Gated exactly as Export Counts is, for the same reason, and every
+        // exportCountsAction->setEnabled has a twin for this one.
+        exportMeasurementsAction->setEnabled(false);
+
         // G, not A: Open Annotations Folder already answers to Alt+A here.
         exportAnnotationsAction = new QAction("Export Annotations as &GeoJSON...", owner);
         exportAnnotationsAction->setStatusTip(
@@ -522,6 +534,7 @@ struct MainWindow::Impl
         fileMenu->addSeparator();
         fileMenu->addAction(importAnnotationsAction);
         fileMenu->addAction(exportCountsAction);
+        fileMenu->addAction(exportMeasurementsAction);
         fileMenu->addAction(exportAnnotationsAction);
         fileMenu->addAction(openAnnotationsFolderAction);
         fileMenu->addAction(openLogAction);
@@ -634,6 +647,7 @@ struct MainWindow::Impl
             // Paired with closeAction at all three sites: the counts belong to
             // the open scene, so the action lives and dies with it.
             exportCountsAction->setEnabled(false);
+            exportMeasurementsAction->setEnabled(false);
             exportAnnotationsAction->setEnabled(false);
             // Nothing is open now, so the title stops naming a slide. Done here
             // and not from the slideClosed signal, which also fires at the start
@@ -771,6 +785,10 @@ struct MainWindow::Impl
             exportCounts();
         });
 
+        QObject::connect(exportMeasurementsAction, &QAction::triggered, owner, [this]() {
+            exportMeasurements();
+        });
+
         QObject::connect(exportAnnotationsAction, &QAction::triggered, owner, [this]() {
             exportAnnotations();
         });
@@ -881,6 +899,7 @@ struct MainWindow::Impl
                 lastOpenedFilePath = filePath;
                 closeAction->setEnabled(true);
                 exportCountsAction->setEnabled(true);
+                exportMeasurementsAction->setEnabled(true);
                 exportAnnotationsAction->setEnabled(true);
                 // The Rectangle tool is NOT enabled here: an associated image
                 // opens through this path too, and so does a slide whose
@@ -1093,6 +1112,7 @@ struct MainWindow::Impl
             arrowToolAction->setEnabled(false);
             closeAction->setEnabled(false);
             exportCountsAction->setEnabled(false);
+            exportMeasurementsAction->setEnabled(false);
             exportAnnotationsAction->setEnabled(false);
             minimapWidget->clearThumbnail();
             statusBarManager->updateCursorPosition(0.0, 0.0);
@@ -1969,6 +1989,81 @@ void MainWindow::Impl::exportCounts()
 
     statusBarManager->showTransientMessage(
         tr("Counts exported to %1").arg(QFileInfo(chosen).fileName()));
+}
+
+void MainWindow::Impl::exportMeasurements()
+{
+    // Defence in depth, as in exportCounts: the action is only enabled with a
+    // slide open.
+    if (!viewportWidget->isSlideOpen()) {
+        return;
+    }
+    if (!annotationsReadyToExport(tr("Export Measurements"))) {
+        return;
+    }
+
+    const std::string slidePath = viewportWidget->currentFilePath();
+    const int sceneIndex = viewportWidget->currentSceneIndex();
+
+    MeasurementExportContext context;
+    context.slidePath = slidePath;
+    context.slideId = viewportWidget->currentSlideId();
+    context.sceneIndex = sceneIndex;
+    // SlideInfo carries metres; zero means the slide did not say, and the
+    // formatter then leaves every micron column empty rather than guess.
+    const core::SlideInfo& info = viewportWidget->slideInfo();
+    context.pixelWidthMicrons = info.resolutionX * 1e6;
+    context.pixelHeightMicrons = info.resolutionY * 1e6;
+
+    // Every annotation in the model, never the list's filtered view. Built
+    // before the dialog, as the GeoJSON export is, so a scene that cannot be
+    // written is reported without first asking where to put it.
+    const MeasurementExportResult result =
+        annotationMeasurementCsv(annotations->annotations(), context, std::chrono::system_clock::now());
+    if (!result.error.empty()) {
+        QMessageBox::warning(owner, tr("Export Measurements"),
+                             tr("The measurements could not be exported.\n\n%1")
+                                 .arg(QString::fromStdString(result.error)));
+        return;
+    }
+
+    const std::string stem = measurementExportFileStem(
+        QFileInfo(QString::fromStdString(slidePath)).fileName().toStdString(), sceneIndex);
+    const QString suggested = QString::fromStdString(stem) + QStringLiteral(".csv");
+    const QString workspace = annotationSettings->workspaceDirectory();
+    const QString start =
+        workspace.isEmpty() ? suggested : workspace + QStringLiteral("/") + suggested;
+    const QString chosen = QFileDialog::getSaveFileName(
+        owner, tr("Export Measurements"), start, tr("Comma-separated values (*.csv);;All files (*)"));
+    if (chosen.isEmpty()) {
+        return;
+    }
+
+    const auto reportFailure = [this, &chosen](const QString& detail) {
+        QMessageBox::warning(owner, tr("Export Measurements"),
+                             tr("The measurements could not be written to:\n\n%1\n\n%2")
+                                 .arg(QDir::toNativeSeparators(chosen), detail));
+    };
+
+    // The same write as exportCounts, for the same reasons: Truncate because
+    // the dialog has already asked, and an explicit flush and close with a
+    // byte count because a short file would be read as the whole scene.
+    QFile file(chosen);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        reportFailure(file.errorString());
+        return;
+    }
+    const qint64 written = file.write(result.text.data(), static_cast<qint64>(result.text.size()));
+    const bool flushed = file.flush();
+    const QString error = file.errorString();
+    file.close();
+    if (written != static_cast<qint64>(result.text.size()) || !flushed) {
+        reportFailure(error);
+        return;
+    }
+
+    statusBarManager->showTransientMessage(
+        tr("Measurements exported to %1").arg(QFileInfo(chosen).fileName()));
 }
 
 bool MainWindow::Impl::annotationsReadyToExport(const QString& title)
