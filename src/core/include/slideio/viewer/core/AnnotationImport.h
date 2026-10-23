@@ -3,6 +3,7 @@
 #include "slideio/viewer/core/Annotation.h"
 #include "slideio/viewer/core/AnnotationGeometry.h"
 
+#include <atomic>
 #include <map>
 #include <string>
 #include <string_view>
@@ -91,8 +92,21 @@ enum class AnnotationFileFormat
 /// By content, never by extension: after an optional UTF-8 byte-order mark
 /// and ASCII whitespace, a '<' is XML and anything else is handed to the
 /// GeoJSON reader, which reports what it cannot read. A `.json` that is really
-/// XML, or the reverse, is read correctly.
+/// XML, or the reverse, is read correctly. UTF-16 is recognised too -- a
+/// UTF-16 byte-order mark, or a '<' beside a zero byte -- since Qt's XML reader
+/// decodes it and an ASAP file re-saved by another tool may be in it.
 [[nodiscard]] AnnotationFileFormat detectAnnotationFileFormat(std::string_view text);
+
+/// A result for a file that could not be read at all: `error` set, every other
+/// field empty. Shared by the readers so the contract has one definition.
+[[nodiscard]] AnnotationImportResult importFailure(std::string message);
+
+/// A result for a read the user cancelled: `cancelled` set, nothing else.
+[[nodiscard]] AnnotationImportResult cancelledImport();
+
+/// Whether a reader's cancel flag -- optional, so null means never -- has been
+/// raised. Relaxed: a cancel only has to be noticed soon, not ordered.
+[[nodiscard]] bool importCancelRequested(const std::atomic<bool>* cancel);
 
 /// The smallest and largest corner of `points`, taken as they are -- never
 /// rebuilt as origin plus extent, which can overflow where the corners do not.

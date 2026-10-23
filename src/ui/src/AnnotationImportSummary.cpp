@@ -1,4 +1,4 @@
-#include "slideio/viewer/ui/AnnotationGeoJsonImport.h"
+#include "slideio/viewer/ui/AnnotationImportSummary.h"
 
 #include <QCoreApplication>
 #include <QFileInfo>
@@ -12,7 +12,7 @@ namespace
 
 QString translate(const char* text)
 {
-    return QCoreApplication::translate("GeoJsonImport", text);
+    return QCoreApplication::translate("AnnotationImport", text);
 }
 
 /// English singular and plural chosen here rather than through `%n`: no
@@ -43,7 +43,7 @@ int countOutsideScene(const std::vector<core::Annotation>& annotations, double w
     return outside;
 }
 
-QString geoJsonImportSummary(const GeoJsonImportSummaryInput& input)
+QString importSummary(const ImportSummaryInput& input)
 {
     // Byte escapes, not literal characters: the sources are compiled without
     // /utf-8, so MSVC would read a raw UTF-8 dash in the machine's codepage.
@@ -56,8 +56,9 @@ QString geoJsonImportSummary(const GeoJsonImportSummaryInput& input)
         lines << translate("Nothing in %1 can be imported.").arg(input.fileName) << QString();
     }
 
-    addSkipped(lines, input.alreadyPresent, "%1 already in this scene (same id) \xE2\x80\x94 skipped.",
-               "%1 already in this scene (same id) \xE2\x80\x94 skipped.");
+    // Not "(same id)": an ASAP annotation has no id and matches by its content.
+    addSkipped(lines, input.alreadyPresent, "%1 already in this scene \xE2\x80\x94 skipped.",
+               "%1 already in this scene \xE2\x80\x94 skipped.");
     for (const auto& [kind, count] : result.skippedObjectTypes) {
         lines << counted(count,
                          "%1 object of type \"%2\" \xE2\x80\x94 skipped (only annotations are imported).",

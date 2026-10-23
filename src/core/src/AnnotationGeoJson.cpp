@@ -791,12 +791,6 @@ void readFeature(const InJson& feature, std::chrono::system_clock::time_point im
     ++result.featuresImported;
 }
 
-AnnotationImportResult importFailure(std::string message)
-{
-    AnnotationImportResult result;
-    result.error = std::move(message);
-    return result;
-}
 
 /// Far deeper than GeoJSON needs -- a MultiPolygon's coordinates are four
 /// arrays deep, and each level of a QuPath hierarchy adds three -- and far
@@ -811,10 +805,6 @@ struct ReadCancelled
 {
 };
 
-bool cancelRequested(const std::atomic<bool>* cancel)
-{
-    return cancel != nullptr && cancel->load(std::memory_order_relaxed);
-}
 
 /// The parse callback. It does three things as the file streams past: stops
 /// the read when asked to, refuses nesting no GeoJSON file needs, and drops
@@ -838,7 +828,7 @@ public:
 
     bool operator()(int depth, InJson::parse_event_t event, InJson& parsed)
     {
-        if (cancelRequested(m_cancel)) {
+        if (importCancelRequested(m_cancel)) {
             throw ReadCancelled{};
         }
         if (depth > kMaxJsonDepth) {
@@ -909,12 +899,6 @@ void addCounts(AnnotationImportResult& into, const AnnotationImportResult& from)
     }
 }
 
-AnnotationImportResult cancelledRead()
-{
-    AnnotationImportResult result;
-    result.cancelled = true;
-    return result;
-}
 
 } // namespace
 
@@ -943,7 +927,7 @@ AnnotationImportResult geoJsonToAnnotations(std::string_view text, std::chrono::
     } catch (const NestedTooDeeply&) {
         return importFailure("the file is nested more deeply than any GeoJSON file needs");
     } catch (const ReadCancelled&) {
-        return cancelledRead();
+        return cancelledImport();
     }
     if (document.is_discarded()) {
         return importFailure("the file is not valid JSON");
@@ -979,8 +963,8 @@ AnnotationImportResult geoJsonToAnnotations(std::string_view text, std::chrono::
         }
 
         for (const InJson& feature : *features) {
-            if (cancelRequested(cancel)) {
-                return cancelledRead();
+            if (importCancelRequested(cancel)) {
+                return cancelledImport();
             }
             readFeature(feature, importedAt, result);
         }

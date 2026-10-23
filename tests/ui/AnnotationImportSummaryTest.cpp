@@ -1,6 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "slideio/viewer/ui/AnnotationGeoJsonImport.h"
+#include "slideio/viewer/ui/AnnotationImportSummary.h"
 #include "slideio/viewer/core/AnnotationGeometry.h"
 
 #include <QString>
@@ -28,7 +28,7 @@ core::Annotation box(double x0, double y0, double x1, double y1)
 struct Fixture
 {
     core::AnnotationImportResult result;
-    GeoJsonImportSummaryInput input;
+    ImportSummaryInput input;
 
     Fixture()
     {
@@ -41,7 +41,7 @@ struct Fixture
 
     [[nodiscard]] std::string text() const
     {
-        return geoJsonImportSummary(input).toStdString();
+        return importSummary(input).toStdString();
     }
 };
 
@@ -52,7 +52,7 @@ bool contains(const std::string& text, const std::string& part)
 
 } // namespace
 
-TEST_CASE("countOutsideScene counts only shapes wholly outside", "[ui][GeoJsonImport]")
+TEST_CASE("countOutsideScene counts only shapes wholly outside", "[ui][ImportSummary]")
 {
     const std::vector<core::Annotation> annotations = {
         point(50, 50),             // inside
@@ -64,7 +64,7 @@ TEST_CASE("countOutsideScene counts only shapes wholly outside", "[ui][GeoJsonIm
     REQUIRE(countOutsideScene(annotations, 100, 100) == 2);
 }
 
-TEST_CASE("the summary names the file and the count to add", "[ui][GeoJsonImport]")
+TEST_CASE("the summary names the file and the count to add", "[ui][ImportSummary]")
 {
     Fixture f;
     const std::string text = f.text();
@@ -75,7 +75,7 @@ TEST_CASE("the summary names the file and the count to add", "[ui][GeoJsonImport
     CHECK(contains(f.text(), "1 annotation will be added"));
 }
 
-TEST_CASE("zero-count lines are omitted", "[ui][GeoJsonImport]")
+TEST_CASE("zero-count lines are omitted", "[ui][ImportSummary]")
 {
     Fixture f;
     const std::string text = f.text();
@@ -83,7 +83,7 @@ TEST_CASE("zero-count lines are omitted", "[ui][GeoJsonImport]")
     CHECK_FALSE(contains(text, "\xE2\x9A\xA0"));
 }
 
-TEST_CASE("every skip reason has its line", "[ui][GeoJsonImport]")
+TEST_CASE("every skip reason has its line", "[ui][ImportSummary]")
 {
     Fixture f;
     f.input.alreadyPresent = 3;
@@ -94,6 +94,8 @@ TEST_CASE("every skip reason has its line", "[ui][GeoJsonImport]")
     f.result.nestedObjects = 4;
     const std::string text = f.text();
     CHECK(contains(text, "3 already in this scene"));
+    // Not "(same id)": an ASAP annotation has none, and matches by content.
+    CHECK_FALSE(contains(text, "same id"));
     CHECK(contains(text, "112"));
     CHECK(contains(text, "detection"));
     CHECK(contains(text, "1 polygon with holes"));
@@ -102,7 +104,7 @@ TEST_CASE("every skip reason has its line", "[ui][GeoJsonImport]")
     CHECK(contains(text, "4 nested objects"));
 }
 
-TEST_CASE("nothing to add says so", "[ui][GeoJsonImport]")
+TEST_CASE("nothing to add says so", "[ui][ImportSummary]")
 {
     Fixture f;
     f.input.toAdd = 0;
@@ -113,7 +115,7 @@ TEST_CASE("nothing to add says so", "[ui][GeoJsonImport]")
     CHECK(contains(text, "27 already in this scene"));
 }
 
-TEST_CASE("a different scene or slide is warned about", "[ui][GeoJsonImport]")
+TEST_CASE("a different scene or slide is warned about", "[ui][ImportSummary]")
 {
     Fixture f;
     f.result.provenance.present = true;
@@ -142,7 +144,7 @@ TEST_CASE("a different scene or slide is warned about", "[ui][GeoJsonImport]")
     CHECK_FALSE(contains(f.text(), "\xE2\x9A\xA0"));
 }
 
-TEST_CASE("a slide name with percent signs is shown as it is", "[ui][GeoJsonImport]")
+TEST_CASE("a slide name with percent signs is shown as it is", "[ui][ImportSummary]")
 {
     // The name comes from the file. Chained .arg() calls would substitute a
     // %3 in it with the open scene's number.
@@ -156,7 +158,7 @@ TEST_CASE("a slide name with percent signs is shown as it is", "[ui][GeoJsonImpo
     CHECK(contains(text, "the open scene is scene 0"));
 }
 
-TEST_CASE("approximated splines are said so", "[ui][GeoJsonImport]")
+TEST_CASE("approximated splines are said so", "[ui][ImportSummary]")
 {
     Fixture f;
     f.result.splinesApproximated = 2;
@@ -167,7 +169,7 @@ TEST_CASE("approximated splines are said so", "[ui][GeoJsonImport]")
     CHECK_FALSE(contains(f.text(), "spline"));
 }
 
-TEST_CASE("an unsupported type is named in its skip line", "[ui][GeoJsonImport]")
+TEST_CASE("an unsupported type is named in its skip line", "[ui][ImportSummary]")
 {
     Fixture f;
     f.result.unsupportedTypes["Ellipse"] = 3;
@@ -176,7 +178,7 @@ TEST_CASE("an unsupported type is named in its skip line", "[ui][GeoJsonImport]"
     CHECK(contains(f.text(), "1 annotation of type \"Ellipse\" \xE2\x80\x94 skipped (the viewer has no such shape)"));
 }
 
-TEST_CASE("shapes outside the scene are warned about", "[ui][GeoJsonImport]")
+TEST_CASE("shapes outside the scene are warned about", "[ui][ImportSummary]")
 {
     Fixture f;
     f.input.outsideScene = 4;

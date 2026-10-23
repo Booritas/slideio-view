@@ -17,7 +17,7 @@
 #include "slideio/viewer/infra/QSettingsColorProfileOverrideStore.h"
 #include "slideio/viewer/ui/AboutDialog.h"
 #include "slideio/viewer/ui/AnnotationCountExport.h"
-#include "slideio/viewer/ui/AnnotationGeoJsonImport.h"
+#include "slideio/viewer/ui/AnnotationImportSummary.h"
 #include "slideio/viewer/ui/AnnotationInteraction.h"
 #include "slideio/viewer/ui/AnnotationListPanel.h"
 #include "slideio/viewer/ui/AnnotationListPolicy.h"
@@ -364,8 +364,9 @@ struct MainWindow::Impl
     /// failed -- a failure has already been reported, a cancel says nothing.
     QString saveExportFile(const QString& title, const QString& suggestedName, const QString& filter,
                            const std::string& contents, const QString& failureText);
-    /// Reads a GeoJSON file, shows what it would add, and on confirmation adds
-    /// it as one undoable step. See the GeoJSON import design spec.
+    /// Reads a GeoJSON or ASAP XML file, shows what it would add, and on
+    /// confirmation adds it as one undoable step. See the GeoJSON and ASAP
+    /// import design specs.
     void importAnnotations();
 
     void createActions()
@@ -2254,7 +2255,7 @@ void MainWindow::Impl::importAnnotations()
 
     app::ImportPlan plan = app::planImport(result.annotations, result.idSeeds, *annotations);
     const core::SlideInfo& info = viewportWidget->slideInfo();
-    GeoJsonImportSummaryInput summary;
+    ImportSummaryInput summary;
     summary.fileName = QFileInfo(chosen).fileName();
     summary.result = &result;
     summary.toAdd = static_cast<int>(plan.toAdd.size());
@@ -2262,7 +2263,7 @@ void MainWindow::Impl::importAnnotations()
     summary.outsideScene = countOutsideScene(plan.toAdd, info.width, info.height);
     summary.openSlideId = viewportWidget->currentSlideId();
     summary.openScene = viewportWidget->currentSceneIndex();
-    const QString text = geoJsonImportSummary(summary);
+    const QString text = importSummary(summary);
 
     if (plan.toAdd.empty()) {
         QMessageBox::information(owner, title, text);

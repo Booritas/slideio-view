@@ -2,8 +2,11 @@
 
 #include "slideio/viewer/core/AnnotationCategories.h"
 #include "slideio/viewer/core/AnnotationGeometry.h"
+#include "slideio/viewer/core/AnnotationSerialization.h"
 
 #include <QByteArray>
+#include <QByteArrayView>
+#include <QCryptographicHash>
 #include <QString>
 #include <QXmlStreamReader>
 
@@ -80,21 +83,6 @@ std::optional<double> parseNumber(const std::string& text)
         return std::nullopt;
     }
     return parsed;
-}
-
-/// ASAP's "#RRGGBB"; alpha opaque.
-std::optional<core::Color> parseColor(const std::string& text)
-{
-    if (text.size() != 7 || text.front() != '#') {
-        return std::nullopt;
-    }
-    unsigned int rgb = 0;
-    const auto [end, error] = std::from_chars(text.data() + 1, text.data() + text.size(), rgb, 16);
-    if (error != std::errc() || end != text.data() + text.size()) {
-        return std::nullopt;
-    }
-    return core::Color{static_cast<std::uint8_t>((rgb >> 16) & 0xFF), static_cast<std::uint8_t>((rgb >> 8) & 0xFF),
-                       static_cast<std::uint8_t>(rgb & 0xFF), 255};
 }
 
 /// "Annotation <digits>" exactly: the name ASAP gives every annotation the
@@ -194,41 +182,49 @@ std::vector<core::AnnotationGeometry> shapesOf(Kind kind, std::vector<core::Poin
     return shapes;
 }
 
-/// What identifies an ASAP annotation, which has no id: its type, its group
-/// and its coordinates as the file wrote them.
+/// What identifies an ASAP annotation, which has no id: the SHA-1 of its type,
+/// its group and its coordinates as the file wrote them.
 std::string contentSeed(const RawAnnotation& raw, const std::vector<RawCoordinate>& coordinates)
 {
-    std::string seed = "asap";
-    for (const std::string* field : {&raw.type, &raw.group}) {
-        seed += kSeedSeparator;
-        seed += *field;
-    }
+    // Hashed as it is fed, so a seed is 40 characters however many coordinates
+    // it covers: the full text, held twice per annotation beside the raw
+    // coordinates, put a large file's peak memory at several times its size.
+    QCryptographicHash hash(QCryptographicHash::Sha1);
+    const auto add = [&hash](const std::string& field) {
+        hash.addData(QByteArrayView(field.data(), static_cast<qsizetype>(field.size())));
+        hash.addData(QByteArrayView(&kSeedSeparator, 1));
+    };
+    add("asap");
+    add(raw.type);
+    add(core::trimAsciiWhitespace(raw.group));
     for (const RawCoordinate& coordinate : coordinates) {
-        seed += kSeedSeparator;
-        seed += coordinate.x;
-        seed += kSeedSeparator;
-        seed += coordinate.y;
+        add(coordinate.x);
+        add(coordinate.y);
     }
-    return seed;
+    return hash.result().toHex().toStdString();
 }
 
-core::AnnotationImportResult failure(std::string message)
+std::optional<core::Color> parseColor(const std::string& text)
 {
-    core::AnnotationImportResult result;
-    result.error = std::move(message);
-    return result;
+    core::Color color;
+    return core::parseRgbColor(text, color) ? std::optional<core::Color>(color) : std::nullopt;
 }
 
-core::AnnotationImportResult cancelled()
+/// An Order value, as tolerant as X and Y: ASCII whitespace around it and a
+/// leading '+' are allowed. Integer from_chars, which every supported standard
+/// library has.
+std::optional<long long> parseOrder(const std::string& text)
 {
-    core::AnnotationImportResult result;
-    result.cancelled = true;
-    return result;
-}
-
-bool cancelRequested(const std::atomic<bool>* cancel)
-{
-    return cancel != nullptr && cancel->load(std::memory_order_relaxed);
+    std::string value = core::trimAsciiWhitespace(text);
+    if (!value.empty() && value.front() == '+') {
+        value.erase(0, 1);
+    }
+    long long parsed = 0;
+    const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+    if (value.empty() || error != std::errc() || end != value.data() + value.size()) {
+        return std::nullopt;
+    }
+    return parsed;
 }
 
 } // namespace
@@ -250,18 +246,18 @@ core::AnnotationImportResult asapXmlToAnnotations(std::string_view text,
     bool sawRoot = false;
 
     while (!reader.atEnd()) {
-        if (cancelRequested(cancel)) {
-            return cancelled();
+        if (core::importCancelRequested(cancel)) {
+            return core::cancelledImport();
         }
         const QXmlStreamReader::TokenType token = reader.readNext();
         if (token == QXmlStreamReader::DTD) {
-            return failure("the file declares a document type, which ASAP files never do");
+            return core::importFailure("the file declares a document type, which ASAP files never do");
         }
         if (token == QXmlStreamReader::StartElement) {
             const QStringView name = reader.name();
             if (!sawRoot) {
                 if (name != QLatin1String("ASAP_Annotations")) {
-                    return failure("the file is not an ASAP annotation file");
+                    return core::importFailure("the file is not an ASAP annotation file");
                 }
                 sawRoot = true;
             } else if (name == QLatin1String("Annotation")) {
@@ -269,17 +265,13 @@ core::AnnotationImportResult asapXmlToAnnotations(std::string_view text,
                                              attribute(reader, "PartOfGroup"), attribute(reader, "Color"), {}});
             } else if (name == QLatin1String("Coordinate") && !open.empty()) {
                 RawCoordinate coordinate;
-                const std::string order = attribute(reader, "Order");
-                long long parsed = 0;
-                const auto [end, error] = std::from_chars(order.data(), order.data() + order.size(), parsed);
-                if (!order.empty() && error == std::errc() && end == order.data() + order.size()) {
-                    coordinate.order = parsed;
-                }
+                coordinate.order = parseOrder(attribute(reader, "Order"));
                 coordinate.x = attribute(reader, "X");
                 coordinate.y = attribute(reader, "Y");
                 open.back().coordinates.push_back(std::move(coordinate));
             } else if (name == QLatin1String("Group")) {
-                groupColors[attribute(reader, "Name")] = attribute(reader, "Color");
+                // Keyed trimmed, and looked up trimmed, as the classification is.
+                groupColors[core::trimAsciiWhitespace(attribute(reader, "Name"))] = attribute(reader, "Color");
             }
         } else if (token == QXmlStreamReader::EndElement && reader.name() == QLatin1String("Annotation")
                    && !open.empty()) {
@@ -288,18 +280,18 @@ core::AnnotationImportResult asapXmlToAnnotations(std::string_view text,
         }
     }
     if (reader.hasError()) {
-        return failure("the file is not valid XML: " + reader.errorString().toStdString());
+        return core::importFailure("the file is not valid XML: " + reader.errorString().toStdString());
     }
     if (!sawRoot) {
-        return failure("the file is not an ASAP annotation file");
+        return core::importFailure("the file is not an ASAP annotation file");
     }
 
     core::AnnotationImportResult result;
     const auto now = std::chrono::time_point_cast<std::chrono::seconds>(importedAt);
     std::map<std::string, int> repeats;
     for (const RawAnnotation& raw : raws) {
-        if (cancelRequested(cancel)) {
-            return cancelled();
+        if (core::importCancelRequested(cancel)) {
+            return core::cancelledImport();
         }
         ++result.featuresRead;
         const std::optional<Kind> kind = kindOf(raw.type);
@@ -332,7 +324,7 @@ core::AnnotationImportResult asapXmlToAnnotations(std::string_view text,
         }
         std::optional<core::Color> color = parseColor(raw.color);
         if (!color) {
-            const auto found = groupColors.find(raw.group);
+            const auto found = groupColors.find(group);
             if (found != groupColors.end()) {
                 color = parseColor(found->second);
             }

@@ -313,6 +313,55 @@ TEST_CASE("an annotation nested in another is counted, not lost", "[app][AsapXml
     CHECK(groups == std::set<std::string>{"A", "B"});
 }
 
+TEST_CASE("a UTF-16 ASAP file is read", "[app][AsapXmlImport]")
+{
+    const std::string utf8 =
+        "<?xml version=\"1.0\" encoding=\"UTF-16\"?><ASAP_Annotations><Annotations>"
+        + annotation("Dot", {{"5", "6"}}, "Tumor") + "</Annotations></ASAP_Annotations>";
+    std::string utf16 = "\xFF\xFE";
+    for (const char c : utf8) {
+        utf16 += c;
+        utf16 += '\0';
+    }
+    REQUIRE(core::detectAnnotationFileFormat(utf16) == core::AnnotationFileFormat::AsapXml);
+    const core::AnnotationImportResult result = readOk(utf16);
+    REQUIRE(result.annotations.size() == 1);
+    CHECK(result.annotations[0].properties().classification == "Tumor");
+}
+
+TEST_CASE("Order tolerates what X and Y tolerate", "[app][AsapXmlImport]")
+{
+    const std::string padded = "<Annotation Name=\"a\" Type=\"Polygon\" PartOfGroup=\"None\"><Coordinates>"
+                               "<Coordinate Order=\" 2 \" X=\"9\" Y=\"9\"/><Coordinate Order=\"+0\" X=\"0\" Y=\"0\"/>"
+                               "<Coordinate Order=\"1\" X=\"9\" Y=\"0\"/></Coordinates></Annotation>";
+    const auto sorted = shapeOf<core::PolygonGeometry>(only(padded));
+    REQUIRE(sorted.has_value());
+    CHECK(sorted->vertices[0].x == 0);
+    CHECK(sorted->vertices[1].y == 0);
+    CHECK(sorted->vertices[2].y == 9);
+}
+
+TEST_CASE("a padded group name finds its group's colour", "[app][AsapXmlImport]")
+{
+    const core::Annotation dot =
+        only(annotation("Dot", {{"1", "1"}}, " Tumor "),
+             "<Group Name=\"Tumor \" PartOfGroup=\"None\" Color=\"#00FF00\"><Attributes/></Group>");
+    CHECK(dot.properties().classification == "Tumor");
+    CHECK(dot.properties().color.g == 255);
+    CHECK(dot.properties().color.r == 0);
+}
+
+TEST_CASE("a seed stays small however many coordinates it covers", "[app][AsapXmlImport]")
+{
+    std::vector<std::pair<std::string, std::string>> trace;
+    for (int i = 0; i < 5000; ++i) {
+        trace.emplace_back(std::to_string(1000 + i), std::to_string(i % 2 == 0 ? 0 : 7));
+    }
+    const core::AnnotationImportResult result = readOk(asap(annotation("Polygon", trace)));
+    REQUIRE(result.idSeeds.size() == 1);
+    CHECK(result.idSeeds[0].size() < 64);
+}
+
 TEST_CASE("a file that is not ASAP fails and changes nothing", "[app][AsapXmlImport]")
 {
     const std::string laughs =

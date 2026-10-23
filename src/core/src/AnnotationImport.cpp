@@ -9,14 +9,46 @@ namespace slideio::viewer::core
 
 AnnotationFileFormat detectAnnotationFileFormat(std::string_view text)
 {
+    // UTF-16, by its byte-order mark or by '<' beside a zero byte. The BOM is
+    // checked before the '<': a UTF-16 GeoJSON file is not XML, and the GeoJSON
+    // reader is the one to say it cannot read it.
+    const auto startsWith = [&text](std::string_view prefix) { return text.substr(0, prefix.size()) == prefix; };
+    if (startsWith("\xFF\xFE") || startsWith("\xFE\xFF")) {
+        const std::string_view rest = text.substr(2);
+        const bool less =
+            rest.size() >= 2 && ((rest[0] == '<' && rest[1] == '\0') || (rest[0] == '\0' && rest[1] == '<'));
+        return less ? AnnotationFileFormat::AsapXml : AnnotationFileFormat::GeoJson;
+    }
+    if (startsWith(std::string_view("<\0", 2)) || startsWith(std::string_view("\0<", 2))) {
+        return AnnotationFileFormat::AsapXml;
+    }
     constexpr std::string_view kBom = "\xEF\xBB\xBF";
-    if (text.substr(0, kBom.size()) == kBom) {
+    if (startsWith(kBom)) {
         text.remove_prefix(kBom.size());
     }
     // ASCII whitespace compared by value: std::isspace reads the C locale.
     const std::size_t first = text.find_first_not_of(" \t\r\n\f\v");
     return first != std::string_view::npos && text[first] == '<' ? AnnotationFileFormat::AsapXml
                                                                  : AnnotationFileFormat::GeoJson;
+}
+
+AnnotationImportResult importFailure(std::string message)
+{
+    AnnotationImportResult result;
+    result.error = std::move(message);
+    return result;
+}
+
+AnnotationImportResult cancelledImport()
+{
+    AnnotationImportResult result;
+    result.cancelled = true;
+    return result;
+}
+
+bool importCancelRequested(const std::atomic<bool>* cancel)
+{
+    return cancel != nullptr && cancel->load(std::memory_order_relaxed);
 }
 
 std::pair<PointF, PointF> cornersOf(const std::vector<PointF>& points)

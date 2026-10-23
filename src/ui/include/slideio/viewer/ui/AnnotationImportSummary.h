@@ -18,7 +18,7 @@ namespace slideio::viewer::ui
 [[nodiscard]] int countOutsideScene(const std::vector<core::Annotation>& annotations, double width, double height);
 
 /// Everything the import's one confirmation dialog reports.
-struct GeoJsonImportSummaryInput
+struct ImportSummaryInput
 {
     /// The chosen file's name, shown in the first line.
     QString fileName;
@@ -43,6 +43,6 @@ struct GeoJsonImportSummaryInput
 /// Neither warning refuses anything. A file moves legitimately between copies
 /// of a slide whose content-derived id differs; what must not happen is the
 /// shapes landing on the wrong image without the user being told.
-[[nodiscard]] QString geoJsonImportSummary(const GeoJsonImportSummaryInput& input);
+[[nodiscard]] QString importSummary(const ImportSummaryInput& input);
 
 } // namespace slideio::viewer::ui

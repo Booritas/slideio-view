@@ -20,6 +20,11 @@ namespace slideio::viewer::core
 /// `out` untouched, for anything else. Shared with the GeoJSON import.
 [[nodiscard]] bool parseAnnotationColor(const std::string& text, Color& out);
 
+/// Reads `#RRGGBB` -- ASAP's colours -- into `out` with alpha opaque; false,
+/// and `out` untouched, for anything else. Shares parseAnnotationColor's hex
+/// reading.
+[[nodiscard]] bool parseRgbColor(const std::string& text, Color& out);
+
 /// True when the line width and fill opacity lie inside the ranges a saved
 /// file accepts. The GeoJSON import asks before keeping a value from a file,
 /// so it cannot build an annotation the serializer would refuse to write.

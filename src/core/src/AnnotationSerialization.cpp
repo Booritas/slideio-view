@@ -272,19 +272,30 @@ int hexDigit(char c)
     return -1;
 }
 
-bool parseColor(const std::string& text, Color& out)
+/// `#` followed by `count` two-digit hex channels, into `channels`. The one hex
+/// reading behind both the saved file's #RRGGBBAA and ASAP's #RRGGBB, so the
+/// two cannot disagree about what a hex digit is.
+bool parseHexChannels(const std::string& text, std::size_t count, std::array<uint8_t, 4>& channels)
 {
-    if (text.size() != 9 || text[0] != '#') {
+    if (text.size() != 1 + 2 * count || text[0] != '#') {
         return false;
     }
-    std::array<uint8_t, 4> channels{};
-    for (std::size_t i = 0; i < channels.size(); ++i) {
+    for (std::size_t i = 0; i < count; ++i) {
         const int high = hexDigit(text[1 + 2 * i]);
         const int low = hexDigit(text[2 + 2 * i]);
         if (high < 0 || low < 0) {
             return false;
         }
         channels[i] = static_cast<uint8_t>(high * 16 + low);
+    }
+    return true;
+}
+
+bool parseColor(const std::string& text, Color& out)
+{
+    std::array<uint8_t, 4> channels{};
+    if (!parseHexChannels(text, 4, channels)) {
+        return false;
     }
     out = Color{channels[0], channels[1], channels[2], channels[3]};
     return true;
@@ -670,6 +681,16 @@ bool parseAnnotationColor(const std::string& text, Color& out)
         return false;
     }
     out = parsed;
+    return true;
+}
+
+bool parseRgbColor(const std::string& text, Color& out)
+{
+    std::array<uint8_t, 4> channels{};
+    if (!parseHexChannels(text, 3, channels)) {
+        return false;
+    }
+    out = Color{channels[0], channels[1], channels[2], 255};
     return true;
 }
 
