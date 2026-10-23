@@ -193,6 +193,11 @@ std::vector<CategoryTallyRow> categoryTally(const std::vector<core::Annotation>&
 
     std::size_t unclassified = 0;
     for (const core::Annotation& annotation : annotations) {
+        // A text is a note, not a finding. Counting it would change a clinical
+        // count -- and the counts export, built from this same call, with it.
+        if (annotation.type() == core::AnnotationType::Text) {
+            continue;
+        }
         const std::string clean = core::trimAsciiWhitespace(annotation.properties().classification);
         if (core::isBlankOrUnclassified(clean)) {
             ++unclassified;

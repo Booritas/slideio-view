@@ -12,6 +12,7 @@ add_library(slideio-viewer-ui STATIC
     src/AnnotationCountExport.cpp
     src/CsvFormat.cpp
     src/AnnotationMeasurementExport.cpp
+    src/TextAnnotationLayout.cpp
     src/AnnotationImportSummary.cpp
     src/AnnotationInteraction.cpp
     src/AnnotationShapeName.cpp

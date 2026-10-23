@@ -691,3 +691,29 @@ TEST_CASE("categoryRenameScope retags when a slide is open and editable",
 {
     REQUIRE(ui::categoryRenameScope(true, true) == ui::CategoryRenameScope::VocabularyAndAnnotations);
 }
+
+TEST_CASE("categoryTally does not count text annotations", "[ui][CategoryTally]")
+{
+    // A note is not a finding: counting it would change a clinical count.
+    core::Annotation classifiedText("t1", core::TextGeometry{core::PointF{1.0, 1.0}});
+    core::AnnotationProperties properties = classifiedText.properties();
+    properties.classification = "Tumor";
+    properties.label = "invasive";
+    classifiedText.setProperties(properties);
+    const core::Annotation plainText("t2", core::TextGeometry{core::PointF{2.0, 2.0}});
+
+    const std::vector<core::Annotation> annotations{markerWith("a", "Tumor"), markerWith("b", "Tumor"),
+                                                    classifiedText, plainText, markerWith("c", "")};
+    const auto rows = ui::categoryTally(annotations, {"Tumor"});
+
+    REQUIRE(rows.size() == 2);
+    CHECK(rows[0].category == "Tumor");
+    CHECK(rows[0].count == 2);
+    CHECK(rows[1].synthetic);
+    CHECK(rows[1].count == 1);
+    std::size_t sum = 0;
+    for (const auto& row : rows) {
+        sum += row.count;
+    }
+    CHECK(sum == 3);
+}

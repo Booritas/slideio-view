@@ -345,3 +345,17 @@ TEST_CASE("measurementExportFileStem keys the name by scene", "[ui][AnnotationMe
 {
     CHECK(measurementExportFileStem("Philips-1.tiff", 1) == "Philips-1.tiff.s1.measurements");
 }
+
+TEST_CASE("a text is a row with its words and no measurement", "[ui][AnnotationMeasurementExport]")
+{
+    const std::vector<Row> rows =
+        exportRows({shape("t", core::TextGeometry{core::PointF{3, 4}}, "a,\"b\"")});
+    CHECK(cell(rows, 0, "type") == "text");
+    CHECK(cell(rows, 0, "label") == "a,\"b\"");
+    CHECK(cell(rows, 0, "center_x_px") == "3");
+    CHECK(cell(rows, 0, "center_y_px") == "4");
+    for (const std::string& column : kMeasurementColumns) {
+        INFO(column);
+        CHECK(cell(rows, 0, column).empty());
+    }
+}

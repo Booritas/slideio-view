@@ -80,6 +80,7 @@ add_executable(slideio-viewer-ui-tests
     ui/AnnotationCountExportTest.cpp
     ui/CsvFormatTest.cpp
     ui/AnnotationMeasurementExportTest.cpp
+    ui/TextAnnotationLayoutTest.cpp
     ui/AnnotationImportSummaryTest.cpp
     ui/AnnotationInteractionTest.cpp
     ui/AnnotationListPolicyTest.cpp

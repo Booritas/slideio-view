@@ -37,10 +37,11 @@ struct CountExportContext
 /// here and never sorted by count -- the file is the strip the user was
 /// reading, and a file that reordered it would not be.
 ///
-/// Every annotation lands in exactly one row, so the counts sum to the scene's
-/// annotation count. A total row is deliberately not written: a spreadsheet
-/// sums a column by itself, and a total line is the classic thing that silently
-/// becomes a data row when a file is re-read.
+/// Every annotation except a text lands in exactly one row, so the counts sum
+/// to the scene's non-text annotation count -- a text is a note, not a
+/// finding, and categoryTally leaves it out. A total row is deliberately not
+/// written: a spreadsheet sums a column by itself, and a total line is the
+/// classic thing that silently becomes a data row when a file is re-read.
 ///
 /// The returned string is the WHOLE file: a UTF-8 byte-order mark, a header
 /// row, then one row per tally row, CRLF-terminated as RFC 4180 specifies. The

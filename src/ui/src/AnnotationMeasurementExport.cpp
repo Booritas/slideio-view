@@ -92,7 +92,9 @@ MeasurementExportResult annotationMeasurementCsv(const std::vector<core::Annotat
     for (const core::Annotation& annotation : annotations) {
         // A point is counted, not measured: its outline has no length or area
         // to report, and a zero in those columns would read as a finding.
-        const bool measured = annotation.type() != core::AnnotationType::Point;
+        // Nor is a text: it marks a place for words, and has no size to report.
+        const bool measured =
+            annotation.type() != core::AnnotationType::Point && annotation.type() != core::AnnotationType::Text;
         const core::ShapeMetrics pixels = core::measure(annotation.geometry(), core::PixelSize{1.0, 1.0});
         const Columns inPixels = columnsOf(pixels, measured);
         Columns inMicrons;
