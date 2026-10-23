@@ -47,6 +47,7 @@ add_executable(slideio-viewer-app-tests
     app/AnnotationRetagCommandTest.cpp
     app/AnnotationImportCommandTest.cpp
     app/AnnotationImportTest.cpp
+    app/AsapXmlImportTest.cpp
     app/AnnotationEditingTest.cpp
     app/WorkspaceSwitchTest.cpp
 )
