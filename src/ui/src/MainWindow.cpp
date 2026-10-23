@@ -297,6 +297,13 @@ struct MainWindow::Impl
     /// False, after warning, when the model is empty for a reason other than
     /// an empty scene; see AnnotationPersistenceService::annotationsLoaded().
     bool annotationsReadyToExport(const QString& title);
+    /// The one save-dialog-and-write every export uses: offers `suggestedName`
+    /// in the annotation workspace, writes `contents` whole, and reports a
+    /// failure with `failureText`, whose %1 is the path and %2 the reason.
+    /// Returns the chosen path, or empty when the user cancelled or the write
+    /// failed -- a failure has already been reported, a cancel says nothing.
+    QString saveExportFile(const QString& title, const QString& suggestedName, const QString& filter,
+                           const std::string& contents, const QString& failureText);
     /// Reads a GeoJSON file, shows what it would add, and on confirmation adds
     /// it as one undoable step. See the GeoJSON import design spec.
     void importAnnotations();
@@ -1939,18 +1946,6 @@ void MainWindow::Impl::exportCounts()
     const int sceneIndex = viewportWidget->currentSceneIndex();
     const std::string stem = countExportFileStem(
         QFileInfo(QString::fromStdString(slidePath)).fileName().toStdString(), sceneIndex);
-    const QString suggested = QString::fromStdString(stem) + QStringLiteral(".csv");
-
-    // Offered in the annotation workspace, where the file this counts already
-    // lives. The dialog asks about overwriting; this does not second-guess it.
-    const QString workspace = annotationSettings->workspaceDirectory();
-    const QString start =
-        workspace.isEmpty() ? suggested : workspace + QStringLiteral("/") + suggested;
-    const QString chosen = QFileDialog::getSaveFileName(
-        owner, tr("Export Counts"), start, tr("Comma-separated values (*.csv);;All files (*)"));
-    if (chosen.isEmpty()) {
-        return;
-    }
 
     CountExportContext context;
     context.slidePath = slidePath;
@@ -1961,10 +1956,29 @@ void MainWindow::Impl::exportCounts()
     context.sceneIndex = sceneIndex;
     const std::string csv = categoryCountCsv(rows, context, std::chrono::system_clock::now());
 
-    const auto reportFailure = [this, &chosen](const QString& detail) {
-        QMessageBox::warning(owner, tr("Export Counts"),
-                             tr("The counts could not be written to:\n\n%1\n\n%2")
-                                 .arg(QDir::toNativeSeparators(chosen), detail));
+    const QString chosen = saveExportFile(tr("Export Counts"), QString::fromStdString(stem) + QStringLiteral(".csv"),
+                                          tr("Comma-separated values (*.csv);;All files (*)"), csv,
+                                          tr("The counts could not be written to:\n\n%1\n\n%2"));
+    if (!chosen.isEmpty()) {
+        statusBarManager->showTransientMessage(tr("Counts exported to %1").arg(QFileInfo(chosen).fileName()));
+    }
+}
+
+QString MainWindow::Impl::saveExportFile(const QString& title, const QString& suggestedName, const QString& filter,
+                                         const std::string& contents, const QString& failureText)
+{
+    // Offered in the annotation workspace -- this instance's, not the shared
+    // setting -- where the files these exports describe already live. The
+    // dialog asks about overwriting; this does not second-guess it.
+    const QString workspace = annotationSettings->workspaceDirectory();
+    const QString start = workspace.isEmpty() ? suggestedName : workspace + QStringLiteral("/") + suggestedName;
+    const QString chosen = QFileDialog::getSaveFileName(owner, title, start, filter);
+    if (chosen.isEmpty()) {
+        return {};
+    }
+
+    const auto reportFailure = [this, &title, &chosen, &failureText](const QString& detail) {
+        QMessageBox::warning(owner, title, failureText.arg(QDir::toNativeSeparators(chosen), detail));
     };
 
     QFile file(chosen);
@@ -1973,23 +1987,21 @@ void MainWindow::Impl::exportCounts()
     // in the middle of the file.
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         reportFailure(file.errorString());
-        return;
+        return {};
     }
-    const qint64 written = file.write(csv.data(), static_cast<qint64>(csv.size()));
+    const qint64 written = file.write(contents.data(), static_cast<qint64>(contents.size()));
     // flush() and close() explicitly: a buffered write can still fail on the
-    // way out, and ~QFile has nowhere to report that. A half-written counts
-    // file that reported success is the one outcome worth this much care --
-    // it would be read as the whole count.
+    // way out, and ~QFile has nowhere to report that. A half-written export
+    // that reported success is the one outcome worth this much care -- it
+    // would be read as the whole scene.
     const bool flushed = file.flush();
     const QString error = file.errorString();
     file.close();
-    if (written != static_cast<qint64>(csv.size()) || !flushed) {
+    if (written != static_cast<qint64>(contents.size()) || !flushed) {
         reportFailure(error);
-        return;
+        return {};
     }
-
-    statusBarManager->showTransientMessage(
-        tr("Counts exported to %1").arg(QFileInfo(chosen).fileName()));
+    return chosen;
 }
 
 void MainWindow::Impl::exportMeasurements()
@@ -2030,41 +2042,13 @@ void MainWindow::Impl::exportMeasurements()
 
     const std::string stem = measurementExportFileStem(
         QFileInfo(QString::fromStdString(slidePath)).fileName().toStdString(), sceneIndex);
-    const QString suggested = QString::fromStdString(stem) + QStringLiteral(".csv");
-    const QString workspace = annotationSettings->workspaceDirectory();
-    const QString start =
-        workspace.isEmpty() ? suggested : workspace + QStringLiteral("/") + suggested;
-    const QString chosen = QFileDialog::getSaveFileName(
-        owner, tr("Export Measurements"), start, tr("Comma-separated values (*.csv);;All files (*)"));
-    if (chosen.isEmpty()) {
-        return;
+    const QString chosen = saveExportFile(
+        tr("Export Measurements"), QString::fromStdString(stem) + QStringLiteral(".csv"),
+        tr("Comma-separated values (*.csv);;All files (*)"), result.text,
+        tr("The measurements could not be written to:\n\n%1\n\n%2"));
+    if (!chosen.isEmpty()) {
+        statusBarManager->showTransientMessage(tr("Measurements exported to %1").arg(QFileInfo(chosen).fileName()));
     }
-
-    const auto reportFailure = [this, &chosen](const QString& detail) {
-        QMessageBox::warning(owner, tr("Export Measurements"),
-                             tr("The measurements could not be written to:\n\n%1\n\n%2")
-                                 .arg(QDir::toNativeSeparators(chosen), detail));
-    };
-
-    // The same write as exportCounts, for the same reasons: Truncate because
-    // the dialog has already asked, and an explicit flush and close with a
-    // byte count because a short file would be read as the whole scene.
-    QFile file(chosen);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        reportFailure(file.errorString());
-        return;
-    }
-    const qint64 written = file.write(result.text.data(), static_cast<qint64>(result.text.size()));
-    const bool flushed = file.flush();
-    const QString error = file.errorString();
-    file.close();
-    if (written != static_cast<qint64>(result.text.size()) || !flushed) {
-        reportFailure(error);
-        return;
-    }
-
-    statusBarManager->showTransientMessage(
-        tr("Measurements exported to %1").arg(QFileInfo(chosen).fileName()));
 }
 
 bool MainWindow::Impl::annotationsReadyToExport(const QString& title)
@@ -2124,43 +2108,13 @@ void MainWindow::Impl::exportAnnotations()
 
     const std::string stem = sceneExportFileStem(
         QFileInfo(QString::fromStdString(slidePath)).fileName().toStdString(), sceneIndex);
-    const QString suggested = QString::fromStdString(stem) + QStringLiteral(".geojson");
-    const QString workspace = annotationSettings->workspaceDirectory();
-    const QString start =
-        workspace.isEmpty() ? suggested : workspace + QStringLiteral("/") + suggested;
-    const QString chosen = QFileDialog::getSaveFileName(
-        owner, tr("Export Annotations"), start,
-        tr("GeoJSON (*.geojson);;JSON (*.json);;All files (*)"));
-    if (chosen.isEmpty()) {
-        return;
+    const QString chosen = saveExportFile(
+        tr("Export Annotations"), QString::fromStdString(stem) + QStringLiteral(".geojson"),
+        tr("GeoJSON (*.geojson);;JSON (*.json);;All files (*)"), result.text,
+        tr("The annotations could not be written to:\n\n%1\n\n%2"));
+    if (!chosen.isEmpty()) {
+        statusBarManager->showTransientMessage(tr("Annotations exported to %1").arg(QFileInfo(chosen).fileName()));
     }
-
-    const auto reportFailure = [this, &chosen](const QString& detail) {
-        QMessageBox::warning(owner, tr("Export Annotations"),
-                             tr("The annotations could not be written to:\n\n%1\n\n%2")
-                                 .arg(QDir::toNativeSeparators(chosen), detail));
-    };
-
-    // The same write as exportCounts, for the same reasons: Truncate because
-    // the dialog has already asked about overwriting, and an explicit flush and
-    // close with a byte count because ~QFile cannot report a failure and a
-    // short file would be read as the whole scene.
-    QFile file(chosen);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        reportFailure(file.errorString());
-        return;
-    }
-    const qint64 written = file.write(result.text.data(), static_cast<qint64>(result.text.size()));
-    const bool flushed = file.flush();
-    const QString error = file.errorString();
-    file.close();
-    if (written != static_cast<qint64>(result.text.size()) || !flushed) {
-        reportFailure(error);
-        return;
-    }
-
-    statusBarManager->showTransientMessage(
-        tr("Annotations exported to %1").arg(QFileInfo(chosen).fileName()));
 }
 
 void MainWindow::Impl::importAnnotations()

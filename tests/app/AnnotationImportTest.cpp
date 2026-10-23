@@ -18,6 +18,10 @@ namespace core = slideio::viewer::core;
 namespace
 {
 
+const std::string kUuidA = "0b1f6c1e-1111-4a2b-8c3d-000000000001";
+const std::string kUuidB = "0b1f6c1e-1111-4a2b-8c3d-000000000002";
+const std::string kUpperCaseUuid = "0B1F6C1E-1111-4A2B-8C3D-000000000003";
+
 core::Annotation marker(std::string id)
 {
     return core::Annotation{std::move(id), core::PointGeometry{core::PointF{1.0, 2.0}}};
@@ -92,21 +96,66 @@ TEST_CASE("a seeded part gets the same UUID every time", "[app][AnnotationImport
 TEST_CASE("planImport skips ids already in the scene", "[app][AnnotationImport]")
 {
     AnnotationModel model;
-    model.insert(marker("a"));
-    const ImportPlan plan = planImport({marker("a"), marker("b")}, {}, model);
+    model.insert(marker(kUuidA));
+    const ImportPlan plan = planImport({marker(kUuidA), marker(kUuidB)}, {}, model);
 
     REQUIRE(plan.toAdd.size() == 1);
-    REQUIRE(plan.toAdd[0].id() == "b");
+    REQUIRE(plan.toAdd[0].id() == kUuidB);
     REQUIRE(plan.alreadyPresent == 1);
 }
 
 TEST_CASE("planImport skips an id repeated in the file", "[app][AnnotationImport]")
 {
     AnnotationModel model;
-    const ImportPlan plan = planImport({marker("b"), marker("b")}, {}, model);
+    const ImportPlan plan = planImport({marker(kUuidB), marker(kUuidB)}, {}, model);
 
     REQUIRE(plan.toAdd.size() == 1);
     REQUIRE(plan.alreadyPresent == 1);
+}
+
+TEST_CASE("an id that is not a UUID becomes a UUID derived from it", "[app][AnnotationImport]")
+{
+    // QuPath reads an object id as a UUID and replaces anything else, so an id
+    // like "roi-7" kept as written would not survive viewer -> QuPath -> viewer,
+    // and the third import would add everything again.
+    AnnotationModel model;
+    const ImportPlan first = planImport({marker("roi-7"), marker("17"), marker(kUpperCaseUuid)}, {}, model);
+    const ImportPlan second = planImport({marker("roi-7"), marker("17"), marker(kUpperCaseUuid)}, {}, model);
+
+    REQUIRE(first.toAdd.size() == 3);
+    for (std::size_t i = 0; i < 3; ++i) {
+        REQUIRE(isUuid(first.toAdd[i].id()));
+        REQUIRE(first.toAdd[i].id() == second.toAdd[i].id());
+    }
+    REQUIRE(first.toAdd[0].id() != "roi-7");
+    REQUIRE(first.toAdd[0].id() != first.toAdd[1].id());
+    // Only the canonical spelling -- lower case, no braces, as QuPath and this
+    // application write it -- is kept as written.
+    REQUIRE(first.toAdd[2].id() != kUpperCaseUuid);
+}
+
+TEST_CASE("a UUID id is kept as written", "[app][AnnotationImport]")
+{
+    AnnotationModel model;
+    const ImportPlan plan = planImport({marker(kUuidA)}, {}, model);
+    REQUIRE(plan.toAdd.size() == 1);
+    REQUIRE(plan.toAdd[0].id() == kUuidA);
+}
+
+TEST_CASE("re-importing a file whose ids are not UUIDs adds nothing", "[app][AnnotationImport]")
+{
+    const std::string file =
+        R"({"type":"FeatureCollection","features":[)"
+        R"({"type":"Feature","id":"roi-7","geometry":{"type":"Point","coordinates":[1,2]},"properties":{}},)"
+        R"({"type":"Feature","id":17,"geometry":{"type":"Point","coordinates":[3,4]},"properties":{}}]})";
+    AnnotationModel model;
+    model.insertMany(plan(file, model).toAdd);
+    REQUIRE(model.annotations().size() == 2);
+
+    const ImportPlan again = plan(file, model);
+
+    REQUIRE(again.toAdd.empty());
+    REQUIRE(again.alreadyPresent == 2);
 }
 
 TEST_CASE("re-importing a QuPath Points class adds nothing", "[app][AnnotationImport]")

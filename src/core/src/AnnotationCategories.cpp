@@ -247,6 +247,16 @@ bool isUnclassifiedCategory(const std::string& text)
     return caseFoldKey(trimmed(text)) == "unclassified";
 }
 
+std::string trimAsciiWhitespace(const std::string& text)
+{
+    return trimmed(text);
+}
+
+bool isBlankOrUnclassified(const std::string& classification)
+{
+    return trimmed(classification).empty() || isUnclassifiedCategory(classification);
+}
+
 std::vector<std::string> normalizeCategoryList(const std::vector<std::string>& raw)
 {
     std::vector<std::string> result;

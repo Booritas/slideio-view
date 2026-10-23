@@ -49,6 +49,22 @@ inline const std::vector<std::string> kDefaultAnnotationCategories{
 /// refuse it.
 [[nodiscard]] bool isUnclassifiedCategory(const std::string& text);
 
+/// `text` with ASCII whitespace -- space, tab, CR, LF, FF, VT -- removed from
+/// both ends, compared by value. The one trim every comparison of category
+/// text uses, in core and in ui: std::isspace reads the global C locale, which
+/// under a single-byte one calls the lead byte of a UTF-8 letter whitespace
+/// and trims a letter in half, and four separate copies of this rule had
+/// already appeared before it was made public.
+[[nodiscard]] std::string trimAsciiWhitespace(const std::string& text);
+
+/// True when a classification names no category: blank once trimmed, or
+/// "Unclassified" in any case. The counting strip's rule for its synthetic
+/// row, and therefore the rule every export follows, so a file and the strip
+/// agree on who has no class. Broader than isUnclassifiedCategory, which
+/// answers "may this text be configured as a category" and has no reason to
+/// call an empty string the word Unclassified.
+[[nodiscard]] bool isBlankOrUnclassified(const std::string& classification);
+
 /// The user's category list, cleaned up for storage and display.
 ///
 /// Trims each entry, drops entries that are empty once trimmed, and removes

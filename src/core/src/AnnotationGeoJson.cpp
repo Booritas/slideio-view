@@ -102,28 +102,6 @@ struct GeometryVisitor
     }
 };
 
-/// The tally's rule, so the file and the counting strip agree on who has no
-/// class: blank, or "Unclassified" in any case. isUnclassifiedCategory alone
-/// is the second half. ASCII whitespace only, compared by value: std::isspace
-/// reads the C locale and under a single-byte one would call a UTF-8 lead
-/// byte whitespace.
-/// ASCII whitespace off both ends, compared by value for the reason above.
-std::string asciiTrimmed(const std::string& text)
-{
-    constexpr const char* kSpace = " \t\r\n\f\v";
-    const std::size_t first = text.find_first_not_of(kSpace);
-    if (first == std::string::npos) {
-        return {};
-    }
-    return text.substr(first, text.find_last_not_of(kSpace) - first + 1);
-}
-
-bool isUnclassified(const std::string& classification)
-{
-    const bool blank = classification.find_first_not_of(" \t\r\n\f\v") == std::string::npos;
-    return blank || isUnclassifiedCategory(classification);
-}
-
 json rgb(const Color& color)
 {
     return json::array({color.r, color.g, color.b});
@@ -153,8 +131,8 @@ bool buildProperties(const Annotation& annotation, json& out)
     // literally named Unclassified would appear there as a real one.
     // Trimmed, as categoryTally counts it: " Tumor " is a Tumor row on the
     // strip, and would be a second class of its own in QuPath.
-    if (!isUnclassified(props.classification)) {
-        out["classification"] = json{{"name", asciiTrimmed(props.classification)}, {"color", rgb(props.color)}};
+    if (!isBlankOrUnclassified(props.classification)) {
+        out["classification"] = json{{"name", trimAsciiWhitespace(props.classification)}, {"color", rgb(props.color)}};
     }
     out["slideio"] = json{{"type", annotationTypeName(annotation.geometry())},
                           {"notes", props.notes},
@@ -687,7 +665,7 @@ void readProperties(const InJson& properties, std::chrono::system_clock::time_po
     outProperties = AnnotationProperties{};
     outProperties.label = stringMember(properties, "name");
     outProperties.classification = readClassification(member(properties, "classification"));
-    if (isUnclassified(outProperties.classification)) {
+    if (isBlankOrUnclassified(outProperties.classification)) {
         outProperties.classification.clear();
     }
     Color color;

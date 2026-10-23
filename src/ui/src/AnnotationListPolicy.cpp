@@ -38,19 +38,6 @@ std::string toLower(const std::string& text)
     return core::caseFoldKey(text);
 }
 
-std::string trimmedText(const std::string& text)
-{
-    // Explicitly ASCII, matching the trim core::caseFoldKey's callers use:
-    // std::isspace reads the global C locale, which under a single-byte one
-    // calls the lead byte of a UTF-8 letter whitespace and trims a letter in
-    // half.
-    const auto notSpace = [](unsigned char c) {
-        return !(c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r');
-    };
-    const auto first = std::find_if(text.begin(), text.end(), notSpace);
-    const auto last = std::find_if(text.rbegin(), text.rend(), notSpace).base();
-    return first < last ? std::string(first, last) : std::string{};
-}
 
 bool containsFold(const std::string& haystack, const std::string& needleLower)
 {
@@ -187,7 +174,7 @@ std::vector<CategoryTallyRow> categoryTally(const std::vector<core::Annotation>&
     // looked anything up afterwards. A map cannot be one entry out of step.
     std::unordered_map<std::string, std::size_t> indexByKey;
     for (const std::string& category : categories) {
-        const std::string clean = trimmedText(category);
+        const std::string clean = core::trimAsciiWhitespace(category);
         if (clean.empty()) {
             continue;
         }
@@ -206,8 +193,8 @@ std::vector<CategoryTallyRow> categoryTally(const std::vector<core::Annotation>&
 
     std::size_t unclassified = 0;
     for (const core::Annotation& annotation : annotations) {
-        const std::string clean = trimmedText(annotation.properties().classification);
-        if (clean.empty() || core::isUnclassifiedCategory(clean)) {
+        const std::string clean = core::trimAsciiWhitespace(annotation.properties().classification);
+        if (core::isBlankOrUnclassified(clean)) {
             ++unclassified;
             continue;
         }

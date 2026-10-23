@@ -422,3 +422,27 @@ TEST_CASE("caseFoldKey maps one codepoint to one codepoint", "[core][Categories]
         REQUIRE(caseFoldKey(utf8).size() == expected);
     }
 }
+
+TEST_CASE("trimAsciiWhitespace trims the six ASCII spaces and nothing else", "[core][AnnotationCategories]")
+{
+    using slideio::viewer::core::trimAsciiWhitespace;
+    REQUIRE(trimAsciiWhitespace(" \t\r\n\f\vTumor \t\r\n\f\v") == "Tumor");
+    REQUIRE(trimAsciiWhitespace("  inner  space  ") == "inner  space");
+    REQUIRE(trimAsciiWhitespace(" \t ").empty());
+    REQUIRE(trimAsciiWhitespace("").empty());
+    // A no-break space is not ASCII whitespace, and the lead byte of a UTF-8
+    // letter must never be taken for one, whatever the C locale says.
+    REQUIRE(trimAsciiWhitespace("\xC2\xA0x") == "\xC2\xA0x");
+    REQUIRE(trimAsciiWhitespace(" \xD0\x9E\xD0\xBF ") == "\xD0\x9E\xD0\xBF");
+}
+
+TEST_CASE("isBlankOrUnclassified is the tally's rule for no category", "[core][AnnotationCategories]")
+{
+    using slideio::viewer::core::isBlankOrUnclassified;
+    REQUIRE(isBlankOrUnclassified(""));
+    REQUIRE(isBlankOrUnclassified(" \t\n"));
+    REQUIRE(isBlankOrUnclassified("Unclassified"));
+    REQUIRE(isBlankOrUnclassified("  UNCLASSIFIED\t"));
+    REQUIRE_FALSE(isBlankOrUnclassified("Tumor"));
+    REQUIRE_FALSE(isBlankOrUnclassified(" Unclassified cells"));
+}

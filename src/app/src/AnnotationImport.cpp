@@ -25,6 +25,24 @@ std::string toId(const QUuid& uuid)
     return uuid.toString(QUuid::WithoutBraces).toStdString();
 }
 
+/// The id an annotation is stored under for an id a file gave: kept when it is
+/// already a UUID in the canonical spelling -- lower case, no braces, as QuPath
+/// and this application write one -- and otherwise a version-5 UUID made from
+/// it. QuPath reads an object id as a UUID and replaces anything else, so an
+/// id like "roi-7" or 17 kept as written would come back from a trip through
+/// QuPath as a different one, and the next import would add the annotation
+/// again. Derived rather than random, so importing the same file twice still
+/// finds every annotation already present.
+std::string storedId(const std::string& fileId)
+{
+    const QUuid parsed = QUuid::fromString(QString::fromStdString(fileId));
+    if (!parsed.isNull() && toId(parsed) == fileId) {
+        return fileId;
+    }
+    // Prefixed so a file id can never derive the same UUID as a part seed.
+    return toId(QUuid::createUuidV5(kImportedPartNamespace, "id\x1F" + QByteArray::fromStdString(fileId)));
+}
+
 } // namespace
 
 ImportPlan planImport(std::vector<core::Annotation> imported, std::vector<std::string> idSeeds,
@@ -45,6 +63,8 @@ ImportPlan planImport(std::vector<core::Annotation> imported, std::vector<std::s
             id = toId(QUuid::createUuidV5(kImportedPartNamespace, QByteArray::fromStdString(seed)));
         } else if (id.empty()) {
             id = toId(QUuid::createUuid());
+        } else {
+            id = storedId(id);
         }
         if (!taken.insert(id).second) {
             ++plan.alreadyPresent;

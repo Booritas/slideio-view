@@ -46,18 +46,6 @@ bool appendNumber(std::string& row, std::optional<double> value)
     return true;
 }
 
-/// ASCII whitespace off both ends, compared by value: std::isspace reads the C
-/// locale and under a single-byte one would trim a UTF-8 lead byte.
-std::string asciiTrimmed(const std::string& text)
-{
-    constexpr const char* kSpace = " \t\r\n\f\v";
-    const std::size_t first = text.find_first_not_of(kSpace);
-    if (first == std::string::npos) {
-        return {};
-    }
-    return text.substr(first, text.find_last_not_of(kSpace) - first + 1);
-}
-
 /// What a measurement column holds for one shape: area for a closed shape when
 /// measure() gives one, perimeter for a closed shape, length for an open one.
 struct Columns
@@ -123,8 +111,8 @@ MeasurementExportResult annotationMeasurementCsv(const std::vector<core::Annotat
 
         const core::RectF box = annotation.boundingBox();
         const core::AnnotationProperties& properties = annotation.properties();
-        const std::string classification = asciiTrimmed(properties.classification);
-        const bool unclassified = classification.empty() || core::isUnclassifiedCategory(classification);
+        const std::string classification = core::trimAsciiWhitespace(properties.classification);
+        const bool unclassified = core::isBlankOrUnclassified(classification);
 
         std::string row = csvField(annotation.id());
         row += ',';
