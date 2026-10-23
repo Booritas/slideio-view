@@ -233,17 +233,44 @@ Written before the run.
 
 | | Check | Result |
 |---|---|---|
-| AH1 | With no slide open, File > Export Measurements is disabled; open a slide: enabled; close: disabled. | |
-| AH2 | The suggested name is `<slide>.s<N>.measurements.csv`, in the annotation workspace. | |
-| AH3 | Export Philips-1 scene 0: one row per annotation (27), ids matching the annotation file. | |
-| AH4 | Select a rectangle, a polygon and a freehand line in turn: the panel's area, perimeter and length agree with the file's micron columns to the panel's three figures. | |
-| AH5 | Open the file in Excel by double-click: columns split, Greek and Cyrillic intact, `=1+1` shown as text. | |
-| AH6 | An uncalibrated slide: micron and pixel-size columns empty, pixel columns filled. | |
-| AH7 | A self-intersecting trace: area empty, `area_note` says `self-intersecting`. | |
-| AH8 | Type in the list's filter box, then export: every annotation is still in the file. | |
-| AH9 | A read-only slide exports; a scene whose annotation file could not be read is refused with a warning. | |
-| AH10 | Export onto a write-denied file: a warning names the path and the reason. | |
-| AH11 | The status bar names the file. | |
+| AH1 | With no slide open, File > Export Measurements is disabled; open a slide: enabled; close: disabled. | Pass |
+| AH2 | The suggested name is `<slide>.s<N>.measurements.csv`, in the annotation workspace. | Pass — `Philips-1.tiff.s0.measurements.csv` in `D:\tmp\ad-run` |
+| AH3 | Export Philips-1 scene 0: one row per annotation (27), ids matching the annotation file. | Pass — 27 rows, ids identical and in order, BOM present |
+| AH4 | Select a rectangle, a polygon and a freehand line in turn: the panel's area, perimeter and length agree with the file's micron columns to the panel's three figures. | Pass — rectangle, ellipse, polygon and freehand line all agree |
+| AH5 | Open the file in Excel by double-click: columns split, Greek and Cyrillic intact, `=1+1` shown as text. | Pass in **LibreOffice Calc** — Excel left to the project owner, see below |
+| AH6 | An uncalibrated slide: micron and pixel-size columns empty, pixel columns filled. | Pass — a BMP fixture |
+| AH7 | A self-intersecting trace: area empty, `area_note` says `self-intersecting`. | Pass |
+| AH8 | Type in the list's filter box, then export: every annotation is still in the file. | Pass — "0 of 4" shown, 4 rows written |
+| AH9 | A read-only slide exports; a scene whose annotation file could not be read is refused with a warning. | Pass |
+| AH10 | Export onto a write-denied file: a warning names the path and the reason. | Pass — "Access is denied."; file untouched |
+| AH11 | The status bar names the file. | Pass |
+
+**Run 2026-10-23 against the installed build of `a63da40`: 11/11 passed**,
+AH5 in LibreOffice Calc. The viewer was driven by UI Automation and synthetic
+input; every file was read back with a CSV parser, not by eye.
+
+- **AH4** compared the properties panel with the file for four shapes. The
+  panel's figures were 1.83 mm² and 5.61 mm for Philips-1's rectangle, and
+  149000 µm² and 1.44 mm, 85600 µm² and 1.19 mm, and 696 µm for CMU's ellipse,
+  polygon and freehand line. The file holds 1828029.69 µm² and 5605.72 µm, and
+  149332.70 µm² and 1437.01 µm, 85563.48 µm² and 1186.48 µm, and 696.32 µm —
+  the same numbers before the panel's three-figure rounding.
+- **AH5 ran in LibreOffice Calc**, the test machine having no Excel: Calc's
+  default import of the Philips-1 file gave 28 rows of 19 cells, the Greek and
+  Cyrillic classifications byte-identical, and `=1+1` as the text `'=1+1`. As
+  with the counts export's AD3/AD6/AD8, it stays for the project owner to run in
+  Excel itself.
+- **AH6** used `CMU-1-Small-Region-page-0.bmp`, which carries no pixel size: a
+  rectangle drawn on it exported with its pixel area and perimeter and every
+  micron and pixel-size column empty.
+- **AH7** drew a bow-tie with the polygon tool on CMU-1-Small-Region: area
+  empty, `area_note` `self-intersecting`, perimeter present.
+- **AH9**'s read-only case was a second window on Philips-1 (the scene lock);
+  the refusal was a scene whose annotation file was temporarily replaced with
+  malformed JSON, which gave the shared "not loaded" warning.
+
+Every fixture annotation file was restored from its backup afterwards and
+checked by hash.
 
 ## 9. Left to the builder
 
