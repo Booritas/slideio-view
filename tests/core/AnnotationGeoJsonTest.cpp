@@ -347,3 +347,39 @@ TEST_CASE("an unrepresentable timestamp fails the export", "[core][GeoJson]")
     REQUIRE(result.text.empty());
     REQUIRE(result.error.find("a7") != std::string::npos);
 }
+
+TEST_CASE("a line width or fill opacity that is not a finite number fails the export", "[core][GeoJson]")
+{
+    // JSON has no NaN or infinity; nlohmann would write null, which the
+    // serializer's own reader refuses. Never write what will not parse.
+    AnnotationProperties nanWidth;
+    nanWidth.lineWidth = std::numeric_limits<float>::quiet_NaN();
+    AnnotationProperties infiniteOpacity;
+    infiniteOpacity.fillOpacity = std::numeric_limits<float>::infinity();
+
+    for (const AnnotationProperties& properties : {nanWidth, infiniteOpacity}) {
+        const Annotation bad("s9", PointGeometry{PointF{1, 1}}, properties, AnnotationMetadata{});
+        const GeoJsonExportResult result = annotationsToGeoJson({bad}, context(), at(1792576800LL));
+        CHECK(result.text.empty());
+        CHECK(result.error.find("s9") != std::string::npos);
+    }
+}
+
+TEST_CASE("a pixel size that is not a finite number is left out, like an unknown one", "[core][GeoJson]")
+{
+    for (const double size : {std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN()}) {
+        GeoJsonExportContext strange = context();
+        strange.pixelSizeMicronsX = size;
+        strange.pixelSizeMicronsY = 0.25;
+        const json file = json::parse(annotationsToGeoJson({}, strange, at(1792576800LL)).text);
+        CHECK_FALSE(file.at("slideio").contains("pixelSizeMicrons"));
+    }
+}
+
+TEST_CASE("a classification is written trimmed, as the tally counts it", "[core][GeoJson]")
+{
+    AnnotationProperties padded;
+    padded.classification = " \tTumor  ";
+    const json file = exportAndParse({Annotation("c1", PointGeometry{PointF{1, 1}}, padded, AnnotationMetadata{})});
+    REQUIRE(file.at("features").at(0).at("properties").at("classification").at("name") == "Tumor");
+}

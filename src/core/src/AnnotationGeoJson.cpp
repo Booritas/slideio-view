@@ -107,6 +107,17 @@ struct GeometryVisitor
 /// is the second half. ASCII whitespace only, compared by value: std::isspace
 /// reads the C locale and under a single-byte one would call a UTF-8 lead
 /// byte whitespace.
+/// ASCII whitespace off both ends, compared by value for the reason above.
+std::string asciiTrimmed(const std::string& text)
+{
+    constexpr const char* kSpace = " \t\r\n\f\v";
+    const std::size_t first = text.find_first_not_of(kSpace);
+    if (first == std::string::npos) {
+        return {};
+    }
+    return text.substr(first, text.find_last_not_of(kSpace) - first + 1);
+}
+
 bool isUnclassified(const std::string& classification)
 {
     const bool blank = classification.find_first_not_of(" \t\r\n\f\v") == std::string::npos;
@@ -140,8 +151,10 @@ bool buildProperties(const Annotation& annotation, json& out)
     out["color"] = rgb(props.color);
     // QuPath represents "no class" by the absence of the field; a class
     // literally named Unclassified would appear there as a real one.
+    // Trimmed, as categoryTally counts it: " Tumor " is a Tumor row on the
+    // strip, and would be a second class of its own in QuPath.
     if (!isUnclassified(props.classification)) {
-        out["classification"] = json{{"name", props.classification}, {"color", rgb(props.color)}};
+        out["classification"] = json{{"name", asciiTrimmed(props.classification)}, {"color", rgb(props.color)}};
     }
     out["slideio"] = json{{"type", annotationTypeName(annotation.geometry())},
                           {"notes", props.notes},
@@ -163,8 +176,10 @@ json provenance(const GeoJsonExportContext& context, const std::string& exported
                {"scene", context.sceneIndex},
                {"exportedAt", exportedAt},
                {"coordinates", "level-0 pixels of the scene; origin top-left, x right, y down"}};
-    // Unknown is said by absence, never by a zero that reads as a measurement.
-    if (context.pixelSizeMicronsX > 0.0 && context.pixelSizeMicronsY > 0.0) {
+    // Unknown is said by absence, never by a zero that reads as a measurement
+    // -- nor by a null, which is what nlohmann writes for an infinity or NaN.
+    const auto known = [](double size) { return std::isfinite(size) && size > 0.0; };
+    if (known(context.pixelSizeMicronsX) && known(context.pixelSizeMicronsY)) {
         block["pixelSizeMicrons"] = json::array({context.pixelSizeMicronsX, context.pixelSizeMicronsY});
     }
     return block;
@@ -197,6 +212,13 @@ GeoJsonExportResult annotationsToGeoJson(const std::vector<Annotation>& annotati
         // vertices it drops as duplicates, and those equal a kept one.
         if (!allFinite(outline(annotation.geometry()))) {
             return {{}, "annotation " + annotation.id() + " has a coordinate that is not a finite number"};
+        }
+        // JSON has no NaN or infinity: nlohmann would write null, and the
+        // saved-file reader refuses it -- so a value the serializer would not
+        // write is not written here either.
+        if (!isRepresentableStyle(annotation.properties())) {
+            return {{}, "annotation " + annotation.id()
+                            + " has a line width or fill opacity that cannot be written"};
         }
         json properties;
         if (!buildProperties(annotation, properties)) {
@@ -377,6 +399,31 @@ bool isAxisAlignedBox(const std::vector<PointF>& ring)
     return xs.size() == 2 && ys.size() == 2;
 }
 
+/// The four corners of a box as the export writes a rectangle, degenerate ones
+/// included: a rectangle's outline keeps all four corners even when they
+/// coincide, so a zero-width or zero-size rectangle is written as a ring whose
+/// corners repeat. Every corner on the bounding box's corners, every edge
+/// horizontal or vertical. Used only where the file says "rectangle" -- a
+/// foreign ring of coincident points is a degenerate polygon, not a box.
+bool isBoxOutline(const std::vector<PointF>& ring)
+{
+    if (ring.size() != 4) {
+        return false;
+    }
+    const auto [low, high] = cornersOf(ring);
+    for (std::size_t i = 0; i < 4; ++i) {
+        const PointF& a = ring[i];
+        const PointF& b = ring[(i + 1) % 4];
+        if ((a.x != low.x && a.x != high.x) || (a.y != low.y && a.y != high.y)) {
+            return false;
+        }
+        if (a.x != b.x && a.y != b.y) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /// A closed ring as the viewer's shape for it: a rectangle when it is one.
 AnnotationGeometry areaFrom(std::vector<PointF> ring)
 {
@@ -523,7 +570,7 @@ std::optional<AnnotationGeometry> readExportedShape(const std::string& slideioTy
             // Kept a polygon even when it happens to be an axis-aligned box.
             return AnnotationGeometry{PolygonGeometry{std::move(ring), true}};
         }
-        if (slideioType == "rectangle" && !isAxisAlignedBox(ring)) {
+        if (slideioType == "rectangle" && !isBoxOutline(ring)) {
             return std::nullopt;
         }
         // The 512-gon's vertices include the box's four extremes, so its

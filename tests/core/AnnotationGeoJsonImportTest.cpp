@@ -171,6 +171,30 @@ TEST_CASE("every type round-trips through export and import", "[core][GeoJsonImp
     CHECK(degenerate->vertices.size() == 3);
 }
 
+TEST_CASE("a zero-extent rectangle round-trips as a rectangle", "[core][GeoJsonImport]")
+{
+    const std::vector<Annotation> original = {
+        styled("dot", RectangleGeometry{PointF{5, 5}, PointF{5, 5}}),
+        styled("bar", RectangleGeometry{PointF{5, 5}, PointF{5, 20}}),
+        styled("flat", RectangleGeometry{PointF{5, 5}, PointF{30, 5}}),
+    };
+    const GeoJsonExportResult exported = annotationsToGeoJson(original, GeoJsonExportContext{}, kImportedAt);
+    REQUIRE(exported.error.empty());
+
+    const GeoJsonImportResult imported = readOk(exported.text);
+    REQUIRE(imported.annotations.size() == original.size());
+    for (std::size_t i = 0; i < original.size(); ++i) {
+        INFO(original[i].id());
+        const auto* before = std::get_if<RectangleGeometry>(&original[i].geometry());
+        const auto* after = std::get_if<RectangleGeometry>(&imported.annotations[i].geometry());
+        REQUIRE(after != nullptr);
+        CHECK(after->topLeft.x == before->topLeft.x);
+        CHECK(after->topLeft.y == before->topLeft.y);
+        CHECK(after->bottomRight.x == before->bottomRight.x);
+        CHECK(after->bottomRight.y == before->bottomRight.y);
+    }
+}
+
 TEST_CASE("the top level may be a collection, a feature or an array", "[core][GeoJsonImport]")
 {
     const std::string one = feature(R"({"type":"Point","coordinates":[1,2]})");

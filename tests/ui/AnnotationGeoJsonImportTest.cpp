@@ -142,6 +142,20 @@ TEST_CASE("a different scene or slide is warned about", "[ui][GeoJsonImport]")
     CHECK_FALSE(contains(f.text(), "\xE2\x9A\xA0"));
 }
 
+TEST_CASE("a slide name with percent signs is shown as it is", "[ui][GeoJsonImport]")
+{
+    // The name comes from the file. Chained .arg() calls would substitute a
+    // %3 in it with the open scene's number.
+    Fixture f;
+    f.result.provenance.present = true;
+    f.result.provenance.slide = "D:/slides/a%3b%1.tiff";
+    f.result.provenance.slideId = "def";
+    f.result.provenance.scene = 1;
+    const std::string text = f.text();
+    CHECK(contains(text, "\"a%3b%1.tiff\""));
+    CHECK(contains(text, "the open scene is scene 0"));
+}
+
 TEST_CASE("shapes outside the scene are warned about", "[ui][GeoJsonImport]")
 {
     Fixture f;

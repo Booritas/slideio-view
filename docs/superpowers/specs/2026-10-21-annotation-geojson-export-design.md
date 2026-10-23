@@ -25,7 +25,7 @@ the two meet in the middle.
 
 **Goals**
 
-- `File > Export Annotations...` writes the current scene's annotations to a
+- `File > Export Annotations as GeoJSON...` writes the current scene's annotations to a
   `.geojson` file.
 - QuPath 0.7 imports that file (drag-and-drop or `File > Import objects from
   file`) onto the same image and shows every shape where the viewer showed it,
@@ -212,7 +212,9 @@ importer refuse a future layout instead of misreading it.
 
 ### The action
 
-`File > Export Annotations...`, directly below `Export Counts...`.
+`File > Export Annotations as GeoJSON...`, directly below `Export Counts...` —
+named for its format, because the GeoJSON import sits beside it and a CSV of
+per-annotation measurements (FR-ANN-34) will join them.
 
 - **Enabled exactly when Export Counts is**: a slide open, editable or not — a
   read-only slide's annotations are exactly what a reader wants to take

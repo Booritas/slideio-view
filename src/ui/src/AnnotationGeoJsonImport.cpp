@@ -83,14 +83,13 @@ QString geoJsonImportSummary(const GeoJsonImportSummaryInput& input)
         if (otherSlide) {
             warnings << (from.scene >= 0
                              ? translate("This file was exported from a different slide: scene %1 of \"%2\".")
-                                   .arg(from.scene)
-                                   .arg(slide)
+                                   .arg(QString::number(from.scene), slide)
                              : translate("This file was exported from a different slide, \"%1\".").arg(slide));
         } else if (otherScene) {
+            // One multi-argument arg(), not a chain: the slide name comes
+            // from the file, and a chained .arg() would substitute a %3 in it.
             warnings << translate("This file was exported from scene %1 of \"%2\"; the open scene is scene %3.")
-                            .arg(from.scene)
-                            .arg(slide)
-                            .arg(input.openScene);
+                            .arg(QString::number(from.scene), slide, QString::number(input.openScene));
         }
     }
     if (input.outsideScene > 0) {
