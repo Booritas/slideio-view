@@ -350,7 +350,8 @@ bounds and first and last point. That compares numbers where a screenshot
 compares pixels, and it is stronger for the anti-goal it guards ("shapes land
 in the wrong place"); what it does not exercise is QuPath's GUI import command
 and the drawing of the result, which a reader opening the file in QuPath's
-window would still see. Results:
+window would still see. **The project owner did that on 2026-10-23 — QuPath's
+GUI import of the exported files — and it passed.** Results:
 
 - Philips-1: 27 objects, every id the annotation file's, every marker, arrow
   end and box corner at its stored coordinate to the printed precision. The

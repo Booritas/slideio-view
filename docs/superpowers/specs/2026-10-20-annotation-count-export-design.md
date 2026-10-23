@@ -182,7 +182,8 @@ displays as `'=1+1` — the deliberate side of the trade in §3. Note that this
 does NOT prove the apostrophe is what stops evaluation in Calc: Calc's import
 leaves "Evaluate formulas" off by default, so it would not have evaluated a bare
 `=1+1` either. The apostrophe is there for Excel and Sheets, and those three
-checks remain open for Excel itself on a machine that has it.
+checks stayed open for Excel itself until **2026-10-23, when the project owner
+ran AD3, AD6 and AD8 in Excel: all three pass.**
 
 **AD14 reached the application's warning through a write-denied FILE, not a
 read-only folder.** With an unwritable folder the Windows save dialog refuses

@@ -2,6 +2,7 @@
 
 #include "slideio/viewer/infra/JsonAnnotationRepository.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -355,6 +356,25 @@ TEST_CASE("a second holder of the same key is refused and named",
     // The holder is this very process, so the text must at least carry its id:
     // a refusal that cannot say who holds it leaves the user with nothing to do.
     REQUIRE_FALSE(blocked.holder.empty());
+}
+
+TEST_CASE("the holder is described without brackets of its own", "[infra][JsonAnnotationRepository]")
+{
+    // The read-only message puts the holder in brackets -- "(%1)" -- so a
+    // holder text with its own showed "(... (process 1234))" (group AE).
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    JsonAnnotationRepository first(dir.path().toStdString());
+    JsonAnnotationRepository second(dir.path().toStdString());
+
+    REQUIRE(first.lock({"a3f8c2e1b4d50697", 0}).status == LockStatus::Acquired);
+    const LockResult blocked = second.lock({"a3f8c2e1b4d50697", 0});
+
+    REQUIRE(blocked.status == LockStatus::HeldByOther);
+    REQUIRE(blocked.holder.find('(') == std::string::npos);
+    REQUIRE(blocked.holder.find(')') == std::string::npos);
+    REQUIRE(blocked.holder.find("process " + std::to_string(QCoreApplication::applicationPid()))
+            != std::string::npos);
 }
 
 TEST_CASE("two scenes of one slide lock independently", "[infra][JsonAnnotationRepository]")

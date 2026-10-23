@@ -9,7 +9,6 @@
 #include <QLockFile>
 #include <QSaveFile>
 #include <QString>
-#include <QStringList>
 
 #include <cstddef>
 #include <memory>
@@ -72,17 +71,16 @@ std::string describeHolder(QLockFile& lock)
     if (!lock.getLockInfo(&pid, &host, &application)) {
         return {};
     }
-    QStringList parts;
-    if (!application.isEmpty()) {
-        parts << application;
-    }
+    // No brackets here: the message that shows this puts the whole of it in
+    // brackets, and a pair of its own read "(... (process 1234))".
+    QString who = application;
     if (!host.isEmpty()) {
-        parts << QStringLiteral("on ") + host;
+        who += (who.isEmpty() ? QStringLiteral("on ") : QStringLiteral(" on ")) + host;
     }
     if (pid != 0) {
-        parts << QStringLiteral("(process ") + QString::number(pid) + QLatin1Char(')');
+        who += (who.isEmpty() ? QString() : QStringLiteral(", ")) + QStringLiteral("process ") + QString::number(pid);
     }
-    return parts.join(QLatin1Char(' ')).toStdString();
+    return who.toStdString();
 }
 
 core::LoadResult loadFailure(core::LoadStatus status, std::string path, std::string message)
