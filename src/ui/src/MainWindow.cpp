@@ -3,6 +3,7 @@
 #include "slideio/viewer/app/AnnotationImport.h"
 #include "slideio/viewer/app/AnnotationImportCommand.h"
 #include "slideio/viewer/app/AnnotationModel.h"
+#include "slideio/viewer/app/AsapXmlImport.h"
 #include "slideio/viewer/app/AnnotationPersistenceService.h"
 #include "slideio/viewer/app/AnnotationRetagCommand.h"
 #include "slideio/viewer/app/UndoRedoStack.h"
@@ -534,9 +535,9 @@ struct MainWindow::Impl
         pointToolAction->setEnabled(false);
         arrowToolAction->setEnabled(false);
 
-        importAnnotationsAction = new QAction("&Import Annotations from GeoJSON...", owner);
+        importAnnotationsAction = new QAction("&Import Annotations...", owner);
         importAnnotationsAction->setStatusTip(
-            "Add the annotations in a QuPath or SlideIO GeoJSON file to this scene");
+            "Add the annotations in a GeoJSON (QuPath, SlideIO) or ASAP XML file to this scene");
         // The one menu action that creates annotations, so it is gated where
         // creation is -- in applyAnnotationAvailability beside the drawing
         // tools, and nowhere else. The exports below are the opposite.
@@ -2189,8 +2190,9 @@ void MainWindow::Impl::importAnnotations()
     }
 
     const QString title = tr("Import Annotations");
-    const QString chosen = QFileDialog::getOpenFileName(owner, title, annotationSettings->workspaceDirectory(),
-                                                        tr("GeoJSON (*.geojson *.json);;All files (*)"));
+    const QString chosen = QFileDialog::getOpenFileName(
+        owner, title, annotationSettings->workspaceDirectory(),
+        tr("Annotation files (*.geojson *.json *.xml);;GeoJSON (*.geojson *.json);;ASAP XML (*.xml);;All files (*)"));
     if (chosen.isEmpty()) {
         return;
     }
@@ -2226,8 +2228,12 @@ void MainWindow::Impl::importAnnotations()
             return outcome;
         }
         file.close();
-        outcome.result = core::geoJsonToAnnotations(
-            std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())), importedAt, &cancel);
+        // The reader is chosen by the file's content, not its extension, so a
+        // .json that is really XML -- or the reverse -- is still read.
+        const std::string_view text(bytes.constData(), static_cast<std::size_t>(bytes.size()));
+        outcome.result = core::detectAnnotationFileFormat(text) == core::AnnotationFileFormat::AsapXml
+                             ? app::asapXmlToAnnotations(text, importedAt, &cancel)
+                             : core::geoJsonToAnnotations(text, importedAt, &cancel);
         return outcome;
     });
     waitWithCancel(owner, reading, tr("Reading %1...").arg(QFileInfo(chosen).fileName()), title, cancel);

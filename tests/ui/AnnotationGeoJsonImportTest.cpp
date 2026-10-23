@@ -156,6 +156,26 @@ TEST_CASE("a slide name with percent signs is shown as it is", "[ui][GeoJsonImpo
     CHECK(contains(text, "the open scene is scene 0"));
 }
 
+TEST_CASE("approximated splines are said so", "[ui][GeoJsonImport]")
+{
+    Fixture f;
+    f.result.splinesApproximated = 2;
+    CHECK(contains(f.text(), "2 splines imported as polygons through their control points"));
+    f.result.splinesApproximated = 1;
+    CHECK(contains(f.text(), "1 spline imported as a polygon through its control points"));
+    f.result.splinesApproximated = 0;
+    CHECK_FALSE(contains(f.text(), "spline"));
+}
+
+TEST_CASE("an unsupported type is named in its skip line", "[ui][GeoJsonImport]")
+{
+    Fixture f;
+    f.result.unsupportedTypes["Ellipse"] = 3;
+    CHECK(contains(f.text(), "3 annotations of type \"Ellipse\" \xE2\x80\x94 skipped (the viewer has no such shape)"));
+    f.result.unsupportedTypes["Ellipse"] = 1;
+    CHECK(contains(f.text(), "1 annotation of type \"Ellipse\" \xE2\x80\x94 skipped (the viewer has no such shape)"));
+}
+
 TEST_CASE("shapes outside the scene are warned about", "[ui][GeoJsonImport]")
 {
     Fixture f;

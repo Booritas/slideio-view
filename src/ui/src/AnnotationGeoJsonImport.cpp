@@ -64,6 +64,15 @@ QString geoJsonImportSummary(const GeoJsonImportSummaryInput& input)
                          "%1 objects of type \"%2\" \xE2\x80\x94 skipped (only annotations are imported).")
                      .arg(QString::fromStdString(kind));
     }
+    for (const auto& [type, count] : result.unsupportedTypes) {
+        lines << counted(count, "%1 annotation of type \"%2\" \xE2\x80\x94 skipped (the viewer has no such shape).",
+                         "%1 annotations of type \"%2\" \xE2\x80\x94 skipped (the viewer has no such shape).")
+                     .arg(QString::fromStdString(type));
+    }
+    // Imported, not skipped: said so that nobody takes a smooth ASAP curve's
+    // polygon for the curve itself.
+    addSkipped(lines, result.splinesApproximated, "%1 spline imported as a polygon through its control points.",
+               "%1 splines imported as polygons through their control points.");
     addSkipped(lines, result.nestedObjects, "%1 nested object \xE2\x80\x94 skipped.",
                "%1 nested objects \xE2\x80\x94 skipped.");
     addSkipped(lines, result.withHoles, "%1 polygon with holes \xE2\x80\x94 skipped.",
