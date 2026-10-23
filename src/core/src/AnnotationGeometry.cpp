@@ -272,6 +272,11 @@ RectF normalized(const ArrowGeometry& arrow)
     return normalizedCorners(arrow.tail, arrow.head);
 }
 
+RectF normalized(const TextGeometry& text)
+{
+    return RectF{text.anchor.x, text.anchor.y, 0.0, 0.0};
+}
+
 bool hitTestShape(const PointGeometry& marker, PointF point, double tolerance)
 {
     return std::hypot(point.x - marker.position.x, point.y - marker.position.y) <= tolerance;
@@ -289,6 +294,13 @@ bool hitTestShape(const ArrowGeometry& arrow, PointF point, double tolerance)
     return distanceToSegment(arrow.tail, arrow.head, point) <= tolerance;
 }
 
+// The anchor only. The words are hit in the ui, which knows the font: their
+// extent is in screen pixels and core has no font metrics.
+bool hitTestShape(const TextGeometry& text, PointF point, double tolerance)
+{
+    return std::hypot(point.x - text.anchor.x, point.y - text.anchor.y) <= tolerance;
+}
+
 AnnotationType typeOfShape(const PointGeometry&)
 {
     return AnnotationType::Point;
@@ -297,6 +309,11 @@ AnnotationType typeOfShape(const PointGeometry&)
 AnnotationType typeOfShape(const ArrowGeometry&)
 {
     return AnnotationType::Arrow;
+}
+
+AnnotationType typeOfShape(const TextGeometry&)
+{
+    return AnnotationType::Text;
 }
 
 // One point, open. measure() reads this and reports length 0 with no area,
@@ -314,6 +331,12 @@ Outline outlineShape(const ArrowGeometry& arrow)
     return Outline{{arrow.tail, arrow.head}, false};
 }
 
+// The anchor, open: like a marker, a text has nothing to measure.
+Outline outlineShape(const TextGeometry& text)
+{
+    return Outline{{text.anchor}, false};
+}
+
 AnnotationGeometry translatedShape(const PointGeometry& marker, double dx, double dy)
 {
     return PointGeometry{PointF{marker.position.x + dx, marker.position.y + dy}};
@@ -325,6 +348,11 @@ AnnotationGeometry translatedShape(const ArrowGeometry& arrow, double dx, double
                          PointF{arrow.head.x + dx, arrow.head.y + dy}};
 }
 
+AnnotationGeometry translatedShape(const TextGeometry& text, double dx, double dy)
+{
+    return TextGeometry{PointF{text.anchor.x + dx, text.anchor.y + dy}};
+}
+
 // Neither has an area at all. The predicate promises that a TYPE always has a
 // well-defined area, and "none" is not a value measure() can stand behind.
 bool wellDefinedArea(const PointGeometry&)
@@ -333,6 +361,11 @@ bool wellDefinedArea(const PointGeometry&)
 }
 
 bool wellDefinedArea(const ArrowGeometry&)
+{
+    return false;
+}
+
+bool wellDefinedArea(const TextGeometry&)
 {
     return false;
 }

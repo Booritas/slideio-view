@@ -38,6 +38,14 @@ std::optional<ScreenDecoration> decorationFor(const PointGeometry& marker, doubl
                             std::max(0.0, discRadiusScreenPixels)};
 }
 
+// The marker's disc at half its radius: it shows where the words are pinned
+// without competing with them, and it is what keeps a text with no words
+// visible and selectable.
+std::optional<ScreenDecoration> decorationFor(const TextGeometry& text, double, double discRadiusScreenPixels)
+{
+    return ScreenDecoration{ScreenDecoration::Kind::Disc, text.anchor, std::max(0.0, discRadiusScreenPixels) / 2.0};
+}
+
 std::optional<ScreenDecoration> decorationFor(const ArrowGeometry& arrow, double viewportScale,
                                               double)
 {

@@ -40,6 +40,11 @@ QString arrowName()
     return QCoreApplication::translate("AnnotationShapeName", "Arrow");
 }
 
+QString textName()
+{
+    return QCoreApplication::translate("AnnotationShapeName", "Text");
+}
+
 struct ShapeNameVisitor
 {
     QString operator()(const core::RectangleGeometry&) const
@@ -68,6 +73,11 @@ struct ShapeNameVisitor
     {
         return arrowName();
     }
+
+    QString operator()(const core::TextGeometry&) const
+    {
+        return textName();
+    }
 };
 
 } // namespace
@@ -92,6 +102,8 @@ QString shapeTypeName(core::AnnotationType type)
         return pointName();
     case core::AnnotationType::Arrow:
         return arrowName();
+    case core::AnnotationType::Text:
+        return textName();
     }
     return QString();
 }

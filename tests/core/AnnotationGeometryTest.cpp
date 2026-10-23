@@ -583,3 +583,30 @@ TEST_CASE("neither a point nor an arrow has a well-defined area",
     REQUIRE_FALSE(hasWellDefinedArea(pointGeom(1.0, 2.0)));
     REQUIRE_FALSE(hasWellDefinedArea(arrowGeom(1.0, 2.0, 3.0, 4.0)));
 }
+
+TEST_CASE("a text is a point of anchor with no extent", "[core][AnnotationGeometry][Text]")
+{
+    const AnnotationGeometry text = TextGeometry{PointF{5.0, 6.0}};
+    REQUIRE(typeOf(text) == AnnotationType::Text);
+
+    const Outline shape = outline(text);
+    REQUIRE(shape.points.size() == 1);
+    CHECK(shape.points[0].x == 5.0);
+    CHECK(shape.points[0].y == 6.0);
+    CHECK_FALSE(shape.closed);
+
+    const RectF box = boundingBox(text);
+    CHECK(box.x == 5.0);
+    CHECK(box.y == 6.0);
+    CHECK(box.width == 0.0);
+    CHECK(box.height == 0.0);
+
+    const AnnotationGeometry moved = translated(text, 2.0, 3.0);
+    REQUIRE(std::holds_alternative<TextGeometry>(moved));
+    CHECK(std::get<TextGeometry>(moved).anchor.x == 7.0);
+    CHECK(std::get<TextGeometry>(moved).anchor.y == 9.0);
+
+    CHECK_FALSE(hasWellDefinedArea(text));
+    CHECK(hitTest(text, PointF{5.5, 6.0}, 1.0));
+    CHECK_FALSE(hitTest(text, PointF{8.0, 6.0}, 1.0));
+}

@@ -773,3 +773,26 @@ TEST_CASE("benchmark: reading a large GeoJSON file", "[.benchmark]")
                  << result.annotations.size() << " annotations, " << skipped << " skipped by type");
     CHECK(result.error.empty());
 }
+
+TEST_CASE("a text goes to GeoJSON as a named Point and comes back as text", "[core][GeoJsonImport]")
+{
+    AnnotationProperties properties;
+    properties.label = "Invasive, \"re-cut\" \\ \xCE\x9D\xCE\xAD\xCE\xBA\xCF\x81\xCF\x89\xCF\x83\xCE\xB7";
+    const std::vector<Annotation> original = {
+        Annotation("t1", TextGeometry{PointF{12.5, 40.0}}, properties, AnnotationMetadata{}),
+        Annotation("p1", PointGeometry{PointF{1.0, 2.0}}),
+    };
+    const GeoJsonExportResult exported = annotationsToGeoJson(original, GeoJsonExportContext{}, kImportedAt);
+    REQUIRE(exported.error.empty());
+    CHECK(exported.text.find("\"type\":\"Point\",\"coordinates\":[12.5,40.0]") != std::string::npos);
+    CHECK(exported.text.find("\"type\":\"text\"") != std::string::npos);
+
+    const AnnotationImportResult imported = readOk(exported.text);
+    REQUIRE(imported.annotations.size() == 2);
+    const Annotation& text = imported.annotations[0];
+    REQUIRE(text.type() == AnnotationType::Text);
+    CHECK(std::get<TextGeometry>(text.geometry()).anchor.x == 12.5);
+    CHECK(std::get<TextGeometry>(text.geometry()).anchor.y == 40.0);
+    CHECK(text.properties().label == properties.label);
+    CHECK(imported.annotations[1].type() == AnnotationType::Point);
+}

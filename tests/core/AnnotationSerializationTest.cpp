@@ -4,6 +4,7 @@
 #include "slideio/viewer/core/Iso8601.h"
 
 #include <chrono>
+#include <cmath>
 #include <limits>
 #include <string>
 #include <variant>
@@ -1103,4 +1104,39 @@ TEST_CASE("adding the point and arrow types does not bump schemaVersion",
     const ParseResult result = parseAnnotationDocument(serializeAnnotationDocument(document));
     REQUIRE(result.error == ParseError::None);
     REQUIRE(result.document.schemaVersion == 1);
+}
+
+// readGeometry is a string chain with no compile-time link to the variant.
+// Nothing in the compiler forces its text branch to exist -- this test is
+// what forces it. Without the branch the application writes files it then
+// refuses to open.
+TEST_CASE("a text round-trips through JSON with its words", "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document = makeDocument();
+    document.annotations.clear();
+    AnnotationProperties properties;
+    properties.label = "\xCE\x9D\xCE\xAD\xCE\xBA\xCF\x81\xCF\x89\xCF\x83\xCE\xB7, \"re-cut\" \\ ok";
+    document.annotations.emplace_back("t1", TextGeometry{PointF{1200.5, 800.25}}, properties,
+                                      AnnotationMetadata{});
+
+    const std::string json = serializeAnnotationDocument(document);
+    REQUIRE(json.find("\"text\"") != std::string::npos);
+    const ParseResult result = parseAnnotationDocument(json);
+
+    REQUIRE(result.error == ParseError::None);
+    REQUIRE(result.document.annotations.size() == 1);
+    const Annotation& text = result.document.annotations.front();
+    REQUIRE(text.type() == AnnotationType::Text);
+    const auto& geometry = std::get<TextGeometry>(text.geometry());
+    CHECK(geometry.anchor.x == 1200.5);
+    CHECK(geometry.anchor.y == 800.25);
+    CHECK(text.properties().label == properties.label);
+}
+
+TEST_CASE("a text with a non-finite anchor is refused", "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document = makeDocument();
+    document.annotations.clear();
+    document.annotations.emplace_back("t1", TextGeometry{PointF{std::nan(""), 1.0}});
+    REQUIRE(serializeAnnotationDocument(document).empty());
 }

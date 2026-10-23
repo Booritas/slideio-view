@@ -359,3 +359,8 @@ TEST_CASE("nearestBoxHandle refuses a non-finite point", "[core][BoxResize]")
     REQUIRE_FALSE(nearestBoxHandle(box(), PointF{60.0, nan}, 6.0).has_value());
     REQUIRE_FALSE(nearestBoxHandle(box(), PointF{nan, nan}, 6.0).has_value());
 }
+
+TEST_CASE("a text has no box to replace", "[core][BoxResize]")
+{
+    CHECK_FALSE(withBoxReplaced(TextGeometry{PointF{1.0, 1.0}}, RectF{0, 0, 10, 10}).has_value());
+}

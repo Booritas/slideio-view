@@ -93,6 +93,12 @@ struct GeometryVisitor
     {
         return json{{"type", "Point"}, {"coordinates", position(shape.position)}};
     }
+    json operator()(const TextGeometry& shape) const
+    {
+        // GeoJSON and QuPath have no text: a Point named with the words is the
+        // nearest, and it is where the note was. slideio.type keeps it a text.
+        return json{{"type", "Point"}, {"coordinates", position(shape.anchor)}};
+    }
     json operator()(const ArrowGeometry& shape) const
     {
         // Tail first, head second: the order is the arrow's direction, and it
@@ -491,6 +497,13 @@ std::optional<AnnotationGeometry> readExportedShape(const std::string& slideioTy
             return AnnotationGeometry{RectangleGeometry{topLeft, bottomRight}};
         }
         return AnnotationGeometry{EllipseGeometry{topLeft, bottomRight}};
+    }
+    if (type == "Point" && slideioType == "text") {
+        PointF anchor;
+        if (!readPosition(coordinates, anchor)) {
+            return std::nullopt;
+        }
+        return AnnotationGeometry{TextGeometry{anchor}};
     }
     if (type == "LineString" && slideioType == "arrow") {
         std::vector<PointF> points;

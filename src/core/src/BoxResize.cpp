@@ -86,6 +86,12 @@ std::optional<AnnotationGeometry> replaceBox(const ArrowGeometry&, const RectF&)
     return std::nullopt;
 }
 
+// A text is sized in screen pixels; there is no slide-space box to resize.
+std::optional<AnnotationGeometry> replaceBox(const TextGeometry&, const RectF&)
+{
+    return std::nullopt;
+}
+
 } // namespace
 
 RectF withBoxHandleAt(const RectF& box, BoxHandle handle, PointF position)

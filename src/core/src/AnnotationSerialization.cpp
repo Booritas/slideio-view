@@ -35,6 +35,7 @@ constexpr const char* kPolygonTypeName = "polygon";
 constexpr const char* kPolylineTypeName = "polyline";
 constexpr const char* kPointTypeName = "point";
 constexpr const char* kArrowTypeName = "arrow";
+constexpr const char* kTextTypeName = "text";
 
 bool isFinitePoint(const PointF& point)
 {
@@ -66,6 +67,11 @@ bool isRepresentableShape(const PointGeometry& marker)
 bool isRepresentableShape(const ArrowGeometry& arrow)
 {
     return isFinitePoint(arrow.tail) && isFinitePoint(arrow.head);
+}
+
+bool isRepresentableShape(const TextGeometry& text)
+{
+    return isFinitePoint(text.anchor);
 }
 
 bool isRepresentableShape(const PolygonGeometry& poly)
@@ -161,6 +167,16 @@ json shapeToJson(const ArrowGeometry& arrow)
     };
 }
 
+// The anchor only: the words are the annotation's label, written with every
+// other property.
+json shapeToJson(const TextGeometry& text)
+{
+    return json{
+        {"type", kTextTypeName},
+        {"anchor", pointToJson(text.anchor)},
+    };
+}
+
 /// The geometry "type" string for a polygon-shaped path. Shared by the geometry
 /// object and the annotation-level field, so the closed/open choice is made once.
 const char* polygonTypeName(const PolygonGeometry& poly)
@@ -202,6 +218,8 @@ const char* geometryTypeName(const AnnotationGeometry& geometry)
             return kPointTypeName;
         } else if constexpr (std::is_same_v<Shape, ArrowGeometry>) {
             return kArrowTypeName;
+        } else if constexpr (std::is_same_v<Shape, TextGeometry>) {
+            return kTextTypeName;
         } else {
             static_assert(sizeof(Shape) == 0, "A new geometry alternative needs its own type name here.");
         }
@@ -448,6 +466,17 @@ bool readArrow(const json& value, AnnotationGeometry& out, std::string& problem)
     return true;
 }
 
+bool readText(const json& value, AnnotationGeometry& out, std::string& problem)
+{
+    TextGeometry text;
+    if (!value.contains("anchor") || !readPoint(value.at("anchor"), text.anchor)) {
+        problem = "geometry.anchor is not a finite point";
+        return false;
+    }
+    out = text;
+    return true;
+}
+
 bool readPolygon(const json& value, bool closed, AnnotationGeometry& out, std::string& problem)
 {
     if (!value.contains("vertices") || !value.at("vertices").is_array()) {
@@ -506,6 +535,11 @@ bool readGeometry(const json& value, AnnotationGeometry& out, std::string& probl
     }
     if (type == kArrowTypeName) {
         return readArrow(value, out, problem);
+    }
+    // Written by hand: nothing in the compiler ties this chain to the variant,
+    // and without it the application would write text it then refuses to open.
+    if (type == kTextTypeName) {
+        return readText(value, out, problem);
     }
 
     // Naming the version is the whole value of this message: schemaVersion

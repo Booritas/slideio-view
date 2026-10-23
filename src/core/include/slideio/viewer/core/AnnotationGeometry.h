@@ -57,6 +57,20 @@ struct ArrowGeometry
     PointF head;
 };
 
+/// Words written on the slide (FR-ANN-10), anchored at a point in slide
+/// coordinates and drawn at a fixed screen size. The words themselves are the
+/// annotation's label, so the list, the properties panel, the file and every
+/// export already carry them; this holds only where they are.
+///
+/// A separate alternative rather than a PointGeometry with a flag: typeOf()
+/// derives the type from the alternative, so a text and a marker sharing one
+/// would be indistinguishable. Like a point it has no slide-space extent; the
+/// ui sizes and hit-tests its words in screen pixels.
+struct TextGeometry
+{
+    PointF anchor;
+};
+
 /// Named kind of a shape. Derived from the geometry rather than stored
 /// alongside it, so the two cannot disagree -- see typeOf() below.
 enum class AnnotationType
@@ -67,6 +81,7 @@ enum class AnnotationType
     Polyline,
     Point,
     Arrow,
+    Text,
 };
 
 /// A sequence of vertices, closed into a polygon (FR-ANN-03) or left open as a
@@ -108,7 +123,7 @@ constexpr std::size_t kEllipseOutlineVertices = 512;
 // alternative, and AnnotationSerialization.cpp relies on that when it builds a
 // placeholder Annotation to parse into.
 using AnnotationGeometry = std::variant<RectangleGeometry, PolygonGeometry, EllipseGeometry,
-                                        PointGeometry, ArrowGeometry>;
+                                        PointGeometry, ArrowGeometry, TextGeometry>;
 
 /// Always positive-extent: a shape built from an inverted drag is normalised.
 [[nodiscard]] RectF boundingBox(const AnnotationGeometry& geom);

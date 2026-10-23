@@ -3,6 +3,7 @@
 #include "slideio/viewer/core/AnnotationDecoration.h"
 
 #include <cmath>
+#include <optional>
 #include <vector>
 
 using namespace slideio::viewer::core;
@@ -148,4 +149,15 @@ TEST_CASE("a negative disc radius clamps to zero",
         screenDecoration(PointGeometry{PointF{1.0, 2.0}}, 1.0, -4.0);
     REQUIRE(glyph.has_value());
     REQUIRE(glyph->sizePixels == 0.0);
+}
+
+TEST_CASE("a text's anchor is a disc at half the marker's radius", "[core][AnnotationDecoration]")
+{
+    const std::optional<ScreenDecoration> glyph =
+        screenDecoration(TextGeometry{PointF{3.0, 4.0}}, 1.0, 6.0);
+    REQUIRE(glyph.has_value());
+    CHECK(glyph->kind == ScreenDecoration::Kind::Disc);
+    CHECK(glyph->anchor.x == 3.0);
+    CHECK(glyph->anchor.y == 4.0);
+    CHECK(glyph->sizePixels == 3.0);
 }
