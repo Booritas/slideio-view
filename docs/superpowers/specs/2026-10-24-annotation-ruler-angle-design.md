@@ -197,17 +197,19 @@ Written before the run.
 
 | | Check | Result |
 |---|---|---|
-| AL1 | `L` selects the Ruler, `G` the Angle; both disabled on a read-only slide. | |
-| AL2 | Drag a ruler across a gland: the length is on the slide beside the line, matches the panel's Length and the CSV `length_um`. | |
-| AL3 | With a manual calibration the label reads "(manual)"; on an uncalibrated slide it reads px with a warning icon. Changing the calibration updates the label at once. | |
-| AL4 | Zoom 1× to 40×: the label stays the same size on screen, beside the line, never on it. | |
-| AL5 | Draw an angle by press-drag-release then click: the live angle shows while choosing the second ray; the committed value matches the panel's Angle and the CSV `angle_deg`. | |
-| AL6 | A right angle drawn along the slide's axes reads 90.0°; on a slide calibrated 1 × 2 µm/px a 45° pixel angle reads about 63.4°. | |
-| AL7 | Escape, a tool change and Ctrl+Z each end a pending angle without creating one; a lone click with either tool creates nothing. | |
-| AL8 | Undo removes a ruler or angle in one step; redo restores it; move and delete work. | |
-| AL9 | A ruler and an angle classified Tumor do not change the Tumor count, in the strip or the counts export. | |
-| AL10 | GeoJSON export carries both with their `slideio.type`; importing that file into an empty scene brings back a ruler and an angle. | |
-| AL11 | A pre-change build refuses a file holding a ruler, naming `ruler`, and leaves it byte for byte. | |
+| AL1 | `L` selects the Ruler, `G` the Angle; both disabled on a read-only slide. | **Pass.** `L` drew a ruler and `G` an angle; on a second, read-only window on CMU Tools > Ruler and Angle were disabled, on the first enabled. |
+| AL2 | Drag a ruler across a gland: the length is on the slide beside the line, matches the panel's Length and the CSV `length_um`. | **Pass.** On the slide "230 µm"; the panel 230 µm; the CSV `length_um` 229.64 (460.19 px at 0.499 µm/px). |
+| AL3 | With a manual calibration the label reads "(manual)"; on an uncalibrated slide it reads px with a warning icon. Changing the calibration updates the label at once. | **Pass.** At a manual 0.5 µm/px the label changed at once to "230 µm (manual)"; on CMU-1-Small-Region-page-2.tif (no calibration) a ruler read "72 px" with the warning icon. |
+| AL4 | Zoom 1× to 40×: the label stays the same size on screen, beside the line, never on it. | **Pass.** Zoomed five wheel notches in and back at the ruler: the label kept its size, beside the line ("486 µm (manual)" at 1 × 2 µm/px). |
+| AL5 | Draw an angle by press-drag-release then click: the live angle shows while choosing the second ray; the committed value matches the panel's Angle and the CSV `angle_deg`. | **Pass.** The live label showed while the second ray followed the cursor; committed, the label, the panel's Angle row and the CSV `angle_deg` agreed. |
+| AL6 | A right angle drawn along the slide's axes reads 90.0°; on a slide calibrated 1 × 2 µm/px a 45° pixel angle reads about 63.4°. | **Pass.** A right angle along the axes read "90.0°" (the smoke run); at 1 × 2 µm/px a 45° pixel angle read 63.4° on the slide and in the panel, and 63.43494882 in the CSV. |
+| AL7 | Escape, a tool change and Ctrl+Z each end a pending angle without creating one; a lone click with either tool creates nothing. | **Pass.** Escape, a tool change (`R`) and Ctrl+Z each ended a pending angle; a lone click with each tool, and two lone clicks with the Angle, created nothing — the scene stayed at 2 new shapes. |
+| AL8 | Undo removes a ruler or angle in one step; redo restores it; move and delete work. | **Pass.** Undo removed the angle, redo restored it; a drag moved the ruler (824.6, 2017.1 → 1050.2, 2242.7) and undo put it back; Delete removed it and undo restored it. |
+| AL9 | A ruler and an angle classified Tumor do not change the Tumor count, in the strip or the counts export. | **Pass.** Both classified Tumor (set in the file with the viewer closed, as in AK10): Export Counts read Tumor 0, Unclassified 3. |
+| AL10 | GeoJSON export carries both with their `slideio.type`; importing that file into an empty scene brings back a ruler and an angle. | **Pass.** The GeoJSON carried a 2-position LineString tagged `ruler` and a 3-position one tagged `angle`; imported into CMU-1-Small-Region-page-2.tif they came back as a ruler and an angle. |
+| AL11 | A pre-change build refuses a file holding a ruler, naming `ruler`, and leaves it byte for byte. | **Pass.** The build from before Task 4 (`D:	mppre-ruler-viewer`) refused with "unknown geometry type 'ruler' -- this file may have been written by a newer version of the viewer"; the file's hash was unchanged. |
+
+Run 2026-10-24 against `229334e` on the main monitor, **11 of 11 pass**; CMU's annotation file was restored from its backup and the CMU calibration override set for AL3/AL6 removed.
 
 ## 10. Left to the builder
 
