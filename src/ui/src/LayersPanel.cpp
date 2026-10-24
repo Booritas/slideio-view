@@ -272,9 +272,11 @@ void LayersPanel::rebuild()
         slider->setValue(static_cast<int>(row.opacity * 100.0 + 0.5));
         slider->setEnabled(m_impl->editingAllowed);
         const std::string id = row.id;
-        // Applied on release, not on every step: each setLayers repaints and
-        // marks the scene dirty.
-        connect(slider, &QSlider::sliderReleased, this, [this, slider, id]() {
+        // Applied once per gesture, not on every step of a drag -- each
+        // setLayers repaints and marks the scene dirty: on release after a
+        // drag, and at once for a click on the track, the keyboard or the
+        // wheel, which change the value without any release.
+        const auto apply = [this, slider, id]() {
             std::vector<core::AnnotationLayer> layers = m_impl->model->layers();
             for (core::AnnotationLayer& layer : layers) {
                 if (layer.id == id) {
@@ -282,6 +284,12 @@ void LayersPanel::rebuild()
                 }
             }
             m_impl->model->setLayers(std::move(layers));
+        };
+        connect(slider, &QSlider::sliderReleased, this, apply);
+        connect(slider, &QSlider::valueChanged, this, [slider, apply](int) {
+            if (!slider->isSliderDown()) {
+                apply();
+            }
         });
         m_impl->tree->setItemWidget(item, OpacityColumn, slider);
     }
