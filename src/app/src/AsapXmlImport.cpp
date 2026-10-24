@@ -174,7 +174,13 @@ std::vector<core::AnnotationGeometry> shapesOf(Kind kind, std::vector<core::Poin
         }
         break;
     case Kind::Measurement:
-        if (vertices.size() >= core::kMinPolylineVertices && core::hasFiniteExtent(vertices)) {
+        // ASAP's Measurement is ASAP's ruler: two points is what its tool
+        // draws. Any other count is not a ruler and stays the line it is. The
+        // seed is built from the ASAP type, not from this choice, so one
+        // imported as a line before keeps its id.
+        if (vertices.size() == 2 && core::hasFiniteExtent(vertices)) {
+            shapes.emplace_back(core::RulerGeometry{vertices[0], vertices[1]});
+        } else if (vertices.size() >= core::kMinPolylineVertices && core::hasFiniteExtent(vertices)) {
             shapes.emplace_back(core::PolygonGeometry{std::move(vertices), false});
         }
         break;

@@ -124,11 +124,32 @@ TEST_CASE("each ASAP type maps as the spec's table says", "[app][AsapXmlImport]"
     CHECK(splinePolygon->vertices.size() == 6);
     CHECK(spline.splinesApproximated == 1);
 
-    const auto ruler =
-        shapeOf<core::PolygonGeometry>(only(annotation("Measurement", {{"0", "0"}, {"30", "40"}})));
+    // ASAP's Measurement is ASAP's ruler.
+    const auto ruler = shapeOf<core::RulerGeometry>(only(annotation("Measurement", {{"0", "0"}, {"30", "40"}})));
     REQUIRE(ruler.has_value());
-    CHECK_FALSE(ruler->closed);
-    CHECK(ruler->vertices.size() == 2);
+    CHECK(ruler->start.x == 0.0);
+    CHECK(ruler->end.x == 30.0);
+    CHECK(ruler->end.y == 40.0);
+}
+
+TEST_CASE("a Measurement with more than two points stays a line", "[app][AsapXmlImport]")
+{
+    const auto line =
+        shapeOf<core::PolygonGeometry>(only(annotation("Measurement", {{"0", "0"}, {"30", "40"}, {"60", "0"}})));
+    REQUIRE(line.has_value());
+    CHECK_FALSE(line->closed);
+    CHECK(line->vertices.size() == 3);
+}
+
+TEST_CASE("a Measurement's seed does not depend on what it imports as", "[app][AsapXmlImport]")
+{
+    // Taken from the build before two-point Measurements became rulers: an
+    // annotation imported then keeps its id, so a re-import skips it rather
+    // than adding a ruler beside the old line.
+    const core::AnnotationImportResult result = readOk(asap(annotation("Measurement", {{"0", "0"}, {"30", "40"}})));
+    REQUIRE(result.idSeeds.size() == 1);
+    // The SHA-1 of the content, a unit separator, then the repeat index.
+    CHECK(result.idSeeds[0] == std::string("731715ece351f7f034a46999e589c1798d5f6f8f") + '\x1F' + "0");
 }
 
 TEST_CASE("coordinates follow Order, or document order without it", "[app][AsapXmlImport]")
