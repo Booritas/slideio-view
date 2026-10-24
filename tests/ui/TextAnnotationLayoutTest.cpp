@@ -47,3 +47,17 @@ TEST_CASE("the later of two hits is the one a click selects", "[ui][TextAnnotati
     CHECK(topmostOf("polygon", "", annotations) == "polygon");
     CHECK(topmostOf("", "", annotations).empty());
 }
+
+TEST_CASE("every focus loss but a popup commits the words", "[ui][TextAnnotationLayout]")
+{
+    // Qt 6 emits editingFinished on focus loss only when the text was edited,
+    // so a text opened for editing and left untouched has to be closed here.
+    CHECK(textEditorCommitsOnFocusOut(Qt::MouseFocusReason));
+    CHECK(textEditorCommitsOnFocusOut(Qt::TabFocusReason));
+    CHECK(textEditorCommitsOnFocusOut(Qt::BacktabFocusReason));
+    CHECK(textEditorCommitsOnFocusOut(Qt::ActiveWindowFocusReason));
+    CHECK(textEditorCommitsOnFocusOut(Qt::ShortcutFocusReason));
+    CHECK(textEditorCommitsOnFocusOut(Qt::OtherFocusReason));
+    // A menu or the editor's own context menu: the user is still typing.
+    CHECK_FALSE(textEditorCommitsOnFocusOut(Qt::PopupFocusReason));
+}

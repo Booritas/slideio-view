@@ -25,4 +25,9 @@ std::string topmostOf(const std::string& geometricHit, const std::string& textHi
     return geometricHit;
 }
 
+bool textEditorCommitsOnFocusOut(Qt::FocusReason reason)
+{
+    return reason != Qt::PopupFocusReason;
+}
+
 } // namespace slideio::viewer::ui

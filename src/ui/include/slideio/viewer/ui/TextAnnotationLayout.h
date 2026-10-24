@@ -2,6 +2,7 @@
 
 #include "slideio/viewer/core/Annotation.h"
 
+#include <QtCore/qnamespace.h>
 #include <QPointF>
 #include <QRectF>
 
@@ -38,5 +39,14 @@ inline constexpr double kTextPlatePaddingScreenPixels = 3.0;
 /// paint order -- the one drawn on top. Either may be empty.
 [[nodiscard]] std::string topmostOf(const std::string& geometricHit, const std::string& textHit,
                                     const std::vector<core::Annotation>& annotations);
+
+/// Whether the text editor losing focus for `reason` commits its words.
+///
+/// Every reason but a popup: a menu or the editor's own context menu opening
+/// is the user still at work. Asked from the editor's own FocusOut rather than
+/// left to QLineEdit::editingFinished, which Qt 6 emits on focus loss only
+/// when the text was edited -- a text opened by double-click and left
+/// untouched would otherwise stay open over a slide the user had moved on from.
+[[nodiscard]] bool textEditorCommitsOnFocusOut(Qt::FocusReason reason);
 
 } // namespace slideio::viewer::ui

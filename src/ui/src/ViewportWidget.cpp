@@ -2247,6 +2247,30 @@ ViewportWidget::ViewportWidget(app::AnnotationModel& model, QWidget* parent)
                     endVertexEditing();
                 }
             });
+    // An editor whose annotation has gone -- deleted from the list panel, or
+    // the model emptied -- has nothing left to commit to, and left open it
+    // would show words over a spot where nothing is stored any more.
+    const auto dropTextEditor = [this]() {
+        if (!m_impl->textEditorOpen) {
+            return;
+        }
+        m_impl->textEditorOpen = false;
+        m_impl->textEditingId.clear();
+        const bool editorHadFocus = m_impl->textEditor->hasFocus();
+        m_impl->textEditor->hide();
+        if (editorHadFocus) {
+            setFocus();
+        }
+        update();
+    };
+    connect(m_impl->annotations, &app::AnnotationModel::annotationRemoved, this,
+            [this, dropTextEditor](const std::string& id) {
+                if (!m_impl->textEditingId.empty() && id == m_impl->textEditingId) {
+                    dropTextEditor();
+                }
+            });
+    connect(m_impl->annotations, &app::AnnotationModel::cleared, this, dropTextEditor);
+    connect(m_impl->annotations, &app::AnnotationModel::modelReset, this, dropTextEditor);
     connect(m_impl->annotations, &app::AnnotationModel::cleared, this,
             repaintOnModelChange);
     connect(m_impl->annotations, &app::AnnotationModel::modelReset, this,
@@ -3407,8 +3431,15 @@ void ViewportWidget::finishTextEditor(bool commit)
     m_impl->textEditorOpen = false;
     const std::string words = m_impl->textEditor->text().trimmed().toStdString();
     const std::string id = std::exchange(m_impl->textEditingId, std::string());
+    // Focus comes back to the viewport only when the editor still holds it --
+    // Enter, Escape, a tool shortcut. On a focus loss Qt has already handed it
+    // to the widget the user clicked, and taking it back would send what they
+    // type there to the viewport's bare-letter tool shortcuts and Delete.
+    const bool editorHadFocus = m_impl->textEditor->hasFocus();
     m_impl->textEditor->hide();
-    setFocus();
+    if (editorHadFocus) {
+        setFocus();
+    }
     update();
 
     // Empty words commit nothing: a new text is not created, and an existing
@@ -3457,6 +3488,12 @@ bool ViewportWidget::eventFilter(QObject* watched, QEvent* event)
         && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
         finishTextEditor(false);
         return true;
+    }
+    // Not left to editingFinished alone: Qt 6 emits it on focus loss only
+    // when the text was edited. Not consumed, so QLineEdit still sees it.
+    if (watched == m_impl->textEditor && event->type() == QEvent::FocusOut
+        && textEditorCommitsOnFocusOut(static_cast<QFocusEvent*>(event)->reason())) {
+        finishTextEditor(true);
     }
     return QOpenGLWidget::eventFilter(watched, event);
 }
