@@ -54,6 +54,10 @@ void StatusBarManager::setup(QStatusBar* statusBar)
     m_annotationsLabel->setVisible(false);
     m_statusBar->addPermanentWidget(m_annotationsLabel);
 
+    m_layerLabel = new QLabel(QString(), m_statusBar);
+    m_layerLabel->setVisible(false);
+    m_statusBar->addPermanentWidget(m_layerLabel);
+
     m_colorLabel = new QLabel(QString(), m_statusBar);
     m_colorLabel->setVisible(false);
     m_statusBar->addPermanentWidget(m_colorLabel);
@@ -127,6 +131,15 @@ void StatusBarManager::setAnnotationsBlocked(bool blocked, const QString& reason
     // behind to describe a slide that is no longer open.
     m_annotationsLabel->setToolTip(blocked ? reason : QString());
     m_annotationsLabel->setVisible(blocked);
+}
+
+void StatusBarManager::setActiveLayerName(const QString& name)
+{
+    if (m_layerLabel == nullptr) {
+        return;
+    }
+    m_layerLabel->setText(tr("Layer: %1").arg(name));
+    m_layerLabel->setVisible(!name.isEmpty());
 }
 
 void StatusBarManager::showTransientMessage(const QString& text)

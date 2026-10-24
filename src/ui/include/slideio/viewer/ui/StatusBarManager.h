@@ -32,6 +32,9 @@ public:
     /// is transient. `reason` is ignored when `blocked` is false.
     void setAnnotationsBlocked(bool blocked, const QString& reason);
 
+    /// "Layer: <name>" -- where the next annotation goes. Empty hides it.
+    void setActiveLayerName(const QString& name);
+
     /// Shows `text` in the status bar's left area for a few seconds. The
     /// permanent indicators are unaffected.
     void showTransientMessage(const QString& text);
@@ -41,6 +44,7 @@ private:
     QLabel* m_cursorLabel;
     QLabel* m_magnificationLabel;
     QLabel* m_annotationsLabel;
+    QLabel* m_layerLabel = nullptr;
     QLabel* m_colorLabel;
     QProgressBar* m_loadingIndicator;
 };

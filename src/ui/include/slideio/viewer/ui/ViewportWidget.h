@@ -271,6 +271,13 @@ private:
     /// fills and annotationAt tests. Empty for anything that is not a text.
     [[nodiscard]] QRectF textPlateFor(const core::Annotation& annotation) const;
 
+    /// Why the annotation `id` may not change: "Layer <name> is locked", or
+    /// empty. Every edit entry point asks it beside annotationsEditable().
+    [[nodiscard]] QString lockRefusal(const std::string& id) const;
+    /// Why nothing may be created right now: the active layer is hidden or
+    /// locked. Empty when it is open.
+    [[nodiscard]] QString activeLayerRefusal() const;
+
     /// Opens the inline editor at `anchor`: for a new text when `id` is empty,
     /// over that text otherwise. Commits any editor already open first.
     void openTextEditor(core::PointF anchor, const std::string& id, const QString& words);

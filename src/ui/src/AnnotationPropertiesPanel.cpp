@@ -249,6 +249,8 @@ void AnnotationPropertiesPanel::setAnnotationModel(app::AnnotationModel* model)
         // annotation still exists and no geometry moved -- so this is an ordinary refresh,
         // and a field the user has focus in stays theirs.
         connect(m_impl->model, &app::AnnotationModel::annotationsBulkChanged, this, refresh);
+        // Locking the shown annotation's layer disables its fields at once.
+        connect(m_impl->model, &app::AnnotationModel::layersChanged, this, refresh);
         connect(m_impl->model, &app::AnnotationModel::selectionChanged, this, [this](const std::string& id) {
             // Commit first: Qt does not guarantee focus-out reaches the field
             // before the new selection arrives, and a label typed and then
@@ -473,7 +475,10 @@ void AnnotationPropertiesPanel::repopulate(bool force)
         return;
     }
 
-    setFieldsEnabled(true);
+    // An annotation on a locked layer is shown, never changed (FR-ANN-23).
+    const core::AnnotationLayer* layer =
+        core::findLayer(m_impl->model->layers(), core::effectiveLayerId(*annotation, m_impl->model->layers()));
+    setFieldsEnabled(layer == nullptr || !layer->locked);
     m_impl->shownId = annotation->id();
 
     const core::AnnotationProperties& properties = annotation->properties();

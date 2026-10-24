@@ -40,6 +40,8 @@
 #include "slideio/viewer/ui/CalibrationDialog.h"
 #include "slideio/viewer/ui/SlideProfilesDialog.h"
 #include "slideio/viewer/ui/WorkspaceChangeDialog.h"
+#include "slideio/viewer/ui/LayersPanel.h"
+#include "slideio/viewer/ui/LayersPanelPolicy.h"
 #include "slideio/viewer/ui/MetadataPanel.h"
 #include "slideio/viewer/ui/MinimapWidget.h"
 #include "slideio/viewer/ui/PreferencesDialog.h"
@@ -226,6 +228,7 @@ struct MainWindow::Impl
     MetadataPanel* metadataPanel = nullptr;
     AnnotationListPanel* annotationListPanel = nullptr;
     AnnotationPropertiesPanel* annotationPropertiesPanel = nullptr;
+    LayersPanel* layersPanel = nullptr;
     LoadingOverlay* loadingOverlay = nullptr;
 
     // File path of the most recently opened slide. Used to detect intra-slide
@@ -256,6 +259,7 @@ struct MainWindow::Impl
     QAction* metadataToggleAction = nullptr;
     QAction* annotationListToggleAction = nullptr;
     QAction* annotationPropertiesToggleAction = nullptr;
+    QAction* layersToggleAction = nullptr;
     QAction* colorManagementAction = nullptr;
     QAction* setDefaultProfileAction = nullptr;
     QAction* clearDefaultProfileAction = nullptr;
@@ -378,6 +382,11 @@ struct MainWindow::Impl
     void refreshCalibration(CalibrationRefresh mode = CalibrationRefresh::Always);
     /// View > Calibration...: the dialog, the store, the log line.
     void editCalibration();
+    /// "Layer: <name>" for the active layer while a slide is open, else hidden.
+    void refreshActiveLayerLabel();
+    /// Move to Layer: refused on a read-only slide and when the annotation's
+    /// layer or the target is locked; otherwise one undo step.
+    void moveAnnotationToLayer(const std::string& id, const std::string& layerId);
     /// The one save-dialog-and-write every export uses: offers `suggestedName`
     /// in the annotation workspace, writes `contents` whole, and reports a
     /// failure with `failureText`, whose %1 is the path and %2 the reason.
@@ -682,6 +691,31 @@ struct MainWindow::Impl
         redoAction->setEnabled(false);
         editMenu->addAction(redoAction);
 
+        // Move the selected annotation to another layer -- the keyboard- and
+        // menu-reachable twin of the list's right-click menu. Rebuilt each
+        // time it opens, from the layers and the selection of that moment.
+        editMenu->addSeparator();
+        QMenu* moveMenu = editMenu->addMenu("Move to &Layer");
+        QObject::connect(moveMenu, &QMenu::aboutToShow, owner, [this, moveMenu]() {
+            moveMenu->clear();
+            const std::string id = annotations->selectedId();
+            const core::Annotation* selected = annotations->find(id);
+            if (selected == nullptr) {
+                moveMenu->addAction(tr("No annotation selected"))->setEnabled(false);
+                return;
+            }
+            const auto& layers = annotations->layers();
+            const std::string current = core::effectiveLayerId(*selected, layers);
+            for (auto it = layers.rbegin(); it != layers.rend(); ++it) {
+                if (it->id == current) {
+                    continue;
+                }
+                const std::string target = it->id;
+                QObject::connect(moveMenu->addAction(QString::fromStdString(it->name)), &QAction::triggered, owner,
+                                 [this, id, target]() { moveAnnotationToLayer(id, target); });
+            }
+        });
+
         QMenu* viewMenu = owner->menuBar()->addMenu("&View");
         // Qt does not render QAction tooltips inside a menu unless asked. The
         // Color Management item is disabled whenever colour management is
@@ -703,6 +737,7 @@ struct MainWindow::Impl
         viewMenu->addAction(metadataToggleAction);
         viewMenu->addAction(annotationListToggleAction);
         viewMenu->addAction(annotationPropertiesToggleAction);
+        viewMenu->addAction(layersToggleAction);
         viewMenu->addSeparator();
         viewMenu->addAction(colorManagementAction);
         viewMenu->addSeparator();
@@ -1111,6 +1146,7 @@ struct MainWindow::Impl
                 // included: an override is per scene, and the previous scene's
                 // must never be the one a measurement here is taken with.
                 refreshCalibration();
+                refreshActiveLayerLabel();
                 // An associated image has no annotations to measure, and its
                 // scene index does not name it, so it gets no override.
                 const bool calibratable =
@@ -1282,6 +1318,7 @@ struct MainWindow::Impl
             statusBarManager->updateMagnification(1.0, 0.0);
             zoomIndicatorWidget->clearCalibration();
             calibrationAction->setEnabled(false);
+            statusBarManager->setActiveLayerName(QString());
             channelMixerPanel->clearChannels();
             propertiesPanel->clear();
             metadataPanel->clear();
@@ -2072,6 +2109,12 @@ void MainWindow::Impl::applyAnnotationAvailability(bool available, const QString
     if (annotationListPanel != nullptr) {
         annotationListPanel->setCountingEnabled(available);
     }
+    // Visibility stays usable -- it is a view, and the persistence service is
+    // inactive here, so nothing it changes is written; every other layer
+    // control follows the tools.
+    if (layersPanel != nullptr) {
+        layersPanel->setEditingAllowed(available);
+    }
     // Mirror that disabled state somewhere the user can actually see it. A
     // disabled menu item renders identically to an enabled one, and the
     // transient message below is gone in four seconds -- so without this, a user
@@ -2251,6 +2294,40 @@ void MainWindow::Impl::refreshCalibration(CalibrationRefresh mode)
     }
 }
 
+void MainWindow::Impl::moveAnnotationToLayer(const std::string& id, const std::string& layerId)
+{
+    if (annotationPersistence == nullptr || !annotationPersistence->isActive() || undoStack == nullptr) {
+        statusBarManager->showTransientMessage(tr("These annotations are open read-only and cannot be changed"));
+        return;
+    }
+    const core::Annotation* annotation = annotations->find(id);
+    const auto& layers = annotations->layers();
+    const core::AnnotationLayer* target = core::findLayer(layers, layerId);
+    if (annotation == nullptr || target == nullptr) {
+        return;
+    }
+    // The source's lock forbids taking it off; the target's forbids putting
+    // it on. A HIDDEN target is allowed: moving the answers onto a hidden
+    // Teaching layer is exactly how a teacher hides them.
+    const core::AnnotationLayer* source = core::findLayer(layers, core::effectiveLayerId(*annotation, layers));
+    for (const core::AnnotationLayer* layer : {source, target}) {
+        if (layer != nullptr && layer->locked) {
+            statusBarManager->showTransientMessage(QString::fromStdString(layerRefusal(*layer)));
+            return;
+        }
+    }
+    undoStack->push(app::AnnotationRetagCommand::create(*annotations, annotations->moveToLayer({id}, layerId),
+                                                        "Move to " + target->name));
+}
+
+void MainWindow::Impl::refreshActiveLayerLabel()
+{
+    const core::AnnotationLayer* layer = core::findLayer(annotations->layers(), annotations->activeLayerId());
+    statusBarManager->setActiveLayerName(layer != nullptr && viewportWidget->isSlideOpen()
+                                             ? QString::fromStdString(layer->name)
+                                             : QString());
+}
+
 void MainWindow::Impl::editCalibration()
 {
     const std::string slideId = viewportWidget->currentSlideId();
@@ -2380,6 +2457,16 @@ void MainWindow::Impl::importAnnotations()
     if (!editable() || undoStack == nullptr) {
         return;
     }
+    // Imports go to the active layer, so they are refused where drawing is:
+    // on a hidden layer they would vanish on arrival, on a locked one they
+    // would be the change the lock forbids.
+    if (const core::AnnotationLayer* layer = core::findLayer(annotations->layers(), annotations->activeLayerId())) {
+        const std::string refusal = layerRefusal(*layer);
+        if (!refusal.empty()) {
+            QMessageBox::information(owner, tr("Import Annotations"), QString::fromStdString(refusal));
+            return;
+        }
+    }
 
     const QString title = tr("Import Annotations");
     const QString chosen = QFileDialog::getOpenFileName(
@@ -2474,6 +2561,9 @@ void MainWindow::Impl::importAnnotations()
     // annotationsBulkChanged -- one list rebuild, and the autosave the
     // persistence service already arms on that signal.
     const int count = static_cast<int>(plan.toAdd.size());
+    for (core::Annotation& annotation : plan.toAdd) {
+        annotation.setLayerId(annotations->activeLayerId());
+    }
     annotations->clearSelection();
     annotations->insertMany(plan.toAdd);
     const QString what = count == 1 ? tr("Import 1 annotation") : tr("Import %1 annotations").arg(count);
@@ -2623,6 +2713,12 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->annotationPropertiesPanel->setCategories(m_impl->categoryStore->categories());
     m_impl->annotationListPanel->setCategories(m_impl->categoryStore->categories());
 
+    // Layers dock (hidden by default), placed with the other annotation docks
+    // by saveState/restoreState through its objectName.
+    m_impl->layersPanel = new LayersPanel(this);
+    addDockWidget(Qt::RightDockWidgetArea, m_impl->layersPanel);
+    m_impl->layersPanel->hide();
+
     // Create actions and menus
     m_impl->createActions();
     m_impl->channelMixerToggleAction = m_impl->channelMixerPanel->toggleViewAction();
@@ -2662,6 +2758,10 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->annotationPropertiesToggleAction->setText("Annotation Prop&erties");
     m_impl->annotationPropertiesToggleAction->setShortcut(QKeySequence("Ctrl+Shift+E"));
     m_impl->annotationPropertiesToggleAction->setStatusTip("Toggle the annotation properties panel");
+    m_impl->layersToggleAction = m_impl->layersPanel->toggleViewAction();
+    m_impl->layersToggleAction->setText("La&yers");
+    m_impl->layersToggleAction->setShortcut(QKeySequence("Ctrl+Shift+Y"));
+    m_impl->layersToggleAction->setStatusTip("Toggle the annotation layers panel");
     m_impl->createMenus();
     m_impl->connectSignals();
 
@@ -2674,6 +2774,43 @@ MainWindow::MainWindow(QWidget* parent)
 
     m_impl->annotationListPanel->setAnnotationModel(m_impl->annotations.get());
     m_impl->annotationPropertiesPanel->setAnnotationModel(m_impl->annotations.get());
+    m_impl->layersPanel->setAnnotationModel(m_impl->annotations.get());
+
+    // The status bar names the active layer while a slide is open.
+    const auto showActiveLayer = [this]() { m_impl->refreshActiveLayerLabel(); };
+    for (auto signal : {&app::AnnotationModel::layersChanged, &app::AnnotationModel::modelReset,
+                        &app::AnnotationModel::cleared}) {
+        connect(m_impl->annotations.get(), signal, this, showActiveLayer);
+    }
+    connect(m_impl->annotations.get(), &app::AnnotationModel::activeLayerChanged, this, showActiveLayer);
+
+    // Merge moves annotations, so unlike every other layer control it is an
+    // undo step: one, however many it moves. The emptied source stays for
+    // the user to delete -- deleting it here would let an undo put the
+    // annotations back on a layer that no longer exists.
+    connect(m_impl->layersPanel, &LayersPanel::mergeRequested, this,
+            [this](const std::string& sourceId, const std::string& targetId) {
+                const auto& layers = m_impl->annotations->layers();
+                const core::AnnotationLayer* source = core::findLayer(layers, sourceId);
+                const core::AnnotationLayer* target = core::findLayer(layers, targetId);
+                if (source == nullptr || target == nullptr) {
+                    return;
+                }
+                if (source->locked || target->locked) {
+                    m_impl->statusBarManager->showTransientMessage(
+                        QString::fromStdString(layerRefusal(source->locked ? *source : *target)));
+                    return;
+                }
+                std::vector<std::string> ids;
+                for (const core::Annotation& annotation : m_impl->annotations->annotations()) {
+                    if (core::effectiveLayerId(annotation, layers) == sourceId) {
+                        ids.push_back(annotation.id());
+                    }
+                }
+                const std::string what = "Merge " + source->name + " into " + target->name;
+                m_impl->undoStack->push(app::AnnotationRetagCommand::create(
+                    *m_impl->annotations, m_impl->annotations->moveToLayer(ids, targetId), what));
+            });
 
     connect(m_impl->annotationPropertiesPanel, &AnnotationPropertiesPanel::propertiesCommitted, this,
             [this](const std::string& id, const core::AnnotationProperties& properties,
@@ -2840,6 +2977,10 @@ MainWindow::MainWindow(QWidget* parent)
                 m_impl->annotationPropertiesPanel->setCategories(stored);
             });
 
+    connect(m_impl->annotationListPanel, &AnnotationListPanel::moveToLayerRequested, this,
+            [this](const std::string& id, const std::string& layerId) {
+                m_impl->moveAnnotationToLayer(id, layerId);
+            });
     connect(m_impl->annotationListPanel, &AnnotationListPanel::deleteRequested, this,
             [this](const std::string& id) {
                 // Mirrors ViewportWidget's annotationsEditable(): a slide whose file could not be
@@ -2924,6 +3065,9 @@ MainWindow::~MainWindow()
 
     delete m_impl->annotationPropertiesPanel;
     m_impl->annotationPropertiesPanel = nullptr;
+
+    delete m_impl->layersPanel;
+    m_impl->layersPanel = nullptr;
 }
 
 void MainWindow::openSlide(const std::string& path, const std::string& driverId)

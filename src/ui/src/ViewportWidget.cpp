@@ -2,6 +2,7 @@
 #include "slideio/viewer/ui/PathDisplay.h"
 #include "slideio/viewer/ui/ViewportController.h"
 #include "slideio/viewer/ui/AnnotationShapeName.h"
+#include "slideio/viewer/ui/LayersPanelPolicy.h"
 #include "slideio/viewer/ui/MeasurementLabel.h"
 #include "slideio/viewer/ui/TextAnnotationLayout.h"
 
@@ -2286,6 +2287,37 @@ ViewportWidget::ViewportWidget(app::AnnotationModel& model, QWidget* parent)
                     dropTextEditor();
                 }
             });
+    // A layer hidden or locked under an annotation being worked on ends the
+    // work: a hidden one cannot stay selected (a selection names something
+    // shown), and a locked one cannot stay mid-edit.
+    connect(m_impl->annotations, &app::AnnotationModel::layersChanged, this, [this]() {
+        const auto layerOf = [this](const std::string& id) -> const core::AnnotationLayer* {
+            const core::Annotation* annotation = m_impl->annotations->find(id);
+            const auto& layers = m_impl->annotations->layers();
+            return annotation == nullptr ? nullptr
+                                         : core::findLayer(layers, core::effectiveLayerId(*annotation, layers));
+        };
+        const auto closed = [](const core::AnnotationLayer* layer) {
+            return layer != nullptr && (!layer->visible || layer->locked);
+        };
+        if (m_impl->textEditorOpen && !m_impl->textEditingId.empty() && closed(layerOf(m_impl->textEditingId))) {
+            finishTextEditor(true);
+        }
+        if (!m_impl->vertexEditId.empty() && closed(layerOf(m_impl->vertexEditId))) {
+            endVertexEditing();
+        }
+        if (m_impl->dragOwner == DragOwner::ResizeBox && closed(layerOf(m_impl->annotations->selectedId()))) {
+            recordBoxResize();
+            m_impl->dragOwner = DragOwner::None;
+            m_impl->dragButton = Qt::NoButton;
+        }
+        if (const core::AnnotationLayer* layer = layerOf(m_impl->annotations->selectedId());
+            layer != nullptr && !layer->visible) {
+            m_impl->annotations->clearSelection();
+        }
+        updateCursor();
+        update();
+    });
     connect(m_impl->annotations, &app::AnnotationModel::cleared, this, dropTextEditor);
     connect(m_impl->annotations, &app::AnnotationModel::modelReset, this, dropTextEditor);
     connect(m_impl->annotations, &app::AnnotationModel::cleared, this,
@@ -3410,16 +3442,27 @@ std::string ViewportWidget::annotationAt(QPointF screenPos) const
         screenToleranceToSlide(kHitToleranceScreenPixels, m_impl->controller->viewport().scale());
     const std::string geometric = m_impl->annotations->hitTest(core::PointF{slideX, slideY}, tolerance);
 
-    // Topmost first, as the geometric hit test searches.
-    const std::vector<core::Annotation>& annotations = m_impl->annotations->annotations();
+    // Topmost first, as the geometric hit test searches: reverse PAINT order
+    // (layers, then model order) and nothing on a hidden layer. topmostOf
+    // compares the two hits by position, so it is given the annotations in
+    // that same paint order.
+    const std::vector<core::Annotation>& model = m_impl->annotations->annotations();
+    const auto& layers = m_impl->annotations->layers();
+    std::vector<core::Annotation> painted;
+    for (const std::size_t index : core::paintOrder(model, layers)) {
+        const core::AnnotationLayer* layer = core::findLayer(layers, core::effectiveLayerId(model[index], layers));
+        if (layer == nullptr || layer->visible) {
+            painted.push_back(model[index]);
+        }
+    }
     std::string textHit;
-    for (auto it = annotations.rbegin(); it != annotations.rend(); ++it) {
+    for (auto it = painted.rbegin(); it != painted.rend(); ++it) {
         if (textPlateFor(*it).contains(screenPos)) {
             textHit = it->id();
             break;
         }
     }
-    return topmostOf(geometric, textHit, annotations);
+    return topmostOf(geometric, textHit, painted);
 }
 
 void ViewportWidget::openTextEditor(core::PointF anchor, const std::string& id, const QString& words)
@@ -3521,6 +3564,24 @@ void ViewportWidget::finishTextEditor(bool commit)
                                tr("Edit text").toStdString());
 }
 
+QString ViewportWidget::lockRefusal(const std::string& id) const
+{
+    const core::Annotation* annotation = m_impl->annotations->find(id);
+    if (annotation == nullptr) {
+        return {};
+    }
+    const auto& layers = m_impl->annotations->layers();
+    const core::AnnotationLayer* layer = core::findLayer(layers, core::effectiveLayerId(*annotation, layers));
+    return layer != nullptr && layer->locked ? QString::fromStdString(layerRefusal(*layer)) : QString();
+}
+
+QString ViewportWidget::activeLayerRefusal() const
+{
+    const core::AnnotationLayer* layer =
+        core::findLayer(m_impl->annotations->layers(), m_impl->annotations->activeLayerId());
+    return layer == nullptr ? QString() : QString::fromStdString(layerRefusal(*layer));
+}
+
 void ViewportWidget::setCalibration(const core::Calibration& calibration)
 {
     m_impl->calibration = calibration;
@@ -3555,6 +3616,11 @@ void ViewportWidget::deleteAnnotation(const std::string& id)
     }
     const core::Annotation* stored = m_impl->annotations->find(id);
     if (stored == nullptr) {
+        return;
+    }
+    // Every delete comes through here -- the Delete key and the list's menu.
+    if (const QString locked = lockRefusal(id); !locked.isEmpty()) {
+        emit annotationEditBlocked(locked);
         return;
     }
     if (m_impl->undoStack == nullptr) {
@@ -3814,7 +3880,21 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
 
     const QRect widgetRect = rect();
 
-    for (const core::Annotation& annotation : m_impl->annotations->annotations()) {
+    // Layers bottom to top, model order within a layer -- the order hitTest
+    // searches in reverse, so the shape painted on top is the one clicked.
+    // A hidden layer paints nothing; a faded one paints through the painter's
+    // opacity, which scales stroke, fill, plate and label alike and never
+    // touches the stored colour.
+    const std::vector<core::Annotation>& model = m_impl->annotations->annotations();
+    const std::vector<core::AnnotationLayer>& layers = m_impl->annotations->layers();
+    for (const std::size_t paintIndex : core::paintOrder(model, layers)) {
+        const core::Annotation& annotation = model[paintIndex];
+        const core::AnnotationLayer* paintLayer =
+            core::findLayer(layers, core::effectiveLayerId(annotation, layers));
+        if (paintLayer != nullptr && !paintLayer->visible) {
+            continue;
+        }
+        painter.setOpacity(paintLayer != nullptr ? paintLayer->opacity : 1.0);
         // A text is its words, not its outline, and the words reach far past
         // the anchor's box -- so it is culled by its plate and painted here.
         if (const auto* text = std::get_if<core::TextGeometry>(&annotation.geometry())) {
@@ -3917,6 +3997,10 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
             paintAngleLabel(*angle, stroke);
         }
     }
+
+    // Everything below -- selection, handles, previews -- is drawn at full
+    // strength, whatever layer it belongs to.
+    painter.setOpacity(1.0);
 
     // Only the selection outline is redrawn here, last, so a later annotation
     // cannot hide it. The fill is not redrawn: that would double-darken a
@@ -4985,6 +5069,9 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
         discardPendingShape();
         if (!m_impl->annotationsEditable()) {
             emit annotationEditBlocked(readOnlyEditMessage());
+        } else if (const QString refusal = activeLayerRefusal(); !refusal.isEmpty()) {
+            // The layer was hidden or locked while the angle was pending.
+            emit annotationEditBlocked(refusal);
         } else {
             const std::string id = m_impl->annotations->add(angle);
             pushCreateCommand(id);
@@ -5094,7 +5181,8 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
             // move, and the user is told why. Selecting still works and the
             // handles stay painted -- hiding them would make a read-only slide
             // look like a different application. Design spec 4.1.
-            if (!m_impl->annotationsEditable()) {
+            const QString locked = lockRefusal(m_impl->annotations->selectedId());
+            if (!m_impl->annotationsEditable() || !locked.isEmpty()) {
                 // Tell the user, then let the press fall through to the
                 // ordinary routing so it still pans or selects -- exactly what
                 // the move refusal below does by converting to DragOwner::Pan.
@@ -5102,7 +5190,7 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
                 // selected shape on a read-only slide, and an ellipse's corner
                 // handles sit over empty tissue where a pan is the only
                 // sensible reading.
-                emit annotationEditBlocked(readOnlyEditMessage());
+                emit annotationEditBlocked(locked.isEmpty() ? readOnlyEditMessage() : locked);
             } else {
                 m_impl->dragOwner = DragOwner::ResizeBox;
                 m_impl->dragButton = event->button();
@@ -5129,6 +5217,21 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
         // Only the move is refused, and the user is told why.
         emit annotationEditBlocked(readOnlyEditMessage());
         owner = DragOwner::Pan;
+    }
+    // A locked layer refuses the move the same way: shown, selectable, still.
+    if (owner == DragOwner::MoveAnnotation) {
+        if (const QString locked = lockRefusal(pressHitId); !locked.isEmpty()) {
+            emit annotationEditBlocked(locked);
+            owner = DragOwner::Pan;
+        }
+    }
+    // Nothing is drawn onto a hidden or locked active layer -- it would vanish
+    // on arrival, or be the change the lock forbids. Held space still pans.
+    if (owner == DragOwner::Tool && !m_impl->pending.active) {
+        if (const QString refusal = activeLayerRefusal(); !refusal.isEmpty()) {
+            emit annotationEditBlocked(refusal);
+            owner = DragOwner::Pan;
+        }
     }
 
     if (owner == DragOwner::Pan) {
@@ -5333,8 +5436,12 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
             const core::Annotation* existing = target.empty() ? nullptr : m_impl->annotations->find(target);
             if (existing != nullptr) {
                 m_impl->annotations->setSelected(target);
-                openTextEditor(std::get<core::TextGeometry>(existing->geometry()).anchor, target,
-                               QString::fromStdString(existing->properties().label));
+                if (const QString locked = lockRefusal(target); !locked.isEmpty()) {
+                    emit annotationEditBlocked(locked);
+                } else {
+                    openTextEditor(std::get<core::TextGeometry>(existing->geometry()).anchor, target,
+                                   QString::fromStdString(existing->properties().label));
+                }
             } else {
                 openTextEditor(m_impl->drawAnchorSlide, std::string(), QString());
             }
@@ -5643,6 +5750,14 @@ void ViewportWidget::mouseDoubleClickEvent(QMouseEvent* event)
     const std::string hit = annotationAt(event->pos());
     if (hit.empty()) {
         QOpenGLWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+    // On a locked layer neither the words nor the vertices may be edited: the
+    // double-click selects, and says why it goes no further.
+    if (const QString locked = lockRefusal(hit); !locked.isEmpty()) {
+        m_impl->annotations->setSelected(hit);
+        emit annotationEditBlocked(locked);
+        event->accept();
         return;
     }
     const core::Annotation* annotation = m_impl->annotations->find(hit);

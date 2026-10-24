@@ -10,6 +10,7 @@
 #include <QFormLayout>
 #include <QHeaderView>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
 #include <QScrollBar>
@@ -39,6 +40,7 @@ struct AnnotationListPanel::Impl
     QTreeWidget* tree = nullptr;
     QComboBox* counting = nullptr;
     QTreeWidget* tally = nullptr;
+    QLabel* hiddenNote = nullptr;
     std::vector<std::string> categories;
 
     /// The id applySelection last highlighted. The list scrolls to the selected
@@ -91,6 +93,12 @@ AnnotationListPanel::AnnotationListPanel(QWidget* parent)
     layout->insertLayout(0, countingRow);
     layout->insertWidget(1, m_impl->tally);
 
+    // The tally counts every layer -- a clinical count never follows
+    // visibility -- so it says when part of what it counts is hidden.
+    m_impl->hiddenNote = new QLabel(contents);
+    m_impl->hiddenNote->setVisible(false);
+    layout->insertWidget(2, m_impl->hiddenNote);
+
     m_impl->sort = new QComboBox(contents);
     m_impl->sort->addItem(tr("Creation order"), static_cast<int>(AnnotationSortKey::CreationOrder));
     m_impl->sort->addItem(tr("Label"), static_cast<int>(AnnotationSortKey::Label));
@@ -104,6 +112,35 @@ AnnotationListPanel::AnnotationListPanel(QWidget* parent)
     m_impl->tree->setHeaderLabels({tr("Label"), tr("Type"), tr("Classification")});
     m_impl->tree->setRootIsDecorated(false);
     m_impl->tree->setSelectionMode(QAbstractItemView::SingleSelection);
+    // Right-click a row: Move to Layer (FR-ANN-20's layer assignment). The
+    // menu offers every layer but the one the annotation is on; MainWindow
+    // checks locks and records the move as one undo step.
+    m_impl->tree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_impl->tree, &QWidget::customContextMenuRequested, this, [this](const QPoint& at) {
+        const QTreeWidgetItem* item = m_impl->tree->itemAt(at);
+        if (item == nullptr || m_impl->model == nullptr) {
+            return;
+        }
+        const std::string id = item->data(0, kIdRole).toString().toStdString();
+        const core::Annotation* annotation = m_impl->model->find(id);
+        if (annotation == nullptr) {
+            return;
+        }
+        m_impl->model->setSelected(id);
+        const auto& layers = m_impl->model->layers();
+        const std::string current = core::effectiveLayerId(*annotation, layers);
+        QMenu menu(m_impl->tree);
+        QMenu* moveMenu = menu.addMenu(tr("Move to Layer"));
+        for (auto it = layers.rbegin(); it != layers.rend(); ++it) {
+            if (it->id == current) {
+                continue;
+            }
+            QAction* action = moveMenu->addAction(QString::fromStdString(it->name));
+            const std::string target = it->id;
+            connect(action, &QAction::triggered, this, [this, id, target]() { emit moveToLayerRequested(id, target); });
+        }
+        menu.exec(m_impl->tree->viewport()->mapToGlobal(at));
+    });
     m_impl->tree->header()->setStretchLastSection(true);
     layout->addWidget(m_impl->tree);
 
@@ -217,6 +254,8 @@ void AnnotationListPanel::setAnnotationModel(app::AnnotationModel* model)
         // A bulk retag is not a reset (MainWindow would clear the undo stack), so it has its
         // own signal -- and it must refresh the rows and the tally all the same.
         connect(m_impl->model, &app::AnnotationModel::annotationsBulkChanged, this, rebuildAll);
+        // Hiding a layer drops its rows; locking one marks them.
+        connect(m_impl->model, &app::AnnotationModel::layersChanged, this, rebuildAll);
         connect(m_impl->model, &app::AnnotationModel::selectionChanged, this,
                 [this](const std::string& id) { applySelection(id); });
     }
@@ -333,12 +372,15 @@ void AnnotationListPanel::rebuildRows()
 
     const std::vector<core::Annotation>& annotations = m_impl->model->annotations();
     const auto rows = annotationRows(annotations, m_impl->filter->text().toStdString(), sortKey,
-                                     typeName);
+                                     typeName, m_impl->model->layers());
 
     for (const AnnotationRow& row : rows) {
         auto* item = new QTreeWidgetItem(m_impl->tree);
         item->setText(0, QString::fromStdString(row.label));
-        item->setText(1, QString::fromStdString(row.type));
+        // The lock is said in words where the type is: nothing about this row
+        // can change, and a greyed row would read as unavailable, not protected.
+        item->setText(1, row.locked ? tr("%1 (locked)").arg(QString::fromStdString(row.type))
+                                    : QString::fromStdString(row.type));
         item->setText(2, QString::fromStdString(row.classification));
         item->setData(0, kIdRole, QString::fromStdString(row.id));
     }
@@ -380,6 +422,9 @@ void AnnotationListPanel::rebuildTally()
         item->setData(0, kConfiguredRole, row.configured);
         item->setData(0, kSyntheticRole, row.synthetic);
     }
+    const std::size_t hidden = hiddenLayerCount(m_impl->model->annotations(), m_impl->model->layers());
+    m_impl->hiddenNote->setText(tr("Includes %1 on hidden layers").arg(static_cast<qulonglong>(hidden)));
+    m_impl->hiddenNote->setVisible(hidden > 0);
 }
 
 void AnnotationListPanel::applySelection(const std::string& id)

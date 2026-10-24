@@ -75,6 +75,8 @@ signals:
     /// app::deleteWithUndo so the deletion is undoable -- removing it here
     /// would produce an edit Ctrl+Z cannot reach.
     void deleteRequested(const std::string& id);
+    /// Move to Layer was chosen on a row's context menu.
+    void moveToLayerRequested(const std::string& id, const std::string& layerId);
 
     /// An annotation was added carrying a non-empty classification. MainWindow
     /// appends it to the stored list if it is not there: a category earns its
