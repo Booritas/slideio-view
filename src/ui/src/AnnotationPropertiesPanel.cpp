@@ -5,6 +5,7 @@
 #include "slideio/viewer/ui/AnnotationPropertiesEdit.h"
 #include "slideio/viewer/ui/AnnotationShapeName.h"
 #include "slideio/viewer/ui/CalibrationPolicy.h"
+#include "slideio/viewer/ui/MeasurementLabel.h"
 
 #include <QColorDialog>
 #include <QComboBox>
@@ -20,6 +21,7 @@
 #include <QWidget>
 
 #include <map>
+#include <variant>
 
 namespace slideio::viewer::ui
 {
@@ -356,6 +358,15 @@ void AnnotationPropertiesPanel::updateMeasurements(const core::Annotation& annot
 
     m_impl->lengthValue->setText(
         QString::fromStdString(core::formatLength(metrics.outlineLength, units)));
+    // An angle's measurement is the angle: its path length means nothing, so
+    // the same row is retitled and carries the degrees -- the value the
+    // on-slide label and the CSV read, from the same measure() call.
+    if (std::holds_alternative<core::AngleGeometry>(annotation.geometry())) {
+        m_impl->lengthCaption->setText(tr("Angle"));
+        m_impl->lengthValue->setText(
+            QString::fromStdString(angleLabelText(metrics.angleDegrees, core::Calibration{
+                                                      core::PixelSize{}, core::CalibrationSource::Metadata})));
+    }
 
     const QString badge = QString::fromStdString(calibrationBadgeText(calibration.source));
     m_impl->calibrationBadge->setText(badge);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "slideio/viewer/core/Calibration.h"
 #include "slideio/viewer/core/TileKey.h"
 #include "slideio/viewer/core/Types.h"
 #include "slideio/viewer/ui/AnnotationInteraction.h"
@@ -180,6 +181,10 @@ public:
     /// any focus loss does. Undo and redo call it first, so an editor is never
     /// left open over an annotation they removed. Safe to call when closed.
     void commitTextEditing();
+
+    /// The open scene's calibration, which the ruler and angle labels
+    /// measure with. Repaints, so a label changes the moment it does.
+    void setCalibration(const core::Calibration& calibration);
 
     /// True while a tool drag, a move drag or a pending trace with the button
     /// held is in progress. Undo and redo are refused during one: the widget

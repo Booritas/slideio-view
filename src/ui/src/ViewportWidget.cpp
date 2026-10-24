@@ -2,6 +2,7 @@
 #include "slideio/viewer/ui/PathDisplay.h"
 #include "slideio/viewer/ui/ViewportController.h"
 #include "slideio/viewer/ui/AnnotationShapeName.h"
+#include "slideio/viewer/ui/MeasurementLabel.h"
 #include "slideio/viewer/ui/TextAnnotationLayout.h"
 
 #include "slideio/viewer/app/AnnotationEditing.h"
@@ -37,6 +38,7 @@
 #include <QImage>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QStyle>
 #include <QMetaObject>
 #include <QMouseEvent>
 #include <QPainter>
@@ -1493,6 +1495,16 @@ struct ViewportWidget::Impl
     /// focused widget moves focus, and the focus loss fires editingFinished,
     /// which must not commit a second time.
     bool textEditorOpen = false;
+
+    /// An angle whose first ray is drawn and whose second is not: like a
+    /// pending trace, not an annotation, never saved, discarded by every exit
+    /// that discards a trace (discardPendingShape is the one place).
+    bool anglePending = false;
+    core::PointF angleVertex{};
+    core::PointF angleFirst{};
+    core::PointF angleCursor{};
+    /// The open scene's calibration, for the ruler and angle labels.
+    core::Calibration calibration;
     /// The text being edited; empty while placing a new one.
     std::string textEditingId;
     core::PointF textAnchorSlide{};
@@ -3183,6 +3195,35 @@ bool ViewportWidget::commitDrawDrag()
         return true;
     }
 
+    // A ruler is drawn exactly as an arrow is -- press to release, the same
+    // minimum length -- and so is an angle's first ray, which does not commit:
+    // it waits, pending, for the click that places the second ray.
+    if (m_impl->activeTool == AnnotationTool::Ruler || m_impl->activeTool == AnnotationTool::Angle) {
+        if (!arrowExceedsMinimumLength(m_impl->drawAnchorSlide, m_impl->drawCurrentSlide, toolScale,
+                                       kHitToleranceScreenPixels)) {
+            return false;
+        }
+        if (!m_impl->annotationsEditable()) {
+            emit annotationEditBlocked(readOnlyEditMessage());
+            return false;
+        }
+        if (m_impl->activeTool == AnnotationTool::Angle) {
+            m_impl->anglePending = true;
+            m_impl->angleVertex = m_impl->drawAnchorSlide;
+            m_impl->angleFirst = m_impl->drawCurrentSlide;
+            m_impl->angleCursor = m_impl->drawCurrentSlide;
+            // Ctrl+Z reaches a pending angle only while Undo is enabled, which
+            // follows hasLiveTrace() through this signal.
+            emit liveTraceChanged(true);
+            return false;
+        }
+        const std::string id = m_impl->annotations->add(
+            core::RulerGeometry{m_impl->drawAnchorSlide, m_impl->drawCurrentSlide});
+        pushCreateCommand(id);
+        m_impl->annotations->setSelected(id);
+        return true;
+    }
+
     if (m_impl->activeTool == AnnotationTool::Arrow) {
         // The hypotenuse, not a box dimension: a deliberate 10-pixel diagonal
         // drag presents a 7x7 box and dragExceedsMinimumSize would refuse it.
@@ -3480,6 +3521,12 @@ void ViewportWidget::finishTextEditor(bool commit)
                                tr("Edit text").toStdString());
 }
 
+void ViewportWidget::setCalibration(const core::Calibration& calibration)
+{
+    m_impl->calibration = calibration;
+    update();
+}
+
 void ViewportWidget::commitTextEditing()
 {
     finishTextEditor(true);
@@ -3541,6 +3588,13 @@ void ViewportWidget::removeLastPendingVertex()
 
 bool ViewportWidget::undoLastPendingVertex()
 {
+    // A pending angle has one thing to take back -- its first ray -- and
+    // taking it back leaves nothing, as Ctrl+Z on a one-vertex trace does.
+    if (m_impl->anglePending) {
+        discardPendingShape();
+        update();
+        return true;
+    }
     if (!m_impl->pending.active || m_impl->pending.vertices.empty()) {
         return false;
     }
@@ -3561,7 +3615,7 @@ bool ViewportWidget::isDragInFlight() const
 
 bool ViewportWidget::hasLiveTrace() const
 {
-    return m_impl->pending.active;
+    return m_impl->pending.active || m_impl->anglePending;
 }
 
 bool ViewportWidget::isPreservingUndoContext() const
@@ -3663,6 +3717,23 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         if (shape.points.size() < 2 || glyph.sizePixels <= 0.0) {
             return;
         }
+        if (glyph.kind == core::ScreenDecoration::Kind::EndCaps) {
+            // A short stroke across each end, perpendicular to the line, so the
+            // ends read as measured points. A zero-length ruler has no line to
+            // be perpendicular to and gets none.
+            const QPointF start = toScreen(shape.points.front());
+            const QPointF end = toScreen(shape.points.back());
+            const double length = std::hypot(end.x() - start.x(), end.y() - start.y());
+            if (length <= 0.0) {
+                return;
+            }
+            const QPointF across(-(end.y() - start.y()) / length * glyph.sizePixels,
+                                 (end.x() - start.x()) / length * glyph.sizePixels);
+            painter.setPen(QPen(color, 2.0, Qt::SolidLine, Qt::FlatCap));
+            painter.drawLine(start - across, start + across);
+            painter.drawLine(end - across, end + across);
+            return;
+        }
         const QPointF tail = toScreen(shape.points.front());
         const double dx = anchor.x() - tail.x();
         const double dy = anchor.y() - tail.y();
@@ -3682,6 +3753,59 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         painter.setPen(Qt::NoPen);
         painter.setBrush(QBrush(color));
         painter.drawPolygon(head);
+    };
+
+    // A ruler's or angle's value, on the text annotation's plate and drawn the
+    // same way -- a filled path, never drawText, whose glyph textures the GL
+    // tile passes garble. `place` turns the label's size into its rectangle.
+    // On a slide with no calibration a warning icon leads the text.
+    const auto paintMeasurementLabel = [this, &painter](const std::string& text, const QColor& stroke,
+                                                        const auto& place) {
+        if (text.empty()) {
+            return;
+        }
+        const QString words = QString::fromStdString(text);
+        const QFontMetricsF& metrics = Impl::textMetrics(false);
+        const bool warns = measurementLabelWarns(m_impl->calibration.source);
+        const double iconSize = warns ? metrics.height() : 0.0;
+        const double gap = warns ? kTextPlatePaddingScreenPixels : 0.0;
+        const QSizeF size(metrics.horizontalAdvance(words) + iconSize + gap + 2.0 * kTextPlatePaddingScreenPixels,
+                          metrics.height() + 2.0 * kTextPlatePaddingScreenPixels);
+        const QRectF plate = place(size);
+        painter.setBrush(QBrush(QColor(0xFF, 0xFF, 0xFF, static_cast<int>(255 * textPlateOpacity(0.0)))));
+        painter.setPen(QPen(stroke, 1.0));
+        painter.drawRoundedRect(plate, 3.0, 3.0);
+        double x = plate.left() + kTextPlatePaddingScreenPixels;
+        if (warns) {
+            style()->standardIcon(QStyle::SP_MessageBoxWarning)
+                .paint(&painter, QRect(static_cast<int>(x), static_cast<int>(plate.top() + kTextPlatePaddingScreenPixels),
+                                       static_cast<int>(iconSize), static_cast<int>(iconSize)));
+            x += iconSize + gap;
+        }
+        const QPointF baseline(x, plate.center().y() + (metrics.ascent() - metrics.descent()) / 2.0);
+        QPainterPath glyphs;
+        glyphs.addText(baseline, Impl::textFont(false), words);
+        painter.fillPath(glyphs, stroke);
+    };
+    // The pixel size the labels measure with: the calibration's, in metres as
+    // core::measure takes it, or pixel units when there is none.
+    const core::PixelSize labelScale =
+        m_impl->calibration.source == core::CalibrationSource::None
+            ? core::PixelSize{1.0, 1.0}
+            : core::PixelSize{m_impl->calibration.micronsPerPixel.x * 1e-6,
+                              m_impl->calibration.micronsPerPixel.y * 1e-6};
+    const auto paintRulerLabel = [&](const core::RulerGeometry& ruler, const QColor& stroke) {
+        const QPointF start = toScreen(ruler.start);
+        const QPointF end = toScreen(ruler.end);
+        paintMeasurementLabel(rulerLabelText(ruler, m_impl->calibration), stroke,
+                              [&](QSizeF size) { return rulerLabelRect(start, end, size); });
+    };
+    const auto paintAngleLabel = [&](const core::AngleGeometry& angle, const QColor& stroke) {
+        const QPointF first = toScreen(angle.first);
+        const QPointF vertex = toScreen(angle.vertex);
+        const QPointF second = toScreen(angle.second);
+        paintMeasurementLabel(angleLabelText(core::angleDegrees(angle, labelScale), m_impl->calibration), stroke,
+                              [&](QSizeF size) { return angleLabelRect(first, vertex, second, size); });
     };
 
     painter.setRenderHint(QPainter::Antialiasing, true);
@@ -3749,8 +3873,12 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         // outside the widget must still be drawn. A marker's box is degenerate
         // on both axes and its disc is six pixels across, so the stroke alone
         // is not the answer here.
+        // A ruler's or angle's label reaches well past its box; a generous
+        // fixed pad keeps a label on screen whose line is just off it.
+        const bool labelled = annotation.type() == core::AnnotationType::Ruler
+                              || annotation.type() == core::AnnotationType::Angle;
         const double margin = annotationPaintMarginScreenPixels(
-            annotation.geometry(), props.lineWidth, vp.scale());
+            annotation.geometry(), props.lineWidth, vp.scale()) + (labelled ? 200.0 : 0.0);
         const QRectF bounds =
             QRectF(toScreen(core::PointF{box.x, box.y}),
                    toScreen(core::PointF{box.x + box.width, box.y + box.height}))
@@ -3782,6 +3910,11 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         if (const std::optional<core::ScreenDecoration> glyph = core::screenDecoration(
                 annotation.geometry(), vp.scale(), kHitToleranceScreenPixels)) {
             paintDecoration(*glyph, shape, stroke);
+        }
+        if (const auto* ruler = std::get_if<core::RulerGeometry>(&annotation.geometry())) {
+            paintRulerLabel(*ruler, stroke);
+        } else if (const auto* angle = std::get_if<core::AngleGeometry>(&annotation.geometry())) {
+            paintAngleLabel(*angle, stroke);
         }
     }
 
@@ -3934,6 +4067,17 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         painter.setBrush(Qt::NoBrush);
         painter.drawLine(toScreen(m_impl->drawAnchorSlide),
                          toScreen(m_impl->drawCurrentSlide));
+    } else if (m_impl->drawing
+               && (m_impl->activeTool == AnnotationTool::Ruler || m_impl->activeTool == AnnotationTool::Angle)) {
+        // The ruler, or the angle's first ray, with -- for the ruler -- its
+        // live length, so the number is read while the end is still chosen.
+        const QColor previewColor(0xE6, 0x7E, 0x22);
+        painter.setPen(QPen(previewColor, 2.0, Qt::DashLine));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawLine(toScreen(m_impl->drawAnchorSlide), toScreen(m_impl->drawCurrentSlide));
+        if (m_impl->activeTool == AnnotationTool::Ruler) {
+            paintRulerLabel(core::RulerGeometry{m_impl->drawAnchorSlide, m_impl->drawCurrentSlide}, previewColor);
+        }
     } else if (m_impl->drawing && m_impl->activeTool != AnnotationTool::Point
                && m_impl->activeTool != AnnotationTool::Text) {
         // The same function the release will commit through, and the same
@@ -3953,6 +4097,18 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
         painter.setPen(QPen(QColor(0xE6, 0x7E, 0x22), 2.0, Qt::DashLine));
         painter.setBrush(Qt::NoBrush);
         painter.drawPath(screenPath(core::outline(geometry)));
+    }
+
+    // A pending angle: both rays, the second following the cursor, with the
+    // angle it would commit.
+    if (m_impl->anglePending) {
+        const QColor previewColor(0xE6, 0x7E, 0x22);
+        const core::AngleGeometry angle{m_impl->angleFirst, m_impl->angleVertex, m_impl->angleCursor};
+        painter.setPen(QPen(previewColor, 2.0, Qt::DashLine));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawLine(toScreen(angle.vertex), toScreen(angle.first));
+        painter.drawLine(toScreen(angle.vertex), toScreen(angle.second));
+        paintAngleLabel(angle, previewColor);
     }
 
     // The polygon or freehand line being traced, likewise not in the model yet.
@@ -4140,9 +4296,10 @@ void ViewportWidget::commitPendingShape()
 
 void ViewportWidget::discardPendingShape()
 {
-    const bool wasActive = m_impl->pending.active;
+    const bool wasActive = m_impl->pending.active || m_impl->anglePending;
     m_impl->pending.vertices.clear();
     m_impl->pending.active = false;
+    m_impl->anglePending = false;
     if (wasActive) {
         // Ctrl+Z reaches the trace only while the Undo action is enabled, and
         // that depends on this state -- see hasLiveTrace().
@@ -4820,6 +4977,24 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event)
         m_impl->movePressSlide = core::PointF{slideX, slideY};
     }
 
+    // The click that places a pending angle's second ray, ahead of everything
+    // else: held space still pans, as it does mid-trace.
+    if (m_impl->anglePending && m_impl->activeTool == AnnotationTool::Angle && event->button() == Qt::LeftButton
+        && !m_impl->spaceHeld && m_impl->controller) {
+        const core::AngleGeometry angle{m_impl->angleFirst, m_impl->angleVertex, m_impl->movePressSlide};
+        discardPendingShape();
+        if (!m_impl->annotationsEditable()) {
+            emit annotationEditBlocked(readOnlyEditMessage());
+        } else {
+            const std::string id = m_impl->annotations->add(angle);
+            pushCreateCommand(id);
+            m_impl->annotations->setSelected(id);
+        }
+        event->accept();
+        update();
+        return;
+    }
+
     // Vertex editing owns the press before the ordinary routing sees it --
     // except under held space, which pans whatever the tool and whatever mode
     // the viewport is in. That is the one gesture the user has for getting
@@ -5250,6 +5425,15 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event)
         update();
     }
 
+    // A pending angle's second ray follows the cursor, with its live angle.
+    if (m_impl->anglePending && m_impl->controller) {
+        double slideX = 0.0;
+        double slideY = 0.0;
+        m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
+        m_impl->angleCursor = core::PointF{slideX, slideY};
+        update();
+    }
+
     if (m_impl->pending.active && m_impl->controller) {
         double slideX = 0.0;
         double slideY = 0.0;
@@ -5525,7 +5709,7 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
     if (event->key() == Qt::Key_Escape) {
         bool cancelled = false;
 
-        if (m_impl->pending.active) {
+        if (m_impl->pending.active || m_impl->anglePending) {
             discardPendingShape();
             endToolDrag();
             cancelled = true;

@@ -23,6 +23,8 @@ enum class AnnotationTool
     Point,
     Arrow,
     Text,
+    Ruler,
+    Angle,
 };
 
 enum class DragOwner
