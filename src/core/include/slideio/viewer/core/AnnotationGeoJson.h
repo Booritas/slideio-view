@@ -2,6 +2,7 @@
 
 #include "slideio/viewer/core/Annotation.h"
 #include "slideio/viewer/core/AnnotationImport.h"
+#include "slideio/viewer/core/AnnotationLayer.h"
 #include "slideio/viewer/core/Calibration.h"
 
 #include <atomic>
@@ -33,6 +34,9 @@ struct GeoJsonExportContext
     /// collection's `slideio` block. When it is Manual the two sizes above are
     /// the user's override, not the metadata.
     CalibrationSource calibrationSource = CalibrationSource::None;
+    /// The scene's layers, bottom first, so each feature can name its layer
+    /// (`slideio.layer`). Empty means defaultLayers().
+    std::vector<AnnotationLayer> layers;
 };
 
 struct GeoJsonExportResult

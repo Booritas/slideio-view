@@ -303,6 +303,71 @@ bool annotationToJson(const Annotation& annotation, json& out)
     return true;
 }
 
+/// Adds the annotation's layer -- resolved, so a dangling id is written as the
+/// layer it is actually shown on -- for a version-2 file. A version-1 file
+/// carries no layerId at all, byte for byte the pre-layer format.
+void addLayerId(json& annotationJson, const Annotation& annotation, const std::vector<AnnotationLayer>& layers)
+{
+    annotationJson["layerId"] = effectiveLayerId(annotation, layers);
+}
+
+json layerToJson(const AnnotationLayer& layer)
+{
+    return json{
+        {"id", layer.id},
+        {"name", layer.name},
+        {"visible", layer.visible},
+        {"locked", layer.locked},
+        {"opacity", layer.opacity},
+    };
+}
+
+/// The layers of a version-2 file, in order. False with `problem` set for
+/// anything the writer would not have produced.
+bool readLayers(const json& value, std::vector<AnnotationLayer>& out, std::string& problem)
+{
+    if (!value.is_array()) {
+        problem = "layers is not an array";
+        return false;
+    }
+    for (const json& entry : value) {
+        if (!entry.is_object()) {
+            problem = "a layer is not an object";
+            return false;
+        }
+        AnnotationLayer layer;
+        if (!entry.contains("id") || !entry.at("id").is_string()) {
+            problem = "a layer has no string id";
+            return false;
+        }
+        layer.id = entry.at("id").get<std::string>();
+        if (!entry.contains("name") || !entry.at("name").is_string()) {
+            problem = "layer '" + layer.id + "' has no string name";
+            return false;
+        }
+        layer.name = entry.at("name").get<std::string>();
+        for (const auto& [key, flag] : {std::pair<const char*, bool*>{"visible", &layer.visible},
+                                       std::pair<const char*, bool*>{"locked", &layer.locked}}) {
+            if (entry.contains(key)) {
+                if (!entry.at(key).is_boolean()) {
+                    problem = "layer '" + layer.id + "' has a " + key + " that is not true or false";
+                    return false;
+                }
+                *flag = entry.at(key).get<bool>();
+            }
+        }
+        if (entry.contains("opacity")) {
+            if (!entry.at("opacity").is_number()) {
+                problem = "layer '" + layer.id + "' has an opacity that is not a number";
+                return false;
+            }
+            layer.opacity = entry.at("opacity").get<double>();
+        }
+        out.push_back(std::move(layer));
+    }
+    return isValidLayerList(out, problem);
+}
+
 ParseResult failure(ParseError error, std::string message)
 {
     ParseResult result;
@@ -685,6 +750,16 @@ bool readAnnotation(const json& value, Annotation& out, std::string& problem)
     // be able to make them disagree.
     out = Annotation(value.at("id").get<std::string>(),
                      std::move(geometry), std::move(properties), std::move(metadata));
+    // Kept as written, even naming a layer the file does not list: the
+    // resolution rule puts such an annotation on the bottom layer, and a load
+    // is no place to rewrite what the user stored.
+    if (value.contains("layerId")) {
+        if (!value.at("layerId").is_string()) {
+            problem = "layerId is not a string";
+            return false;
+        }
+        out.setLayerId(value.at("layerId").get<std::string>());
+    }
     return true;
 }
 
@@ -742,6 +817,14 @@ ParseResult parseDocument(std::string_view text)
     if (!readTimestamp(root, "createdAt", document.createdAt, problem)
         || !readTimestamp(root, "modifiedAt", document.modifiedAt, problem)) {
         return failure(ParseError::InvalidField, problem);
+    }
+
+    // Only a version-2 file has layers. A "layers" key in a version-1 file is
+    // an unknown field, dropped like any other -- version 1 never had one.
+    if (version >= 2 && root.contains("layers")) {
+        if (!readLayers(root.at("layers"), document.layers, problem)) {
+            return failure(ParseError::InvalidField, problem);
+        }
     }
 
     if (!root.contains("annotations")) {
@@ -836,17 +919,30 @@ std::string serializeAnnotationDocument(const AnnotationDocument& document)
         return {};
     }
 
+    // The written version is the file's own, not the document's: 2 only when
+    // the layers carry information, so an older build refuses exactly the
+    // files whose layer assignments it would otherwise drop on its next save.
+    const std::vector<AnnotationLayer> layers = document.layers.empty() ? defaultLayers() : document.layers;
+    std::string layerProblem;
+    if (!isValidLayerList(layers, layerProblem)) {
+        return {};
+    }
+    const bool withLayers = layersCarryInformation(layers, document.annotations);
+
     json annotations = json::array();
     for (const Annotation& annotation : document.annotations) {
         json annotationJson;
         if (!annotationToJson(annotation, annotationJson)) {
             return {};
         }
+        if (withLayers) {
+            addLayerId(annotationJson, annotation, layers);
+        }
         annotations.push_back(std::move(annotationJson));
     }
 
     json root{
-        {"schemaVersion", document.schemaVersion},
+        {"schemaVersion", withLayers ? kCurrentSchemaVersion : kLayerlessSchemaVersion},
         {"slideId", document.slideId},
         {"sceneIndex", document.sceneIndex},
         {"slide", json{
@@ -857,8 +953,15 @@ std::string serializeAnnotationDocument(const AnnotationDocument& document)
         }},
         {"createdAt", createdAt},
         {"modifiedAt", modifiedAt},
-        {"annotations", std::move(annotations)},
     };
+    if (withLayers) {
+        json layerArray = json::array();
+        for (const AnnotationLayer& layer : layers) {
+            layerArray.push_back(layerToJson(layer));
+        }
+        root["layers"] = std::move(layerArray);
+    }
+    root["annotations"] = std::move(annotations);
 
     // nlohmann throws on invalid UTF-8 in any string. Turning that into the
     // same empty-string refusal as the other failures keeps the promise that no

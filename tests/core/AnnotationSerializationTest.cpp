@@ -311,7 +311,7 @@ TEST_CASE("a document round-trips through JSON unchanged", "[core][AnnotationSer
     REQUIRE(result.error == ParseError::None);
     const AnnotationDocument& parsed = result.document;
 
-    REQUIRE(parsed.schemaVersion == kCurrentSchemaVersion);
+    REQUIRE(parsed.schemaVersion == kLayerlessSchemaVersion);
     REQUIRE(parsed.slideId == original.slideId);
     REQUIRE(parsed.sceneIndex == original.sceneIndex);
     REQUIRE(parsed.slide.fileName == original.slide.fileName);
@@ -415,9 +415,9 @@ TEST_CASE("a newer schema version is refused outright", "[core][AnnotationSerial
     // Loading what we understand and saving it back would silently drop
     // whatever the newer version added.
     const ParseResult result = parseAnnotationDocument(
-        "{\"schemaVersion\": 2, \"slideId\": \"x\", \"sceneIndex\": 0, \"annotations\": []}");
+        "{\"schemaVersion\": 3, \"slideId\": \"x\", \"sceneIndex\": 0, \"annotations\": []}");
     REQUIRE(result.error == ParseError::UnsupportedFutureVersion);
-    REQUIRE(result.message.find('2') != std::string::npos);
+    REQUIRE(result.message.find('3') != std::string::npos);
 }
 
 TEST_CASE("a field of the wrong type is an InvalidField naming the field",
@@ -1178,4 +1178,93 @@ TEST_CASE("a ruler or angle with a non-finite point is refused", "[core][Annotat
     document.annotations.emplace_back(
         "g1", AngleGeometry{PointF{1.0, 1.0}, PointF{0.0, 0.0}, PointF{1.0, std::nan("")}});
     CHECK(serializeAnnotationDocument(document).empty());
+}
+
+TEST_CASE("a scene with default layers is written as version 1, without layers", "[core][AnnotationSerialization][Layers]")
+{
+    AnnotationDocument document = makeDocument();
+    document.layers = defaultLayers();
+    for (Annotation& annotation : document.annotations) {
+        annotation.setLayerId("diagnostic");
+    }
+    const std::string text = serializeAnnotationDocument(document);
+    REQUIRE_FALSE(text.empty());
+    CHECK(text.find("\"schemaVersion\": 1") != std::string::npos);
+    CHECK(text.find("\"layers\"") == std::string::npos);
+    CHECK(text.find("\"layerId\"") == std::string::npos);
+
+    // Byte for byte what a scene with no layer information writes.
+    AnnotationDocument untouched = makeDocument();
+    CHECK(serializeAnnotationDocument(untouched) == text);
+}
+
+TEST_CASE("a scene whose layers mean something is written as version 2", "[core][AnnotationSerialization][Layers]")
+{
+    AnnotationDocument document = makeDocument();
+    document.layers = defaultLayers();
+    document.layers[1].visible = false;
+    document.layers[2].opacity = 0.25;
+    document.annotations.front().setLayerId("teaching");
+
+    const std::string text = serializeAnnotationDocument(document);
+    REQUIRE_FALSE(text.empty());
+    CHECK(text.find("\"schemaVersion\": 2") != std::string::npos);
+    const ParseResult result = parseAnnotationDocument(text);
+    REQUIRE(result.error == ParseError::None);
+    CHECK(result.document.schemaVersion == 2);
+    REQUIRE(result.document.layers == document.layers);
+    CHECK(result.document.annotations.front().layerId() == "teaching");
+    for (std::size_t i = 1; i < result.document.annotations.size(); ++i) {
+        CHECK(result.document.annotations[i].layerId() == "diagnostic");
+    }
+}
+
+TEST_CASE("a version 1 file reads with no layers of its own", "[core][AnnotationSerialization][Layers]")
+{
+    const ParseResult result = parseAnnotationDocument(serializeAnnotationDocument(makeDocument()));
+    REQUIRE(result.error == ParseError::None);
+    CHECK(result.document.layers.empty());
+    for (const Annotation& annotation : result.document.annotations) {
+        CHECK(annotation.layerId().empty());
+    }
+}
+
+TEST_CASE("a version 2 file with a duplicate layer id is refused", "[core][AnnotationSerialization][Layers]")
+{
+    AnnotationDocument document = makeDocument();
+    document.layers = defaultLayers();
+    document.annotations.front().setLayerId("teaching");
+    std::string text = serializeAnnotationDocument(document);
+    const std::string teaching = "\"id\": \"teaching\"";
+    const std::size_t at = text.find(teaching);
+    REQUIRE(at != std::string::npos);
+    text.replace(at, teaching.size(), "\"id\": \"diagnostic\"");
+    const ParseResult result = parseAnnotationDocument(text);
+    CHECK(result.error == ParseError::InvalidField);
+    CHECK(result.message.find("diagnostic") != std::string::npos);
+}
+
+TEST_CASE("an annotation naming an unknown layer still loads", "[core][AnnotationSerialization][Layers]")
+{
+    // The writer resolves a dangling id before it writes, so the case is built
+    // by hand-editing a version 2 file, as a user or another tool might.
+    AnnotationDocument document = makeDocument();
+    document.layers = defaultLayers();
+    document.annotations.front().setLayerId("teaching");
+    std::string text = serializeAnnotationDocument(document);
+    const std::string teaching = "\"layerId\": \"teaching\"";
+    const std::size_t at = text.find(teaching);
+    REQUIRE(at != std::string::npos);
+    text.replace(at, teaching.size(), "\"layerId\": \"gone\"");
+    const ParseResult result = parseAnnotationDocument(text);
+    REQUIRE(result.error == ParseError::None);
+    CHECK(result.document.annotations.front().layerId() == "gone");
+}
+
+TEST_CASE("a version 3 file is still refused", "[core][AnnotationSerialization][Layers]")
+{
+    std::string text = serializeAnnotationDocument(makeDocument());
+    const std::string v1 = "\"schemaVersion\": 1";
+    text.replace(text.find(v1), v1.size(), "\"schemaVersion\": 3");
+    CHECK(parseAnnotationDocument(text).error == ParseError::UnsupportedFutureVersion);
 }

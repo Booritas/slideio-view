@@ -52,6 +52,14 @@ public:
     void setGeometry(AnnotationGeometry geometry);
     void setProperties(AnnotationProperties properties);
 
+    /// The layer this annotation was put on, as stored. Not one of its
+    /// properties -- the properties panel edits those; a layer is where the
+    /// annotation lives. Empty for every annotation saved before layers. Read
+    /// it through core::effectiveLayerId, never directly: a stored id may
+    /// name a layer the scene no longer has.
+    [[nodiscard]] const std::string& layerId() const;
+    void setLayerId(std::string layerId);
+
     [[nodiscard]] RectF boundingBox() const;
     [[nodiscard]] bool containsPoint(PointF slidePos, double toleranceSlideUnits) const;
 
@@ -60,6 +68,7 @@ private:
     AnnotationGeometry m_geometry;
     AnnotationProperties m_properties;
     AnnotationMetadata m_metadata;
+    std::string m_layerId;
 };
 
 } // namespace slideio::viewer::core

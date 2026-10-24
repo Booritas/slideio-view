@@ -18,6 +18,7 @@ add_library(slideio-viewer-core STATIC
     src/AnnotationDecoration.cpp
     src/AnnotationCategories.cpp
     src/Calibration.cpp
+    src/AnnotationLayer.cpp
     src/LevelRaster.cpp
     src/WorkspaceSwitchPolicy.cpp
     src/Annotation.cpp

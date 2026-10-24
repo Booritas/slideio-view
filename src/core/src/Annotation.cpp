@@ -60,6 +60,18 @@ void Annotation::setProperties(AnnotationProperties properties)
     m_metadata.modifiedAt = std::chrono::system_clock::now();
 }
 
+const std::string& Annotation::layerId() const
+{
+    return m_layerId;
+}
+
+// No timestamp: the loader sets this, and loading must not restamp. A user's
+// move to another layer is stamped by the model that makes it.
+void Annotation::setLayerId(std::string layerId)
+{
+    m_layerId = std::move(layerId);
+}
+
 RectF Annotation::boundingBox() const
 {
     return core::boundingBox(m_geometry);

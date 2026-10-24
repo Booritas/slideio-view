@@ -415,3 +415,16 @@ TEST_CASE("a ruler and an angle are tagged LineStrings, points in order", "[core
     REQUIRE(collection.at("features").at(0).at("properties").at("slideio").at("type") == "ruler");
     REQUIRE(collection.at("features").at(1).at("properties").at("slideio").at("type") == "angle");
 }
+
+TEST_CASE("each feature names its layer", "[core][GeoJson]")
+{
+    Annotation teaching("t", PointGeometry{PointF{1, 2}});
+    teaching.setLayerId("teaching");
+    const Annotation plain("p", PointGeometry{PointF{3, 4}});
+    GeoJsonExportContext withLayers = context();
+    withLayers.layers = defaultLayers();
+    const json collection =
+        json::parse(annotationsToGeoJson({teaching, plain}, withLayers, at(1792576800LL)).text);
+    CHECK(collection.at("features").at(0).at("properties").at("slideio").at("layer") == "Teaching");
+    CHECK(collection.at("features").at(1).at("properties").at("slideio").at("layer") == "Diagnostic");
+}

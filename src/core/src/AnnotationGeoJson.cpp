@@ -201,6 +201,7 @@ GeoJsonExportResult annotationsToGeoJson(const std::vector<Annotation>& annotati
     if (exportTime.empty()) {
         return {{}, "the export time cannot be written as a date"};
     }
+    const std::vector<AnnotationLayer> layers = context.layers.empty() ? defaultLayers() : context.layers;
 
     json features = json::array();
     for (const Annotation& annotation : annotations) {
@@ -219,6 +220,11 @@ GeoJsonExportResult annotationsToGeoJson(const std::vector<Annotation>& annotati
         json properties;
         if (!buildProperties(annotation, properties)) {
             return {{}, "annotation " + annotation.id() + " has a date that cannot be written"};
+        }
+        // The layer by NAME: a reader has no use for the id, and QuPath has no
+        // layers. Resolved, so a dangling id names the layer it is shown on.
+        if (const AnnotationLayer* layer = findLayer(layers, effectiveLayerId(annotation, layers))) {
+            properties["slideio"]["layer"] = layer->name;
         }
         features.push_back(json{{"type", "Feature"},
                                 {"id", annotation.id()},
