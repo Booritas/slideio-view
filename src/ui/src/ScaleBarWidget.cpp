@@ -113,11 +113,13 @@ void ScaleBarWidget::paintEvent(QPaintEvent* /*event*/)
 
     const QString text  = formatLabel(tick.lengthMicrons) + QString::fromStdString(scaleBarSuffix(m_source));
     const int labelY    = kBarY + kCapHalfLen + kLabelGap;
-    // Centred under the bar but as wide as the widget: a short bar would clip
-    // " (manual)", the one part of the label that must not be lost.
-    const int centre = (x0 + x1) / 2;
-    const QRect textRect(centre - width() / 2, labelY, width(), kLabelHeight);
-    painter.drawText(textRect, Qt::AlignHCenter | Qt::AlignTop, text);
+    // Centred under the bar where it fits, but kept inside the widget: a short
+    // bar near the left edge with " (manual)" appended would otherwise start
+    // the label off-screen and drop its leading digit.
+    const int textWidth = painter.fontMetrics().horizontalAdvance(text);
+    const int left = scaleBarLabelLeft((x0 + x1) / 2, textWidth, width());
+    const QRect textRect(left, labelY, width() - left, kLabelHeight);
+    painter.drawText(textRect, Qt::AlignLeft | Qt::AlignTop, text);
 }
 
 } // namespace slideio::viewer::ui

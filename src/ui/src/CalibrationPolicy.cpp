@@ -1,5 +1,7 @@
 #include "slideio/viewer/ui/CalibrationPolicy.h"
 
+#include <algorithm>
+
 namespace slideio::viewer::ui
 {
 
@@ -19,6 +21,12 @@ std::string calibrationBadgeText(core::CalibrationSource source)
 std::string scaleBarSuffix(core::CalibrationSource source)
 {
     return source == core::CalibrationSource::Manual ? " (manual)" : "";
+}
+
+int scaleBarLabelLeft(int barCentre, int textWidth, int widgetWidth)
+{
+    const int centred = barCentre - textWidth / 2;
+    return std::max(0, std::min(centred, widgetWidth - textWidth));
 }
 
 CalibrationPrefill calibrationPrefill(std::optional<core::PixelSize> currentOverride, double metadataXMetres,

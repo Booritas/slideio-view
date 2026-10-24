@@ -32,6 +32,7 @@ protected:
     // slide open would lose up to a full autosave debounce of work.
     void closeEvent(QCloseEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void changeEvent(QEvent* event) override;
 
 private:
     void onSetDefaultColorProfile();

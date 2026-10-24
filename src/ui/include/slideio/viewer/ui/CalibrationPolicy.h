@@ -18,6 +18,13 @@ namespace slideio::viewer::ui
 /// of a length, so it has nothing to append.
 [[nodiscard]] std::string scaleBarSuffix(core::CalibrationSource source);
 
+/// Left edge, in widget pixels, of a scale-bar label `textWidth` wide: centred
+/// on the bar's `barCentre`, but moved to stay inside a widget `widgetWidth`
+/// wide, and pinned to 0 when it cannot fit. A label that starts off the left
+/// edge loses its leading digit -- "20000 um" reads as "0000 um", a scale wrong
+/// by an order of magnitude -- and " (manual)" makes the label long enough to.
+[[nodiscard]] int scaleBarLabelLeft(int barCentre, int textWidth, int widgetWidth);
+
 /// What the Calibration dialog opens with.
 struct CalibrationPrefill
 {

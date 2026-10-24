@@ -50,3 +50,16 @@ TEST_CASE("an out-of-range entry names the range", "[ui][CalibrationPolicy]")
     }
     CHECK(calibrationInputError(0.5, 0.5).empty());
 }
+
+TEST_CASE("the scale bar label never starts outside the widget", "[ui][CalibrationPolicy]")
+{
+    // A short bar near the left edge with a long "(manual)" label: centring on
+    // the bar alone started it at a negative x and clipped the leading digit.
+    CHECK(scaleBarLabelLeft(40, 88, 200) == 0);
+    // Room on both sides: centred under the bar.
+    CHECK(scaleBarLabelLeft(100, 40, 200) == 80);
+    // Never past the right edge either.
+    CHECK(scaleBarLabelLeft(190, 40, 200) == 160);
+    // Wider than the widget: start at the left, where the number is.
+    CHECK(scaleBarLabelLeft(100, 260, 200) == 0);
+}

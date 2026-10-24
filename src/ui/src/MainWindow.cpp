@@ -370,7 +370,10 @@ struct MainWindow::Impl
     /// Recomputes currentCalibration from the open scene's metadata and its
     /// stored override, and hands it to every surface that shows a physical
     /// number. The only place measurement reads SlideInfo::resolutionX/Y.
-    void refreshCalibration();
+    /// Always pushes on open and apply; IfChanged re-reads the store -- another
+    /// window may have changed it -- and pushes only a different value.
+    enum class CalibrationRefresh { Always, IfChanged };
+    void refreshCalibration(CalibrationRefresh mode = CalibrationRefresh::Always);
     /// View > Calibration...: the dialog, the store, the log line.
     void editCalibration();
     /// The one save-dialog-and-write every export uses: offers `suggestedName`
@@ -2141,6 +2144,8 @@ void MainWindow::Impl::exportMeasurements()
     if (!annotationsReadyToExport(tr("Export Measurements"))) {
         return;
     }
+    // Another window may have changed this scene's calibration since it opened.
+    refreshCalibration(CalibrationRefresh::IfChanged);
 
     const std::string slidePath = viewportWidget->currentFilePath();
     const int sceneIndex = viewportWidget->currentSceneIndex();
@@ -2179,7 +2184,7 @@ void MainWindow::Impl::exportMeasurements()
     }
 }
 
-void MainWindow::Impl::refreshCalibration()
+void MainWindow::Impl::refreshCalibration(CalibrationRefresh mode)
 {
     const core::SlideInfo& info = viewportWidget->slideInfo();
     const std::string slideId = viewportWidget->currentSlideId();
@@ -2189,7 +2194,17 @@ void MainWindow::Impl::refreshCalibration()
             stored = entry->micronsPerPixel;
         }
     }
-    currentCalibration = core::effectiveCalibration(info.resolutionX, info.resolutionY, stored);
+    const core::Calibration fresh = core::effectiveCalibration(info.resolutionX, info.resolutionY, stored);
+    const bool changed = fresh.source != currentCalibration.source
+                         || fresh.micronsPerPixel.x != currentCalibration.micronsPerPixel.x
+                         || fresh.micronsPerPixel.y != currentCalibration.micronsPerPixel.y;
+    currentCalibration = fresh;
+    // A re-check that found nothing new pushes nothing: the panel repopulates
+    // on setCalibration, which would disturb an edit in progress every time
+    // the window was activated.
+    if (mode == CalibrationRefresh::IfChanged && !changed) {
+        return;
+    }
     zoomIndicatorWidget->setCalibration(currentCalibration);
     propertiesPanel->setCalibration(currentCalibration);
     if (annotationPropertiesPanel != nullptr) {
@@ -2205,6 +2220,9 @@ void MainWindow::Impl::editCalibration()
     }
     const int sceneIndex = viewportWidget->currentSceneIndex();
     const core::SlideInfo& info = viewportWidget->slideInfo();
+    // So "before" in the log line, and the screen behind the dialog, are the
+    // stored value and not one another window has since replaced.
+    refreshCalibration(CalibrationRefresh::IfChanged);
     const auto existing = calibrationStore->find(slideId, sceneIndex);
 
     CalibrationDialog dialog(info.resolutionX, info.resolutionY,
@@ -2272,6 +2290,8 @@ void MainWindow::Impl::exportAnnotations()
     if (!annotationsReadyToExport(tr("Export Annotations"))) {
         return;
     }
+    // Another window may have changed this scene's calibration since it opened.
+    refreshCalibration(CalibrationRefresh::IfChanged);
 
     const std::string slidePath = viewportWidget->currentFilePath();
     const int sceneIndex = viewportWidget->currentSceneIndex();
@@ -3127,6 +3147,19 @@ void MainWindow::onClearSlideColorProfile()
     m_impl->viewportWidget->reopenCurrentScene();
     m_impl->statusBarManager->showTransientMessage(
         QString::fromStdString(clearedSlideProfileMessage()));
+}
+
+void MainWindow::changeEvent(QEvent* event)
+{
+    // Calibration overrides are shared by every window through QSettings, but
+    // a window reads them only on open. Re-read on activation, so a window the
+    // user comes back to never measures with a value they have since replaced
+    // elsewhere -- unbadged, if it opened on the metadata.
+    if (event->type() == QEvent::ActivationChange && isActiveWindow() && m_impl->viewportWidget != nullptr
+        && m_impl->viewportWidget->isSlideOpen()) {
+        m_impl->refreshCalibration(Impl::CalibrationRefresh::IfChanged);
+    }
+    QMainWindow::changeEvent(event);
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
