@@ -14,6 +14,7 @@
 #include <cmath>
 #include <optional>
 #include <string>
+#include <variant>
 
 namespace slideio::viewer::ui
 {
@@ -23,7 +24,7 @@ namespace
 
 constexpr const char* kHeader =
     "id,type,label,classification,center_x_px,center_y_px,area_px2,perimeter_px,length_px,"
-    "area_um2,perimeter_um,length_um,area_note,pixel_width_um,pixel_height_um,calibration_source,"
+    "area_um2,perimeter_um,length_um,angle_deg,area_note,pixel_width_um,pixel_height_um,calibration_source,"
     "slide,scene,slide_id,exported_at";
 
 /// Appends one number cell, or nothing for an absent value. Fixed notation at
@@ -70,6 +71,22 @@ Columns columnsOf(const core::ShapeMetrics& metrics, bool measured)
     return columns;
 }
 
+/// An angle's degrees, measured in physical space when the slide is calibrated
+/// -- on non-square pixels that is the true angle -- and in pixel space when
+/// not, as the on-slide label reads it. Absent for every other shape and for
+/// an angle with a ray of no length.
+std::optional<double> angleDegreesOf(const core::AnnotationGeometry& geometry,
+                                     const MeasurementExportContext& context, bool calibrated)
+{
+    const auto* angle = std::get_if<core::AngleGeometry>(&geometry);
+    if (angle == nullptr) {
+        return std::nullopt;
+    }
+    return core::angleDegrees(*angle, calibrated ? core::PixelSize{context.pixelWidthMicrons,
+                                                                   context.pixelHeightMicrons}
+                                                 : core::PixelSize{1.0, 1.0});
+}
+
 } // namespace
 
 MeasurementExportResult annotationMeasurementCsv(const std::vector<core::Annotation>& annotations,
@@ -94,8 +111,11 @@ MeasurementExportResult annotationMeasurementCsv(const std::vector<core::Annotat
         // A point is counted, not measured: its outline has no length or area
         // to report, and a zero in those columns would read as a finding.
         // Nor is a text: it marks a place for words, and has no size to report.
-        const bool measured =
-            annotation.type() != core::AnnotationType::Point && annotation.type() != core::AnnotationType::Text;
+        // An angle's path length means nothing: its measurement is the angle,
+        // in angle_deg, and the length columns stay empty.
+        const bool measured = annotation.type() != core::AnnotationType::Point
+                              && annotation.type() != core::AnnotationType::Text
+                              && annotation.type() != core::AnnotationType::Angle;
         const core::ShapeMetrics pixels = core::measure(annotation.geometry(), core::PixelSize{1.0, 1.0});
         const Columns inPixels = columnsOf(pixels, measured);
         Columns inMicrons;
@@ -127,7 +147,7 @@ MeasurementExportResult annotationMeasurementCsv(const std::vector<core::Annotat
         for (const std::optional<double>& value :
              {std::optional<double>(box.x + box.width * 0.5), std::optional<double>(box.y + box.height * 0.5),
               inPixels.area, inPixels.perimeter, inPixels.length, inMicrons.area, inMicrons.perimeter,
-              inMicrons.length}) {
+              inMicrons.length, angleDegreesOf(annotation.geometry(), context, calibrated)}) {
             row += ',';
             finite = appendNumber(row, value) && finite;
         }

@@ -15,6 +15,7 @@ add_library(slideio-viewer-ui STATIC
     src/TextAnnotationLayout.cpp
     src/CalibrationPolicy.cpp
     src/CalibrationDialog.cpp
+    src/MeasurementLabel.cpp
     src/AnnotationImportSummary.cpp
     src/AnnotationInteraction.cpp
     src/AnnotationShapeName.cpp

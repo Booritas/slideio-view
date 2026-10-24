@@ -84,6 +84,7 @@ add_executable(slideio-viewer-ui-tests
     ui/AnnotationMeasurementExportTest.cpp
     ui/TextAnnotationLayoutTest.cpp
     ui/CalibrationPolicyTest.cpp
+    ui/MeasurementLabelTest.cpp
     ui/AnnotationImportSummaryTest.cpp
     ui/AnnotationInteractionTest.cpp
     ui/AnnotationListPolicyTest.cpp

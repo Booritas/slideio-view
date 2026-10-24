@@ -1,3 +1,4 @@
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "slideio/viewer/ui/AnnotationMeasurementExport.h"
@@ -18,7 +19,7 @@ namespace
 
 const std::string kHeader =
     "id,type,label,classification,center_x_px,center_y_px,area_px2,perimeter_px,length_px,"
-    "area_um2,perimeter_um,length_um,area_note,pixel_width_um,pixel_height_um,calibration_source,"
+    "area_um2,perimeter_um,length_um,angle_deg,area_note,pixel_width_um,pixel_height_um,calibration_source,"
     "slide,scene,slide_id,exported_at";
 
 const auto kExportedAt = std::chrono::system_clock::from_time_t(static_cast<std::time_t>(1792576800LL));
@@ -381,4 +382,31 @@ TEST_CASE("each row says where its calibration came from", "[ui][AnnotationMeasu
     CHECK(cell(noneRows, 0, "calibration_source") == "none");
     CHECK(cell(noneRows, 0, "area_um2").empty());
     CHECK(cell(noneRows, 0, "pixel_width_um").empty());
+}
+
+TEST_CASE("an angle fills angle_deg and no length; a ruler fills length and no angle", "[ui][AnnotationMeasurementExport]")
+{
+    const std::vector<core::Annotation> annotations = {
+        shape("g", core::AngleGeometry{core::PointF{10, 0}, core::PointF{0, 0}, core::PointF{0, 10}}),
+        shape("r", core::RulerGeometry{core::PointF{0, 0}, core::PointF{3, 4}}),
+        shape("d", core::AngleGeometry{core::PointF{0, 0}, core::PointF{0, 0}, core::PointF{0, 10}}),
+    };
+    const std::vector<Row> rows = exportRows(annotations, calibrated(1.0, 1.0));
+    CHECK(cell(rows, 0, "type") == "angle");
+    CHECK(cell(rows, 0, "angle_deg") == "90");
+    CHECK(cell(rows, 0, "length_px").empty());
+    CHECK(cell(rows, 0, "length_um").empty());
+    CHECK(cell(rows, 1, "type") == "ruler");
+    CHECK(cell(rows, 1, "length_px") == "5");
+    CHECK(cell(rows, 1, "angle_deg").empty());
+    // A ray of no length has no angle: an empty cell, never a zero.
+    CHECK(cell(rows, 2, "angle_deg").empty());
+}
+
+TEST_CASE("the angle is the calibrated one on non-square pixels", "[ui][AnnotationMeasurementExport]")
+{
+    const std::vector<core::Annotation> annotations = {
+        shape("g", core::AngleGeometry{core::PointF{1, 0}, core::PointF{0, 0}, core::PointF{1, 1}})};
+    const std::string degrees = cell(exportRows(annotations, calibrated(1.0, 2.0)), 0, "angle_deg");
+    CHECK(std::stod(degrees) == Catch::Approx(63.4349488).epsilon(1e-6));
 }

@@ -717,3 +717,25 @@ TEST_CASE("categoryTally does not count text annotations", "[ui][CategoryTally]"
     }
     CHECK(sum == 3);
 }
+
+TEST_CASE("categoryTally does not count rulers or angles", "[ui][CategoryTally]")
+{
+    // A measurement of a tumour is not a second tumour.
+    const auto classified = [](const std::string& id, core::AnnotationGeometry geometry) {
+        core::Annotation annotation(id, std::move(geometry));
+        core::AnnotationProperties properties = annotation.properties();
+        properties.classification = "Tumor";
+        annotation.setProperties(properties);
+        return annotation;
+    };
+    const std::vector<core::Annotation> annotations{
+        markerWith("a", "Tumor"),
+        classified("r", core::RulerGeometry{core::PointF{0, 0}, core::PointF{5, 5}}),
+        classified("g", core::AngleGeometry{core::PointF{1, 0}, core::PointF{0, 0}, core::PointF{0, 1}}),
+        core::Annotation("u", core::RulerGeometry{core::PointF{0, 0}, core::PointF{1, 1}}),
+    };
+    const auto rows = ui::categoryTally(annotations, {"Tumor"});
+    REQUIRE(rows.size() == 1);
+    CHECK(rows[0].category == "Tumor");
+    CHECK(rows[0].count == 1);
+}

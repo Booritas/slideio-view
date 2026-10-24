@@ -193,9 +193,13 @@ std::vector<CategoryTallyRow> categoryTally(const std::vector<core::Annotation>&
 
     std::size_t unclassified = 0;
     for (const core::Annotation& annotation : annotations) {
-        // A text is a note, not a finding. Counting it would change a clinical
-        // count -- and the counts export, built from this same call, with it.
-        if (annotation.type() == core::AnnotationType::Text) {
+        // A text is a note and a ruler or angle a measurement, not findings.
+        // Counting one would change a clinical count -- a ruler classified
+        // Tumor is a tumour's size, not a second tumour -- and the counts
+        // export, built from this same call, with it.
+        const core::AnnotationType type = annotation.type();
+        if (type == core::AnnotationType::Text || type == core::AnnotationType::Ruler
+            || type == core::AnnotationType::Angle) {
             continue;
         }
         const std::string clean = core::trimAsciiWhitespace(annotation.properties().classification);
