@@ -250,18 +250,20 @@ Written before the run.
 
 | | Check | Result |
 |---|---|---|
-| AJ1 | T selects the Text tool; on a read-only slide the tool is disabled and T does nothing. | |
-| AJ2 | Click, type "Invasive carcinoma", Enter: the words appear at the click, in the annotation colour on a translucent plate; the list shows a Text row with those words. | |
-| AJ3 | Zoom from 1× to 40× and back: the words stay the same size on screen and stay at the clicked tissue. | |
-| AJ4 | Click, type, Escape: nothing is created. Click, Enter with nothing typed: nothing is created. | |
-| AJ5 | Click, type, then click elsewhere / change tool / Ctrl+W: the words are kept in each case, and after reopening the slide they are there. | |
-| AJ6 | Undo after creating a text removes it in one step; redo restores it with its words. | |
-| AJ7 | Double-click a text, change its words, Enter: one undo step reverts to the old words; clearing the words and pressing Enter keeps the old words. | |
-| AJ8 | Drag a text by its plate: it moves, one undo step. A text over a polygon drawn earlier is the one a click selects; a polygon drawn later over a text wins where they overlap. | |
-| AJ9 | Clear a text's label in the properties panel: the annotation still shows its dot and "(empty)" and can be selected and deleted. | |
-| AJ10 | With a text classified Tumor and markers counted under Tumor, the counting strip's Tumor count excludes the text, and so does Export Counts. | |
-| AJ11 | Export GeoJSON and Measurements: the text is a named Point with `slideio.type` `text`, and a measurements row of type `text`; importing the GeoJSON into an empty scene brings the text back as text. | |
-| AJ12 | An annotation file with a text annotation, opened by a build from before this change: refused naming `text`, and the file unchanged byte for byte. | |
+| AJ1 | T selects the Text tool; on a read-only slide the tool is disabled and T does nothing. | **Pass.** Read-only produced by a second instance on the same slide (lock contention): Tools > Text disabled, T then a click opened no editor. In the editable instance T + click opened one. |
+| AJ2 | Click, type "Invasive carcinoma", Enter: the words appear at the click, in the annotation colour on a translucent plate; the list shows a Text row with those words. | **Pass.** Saved as `type: text` with the label. Observed: at the default fill opacity the plate is faint, and orange words over dark tissue are hard to read — as specified, recorded for the owner. |
+| AJ3 | Zoom from 1× to 40× and back: the words stay the same size on screen and stay at the clicked tissue. | **Pass**, zooming with the wheel at the anchor six notches in and twelve out; the glyphs and plate were the same pixel size in every capture. |
+| AJ4 | Click, type, Escape: nothing is created. Click, Enter with nothing typed: nothing is created. | **Pass.** Annotation count unchanged after each. |
+| AJ5 | Click, type, then click elsewhere / change tool / Ctrl+W: the words are kept in each case, and after reopening the slide they are there. | **Pass.** The tool change was made from the Tools menu: a bare-letter tool key typed into the editor goes into the words, as it should. All three texts were in the file and on screen after a relaunch. |
+| AJ6 | Undo after creating a text removes it in one step; redo restores it with its words. | **Pass** (count 4 → 3 → 4, words intact). |
+| AJ7 | Double-click a text, change its words, Enter: one undo step reverts to the old words; clearing the words and pressing Enter keeps the old words. | **Pass.** |
+| AJ8 | Drag a text by its plate: it moves, one undo step. A text over a polygon drawn earlier is the one a click selects; a polygon drawn later over a text wins where they overlap. | **Pass.** The later shape was a rectangle, not a polygon — the same `topmostOf` rule. |
+| AJ9 | Clear a text's label in the properties panel: the annotation still shows its dot and "(empty)" and can be selected and deleted. | **Pass.** "(empty)" in grey italic; a click on its plate selected it and Delete removed it. |
+| AJ10 | With a text classified Tumor and markers counted under Tumor, the counting strip's Tumor count excludes the text, and so does Export Counts. | **Pass.** Strip and export both read Tumor 2, Unclassified 6 — eight non-text annotations, the Tumor text in neither. The text's and markers' classifications were set in the file with the viewer closed: on 2026-10-24 scripted input into the right-hand docks did not take (see below). |
+| AJ11 | Export GeoJSON and Measurements: the text is a named Point with `slideio.type` `text`, and a measurements row of type `text`; importing the GeoJSON into an empty scene brings the text back as text. | **Pass.** Four `text` rows with position and empty measurements; four named Points, Kept A carrying `classification` Tumor; imported into `CMU-1-Small-Region-page-2.tif` all four came back as `text` with words, class and anchor. |
+| AJ12 | An annotation file with a text annotation, opened by a build from before this change: refused naming `text`, and the file unchanged byte for byte. | **Pass.** `unknown geometry type 'text' -- this file may have been written by a newer version of the viewer`; SHA-256 identical before and after. |
+
+Run 2026-10-23/24 on CMU-1-Small-Region against `85900ee`, **12 of 12 pass**, the annotation file backed up before and restored after. One driving artefact is left open rather than explained: on 2026-10-24, after the second monitor woke, a scripted click in the properties panel or the counting box cleared the viewport's selection on its release, and pasted text did not arrive. The pre-change viewer did the same, so it is not this change; the same panel edit had worked on 2026-10-23 (AJ9), and the owner edits classifications through it routinely (group AC). If it is ever seen by hand, it is a defect.
 
 ## 7. Requirements
 
