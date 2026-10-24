@@ -400,3 +400,18 @@ TEST_CASE("the collection names its calibration source", "[core][GeoJson]")
     REQUIRE(withNone.at("slideio").at("calibrationSource") == "none");
     REQUIRE_FALSE(withNone.at("slideio").contains("pixelSizeMicrons"));
 }
+
+TEST_CASE("a ruler and an angle are tagged LineStrings, points in order", "[core][GeoJson]")
+{
+    const json ruler = onlyGeometry(RulerGeometry{PointF{9, 8}, PointF{1, 2}});
+    REQUIRE(ruler.at("type") == "LineString");
+    REQUIRE(ruler.at("coordinates") == json::array({position(9, 8), position(1, 2)}));
+    const json angle = onlyGeometry(AngleGeometry{PointF{5, 0}, PointF{0, 0}, PointF{0, 5}});
+    REQUIRE(angle.at("type") == "LineString");
+    REQUIRE(angle.at("coordinates") == json::array({position(5, 0), position(0, 0), position(0, 5)}));
+
+    const json collection = exportAndParse({Annotation("r1", RulerGeometry{PointF{0, 0}, PointF{1, 1}}),
+                                            Annotation("g1", AngleGeometry{PointF{1, 0}, PointF{0, 0}, PointF{0, 1}})});
+    REQUIRE(collection.at("features").at(0).at("properties").at("slideio").at("type") == "ruler");
+    REQUIRE(collection.at("features").at(1).at("properties").at("slideio").at("type") == "angle");
+}

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <string>
+#include <variant>
 
 namespace slideio::viewer::core
 {
@@ -159,8 +160,45 @@ ShapeMetrics measureOutline(const Outline& shape, PixelSize pixelSize, bool self
 
 } // namespace
 
+std::optional<double> angleDegrees(const AngleGeometry& angle, PixelSize pixelSize)
+{
+    // Scaled first, as every other measurement is: on non-square pixels the
+    // physical angle is not the pixel-space one, and the physical one is true.
+    const double sx = pixelSize.x > 0.0 ? pixelSize.x : 0.0;
+    const double sy = pixelSize.y > 0.0 ? pixelSize.y : 0.0;
+    const double ax = (angle.first.x - angle.vertex.x) * sx;
+    const double ay = (angle.first.y - angle.vertex.y) * sy;
+    const double bx = (angle.second.x - angle.vertex.x) * sx;
+    const double by = (angle.second.y - angle.vertex.y) * sy;
+    // A ray of no length has no direction; 0 would read as a measurement.
+    if ((ax == 0.0 && ay == 0.0) || (bx == 0.0 && by == 0.0)) {
+        return std::nullopt;
+    }
+    // atan2 of |cross| and dot: exact near 0 and 180, where acos is not.
+    constexpr double kDegreesPerRadian = 57.29577951308232;
+    return std::atan2(std::abs(ax * by - ay * bx), ax * bx + ay * by) * kDegreesPerRadian;
+}
+
+namespace
+{
+
+/// The angle, filled in for an angle and only for one, so every caller of
+/// measure() gets it from the same call that gives everything else.
+ShapeMetrics withAngle(ShapeMetrics metrics, const AnnotationGeometry& geometry, PixelSize pixelSize)
+{
+    if (const auto* angle = std::get_if<AngleGeometry>(&geometry)) {
+        metrics.angleDegrees = angleDegrees(*angle, pixelSize);
+    }
+    return metrics;
+}
+
+} // namespace
+
 ShapeMetrics measure(const AnnotationGeometry& geometry, PixelSize pixelSize)
 {
+    if (std::holds_alternative<AngleGeometry>(geometry)) {
+        return withAngle(measureOutline(outline(geometry), pixelSize, false), geometry, pixelSize);
+    }
     // A shape type whose area is always well defined has nothing to learn from
     // the O(n^2) test. An ellipse carries kEllipseOutlineVertices points, so
     // asking costs about 131000 segment-pair comparisons -- and on a degenerate
@@ -193,7 +231,7 @@ ShapeMetrics measureKnown(const AnnotationGeometry& geometry, PixelSize pixelSiz
     // same box hitTest uses and paintAnnotations strokes. Measuring from it is
     // what keeps the number, the painted region and the hit-tested region in
     // agreement, and means a new geometry type needs no change here.
-    return measureOutline(outline(geometry), pixelSize, selfIntersecting);
+    return withAngle(measureOutline(outline(geometry), pixelSize, selfIntersecting), geometry, pixelSize);
 }
 
 namespace

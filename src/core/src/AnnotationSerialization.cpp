@@ -36,6 +36,8 @@ constexpr const char* kPolylineTypeName = "polyline";
 constexpr const char* kPointTypeName = "point";
 constexpr const char* kArrowTypeName = "arrow";
 constexpr const char* kTextTypeName = "text";
+constexpr const char* kRulerTypeName = "ruler";
+constexpr const char* kAngleTypeName = "angle";
 
 bool isFinitePoint(const PointF& point)
 {
@@ -72,6 +74,16 @@ bool isRepresentableShape(const ArrowGeometry& arrow)
 bool isRepresentableShape(const TextGeometry& text)
 {
     return isFinitePoint(text.anchor);
+}
+
+bool isRepresentableShape(const RulerGeometry& ruler)
+{
+    return isFinitePoint(ruler.start) && isFinitePoint(ruler.end);
+}
+
+bool isRepresentableShape(const AngleGeometry& angle)
+{
+    return isFinitePoint(angle.first) && isFinitePoint(angle.vertex) && isFinitePoint(angle.second);
 }
 
 bool isRepresentableShape(const PolygonGeometry& poly)
@@ -177,6 +189,27 @@ json shapeToJson(const TextGeometry& text)
     };
 }
 
+// Named points rather than a vertex array, as the arrow's are: the order is
+// the measurement, and the names say which point is which.
+json shapeToJson(const RulerGeometry& ruler)
+{
+    return json{
+        {"type", kRulerTypeName},
+        {"start", pointToJson(ruler.start)},
+        {"end", pointToJson(ruler.end)},
+    };
+}
+
+json shapeToJson(const AngleGeometry& angle)
+{
+    return json{
+        {"type", kAngleTypeName},
+        {"first", pointToJson(angle.first)},
+        {"vertex", pointToJson(angle.vertex)},
+        {"second", pointToJson(angle.second)},
+    };
+}
+
 /// The geometry "type" string for a polygon-shaped path. Shared by the geometry
 /// object and the annotation-level field, so the closed/open choice is made once.
 const char* polygonTypeName(const PolygonGeometry& poly)
@@ -220,6 +253,10 @@ const char* geometryTypeName(const AnnotationGeometry& geometry)
             return kArrowTypeName;
         } else if constexpr (std::is_same_v<Shape, TextGeometry>) {
             return kTextTypeName;
+        } else if constexpr (std::is_same_v<Shape, RulerGeometry>) {
+            return kRulerTypeName;
+        } else if constexpr (std::is_same_v<Shape, AngleGeometry>) {
+            return kAngleTypeName;
         } else {
             static_assert(sizeof(Shape) == 0, "A new geometry alternative needs its own type name here.");
         }
@@ -477,6 +514,39 @@ bool readText(const json& value, AnnotationGeometry& out, std::string& problem)
     return true;
 }
 
+bool readNamedPoint(const json& value, const char* key, PointF& point, std::string& problem)
+{
+    if (!value.contains(key) || !readPoint(value.at(key), point)) {
+        problem = std::string("geometry.") + key + " is not a finite point";
+        return false;
+    }
+    return true;
+}
+
+// A zero-length ruler and a degenerate angle are accepted, as a zero-length
+// arrow is: refusing one would make the whole document unloadable. Their
+// measurement says what they are -- length 0, no angle.
+bool readRuler(const json& value, AnnotationGeometry& out, std::string& problem)
+{
+    RulerGeometry ruler;
+    if (!readNamedPoint(value, "start", ruler.start, problem) || !readNamedPoint(value, "end", ruler.end, problem)) {
+        return false;
+    }
+    out = ruler;
+    return true;
+}
+
+bool readAngle(const json& value, AnnotationGeometry& out, std::string& problem)
+{
+    AngleGeometry angle;
+    if (!readNamedPoint(value, "first", angle.first, problem) || !readNamedPoint(value, "vertex", angle.vertex, problem)
+        || !readNamedPoint(value, "second", angle.second, problem)) {
+        return false;
+    }
+    out = angle;
+    return true;
+}
+
 bool readPolygon(const json& value, bool closed, AnnotationGeometry& out, std::string& problem)
 {
     if (!value.contains("vertices") || !value.at("vertices").is_array()) {
@@ -540,6 +610,12 @@ bool readGeometry(const json& value, AnnotationGeometry& out, std::string& probl
     // and without it the application would write text it then refuses to open.
     if (type == kTextTypeName) {
         return readText(value, out, problem);
+    }
+    if (type == kRulerTypeName) {
+        return readRuler(value, out, problem);
+    }
+    if (type == kAngleTypeName) {
+        return readAngle(value, out, problem);
     }
 
     // Naming the version is the whole value of this message: schemaVersion

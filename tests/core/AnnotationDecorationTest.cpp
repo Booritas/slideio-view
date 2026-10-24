@@ -161,3 +161,15 @@ TEST_CASE("a text's anchor is a disc at half the marker's radius", "[core][Annot
     CHECK(glyph->anchor.y == 4.0);
     CHECK(glyph->sizePixels == 3.0);
 }
+
+TEST_CASE("a ruler decorates with end caps; an angle with nothing", "[core][AnnotationDecoration]")
+{
+    const std::optional<ScreenDecoration> caps =
+        screenDecoration(RulerGeometry{PointF{0.0, 0.0}, PointF{100.0, 0.0}}, 1.0, kRadius);
+    REQUIRE(caps.has_value());
+    CHECK(caps->kind == ScreenDecoration::Kind::EndCaps);
+    CHECK(caps->sizePixels == kRulerEndCapScreenPixels);
+    CHECK(caps->anchor.x == 0.0);
+    CHECK_FALSE(screenDecoration(AngleGeometry{PointF{1, 0}, PointF{0, 0}, PointF{0, 1}}, 1.0, kRadius)
+                    .has_value());
+}

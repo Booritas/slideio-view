@@ -796,3 +796,33 @@ TEST_CASE("a text goes to GeoJSON as a named Point and comes back as text", "[co
     CHECK(text.properties().label == properties.label);
     CHECK(imported.annotations[1].type() == AnnotationType::Point);
 }
+
+TEST_CASE("a ruler and an angle come back from GeoJSON as themselves", "[core][GeoJsonImport]")
+{
+    const std::vector<Annotation> original = {
+        Annotation("r1", RulerGeometry{PointF{90, 60}, PointF{10, 20}}),
+        Annotation("g1", AngleGeometry{PointF{30, 5}, PointF{10, 10}, PointF{12, 40}}),
+    };
+    const GeoJsonExportResult exported = annotationsToGeoJson(original, GeoJsonExportContext{}, kImportedAt);
+    REQUIRE(exported.error.empty());
+    const AnnotationImportResult imported = readOk(exported.text);
+    REQUIRE(imported.annotations.size() == 2);
+    REQUIRE(imported.annotations[0].type() == AnnotationType::Ruler);
+    CHECK(std::get<RulerGeometry>(imported.annotations[0].geometry()).start.x == 90.0);
+    CHECK(std::get<RulerGeometry>(imported.annotations[0].geometry()).end.y == 20.0);
+    REQUIRE(imported.annotations[1].type() == AnnotationType::Angle);
+    CHECK(std::get<AngleGeometry>(imported.annotations[1].geometry()).vertex.x == 10.0);
+}
+
+TEST_CASE("a LineString's tag does not override its geometry", "[core][GeoJsonImport]")
+{
+    // Three positions without a tag, and three positions tagged as a ruler:
+    // both are ordinary polylines -- the geometry wins.
+    const std::string untagged = R"({"type":"Feature","geometry":{"type":"LineString","coordinates":[[0,0],[1,0],[1,1]]},"properties":{}})";
+    const std::string wrongTag = R"({"type":"Feature","geometry":{"type":"LineString","coordinates":[[0,0],[1,0],[1,1]]},"properties":{"slideio":{"type":"ruler"}}})";
+    for (const std::string& text : {untagged, wrongTag}) {
+        const AnnotationImportResult imported = readOk(text);
+        REQUIRE(imported.annotations.size() == 1);
+        CHECK(imported.annotations[0].type() == AnnotationType::Polyline);
+    }
+}

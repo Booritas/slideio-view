@@ -370,6 +370,75 @@ bool wellDefinedArea(const TextGeometry&)
     return false;
 }
 
+// The ruler and the angle are open paths through their points in the order
+// drawn; every function below follows from that, as the arrow's do.
+RectF normalized(const RulerGeometry& ruler)
+{
+    return normalizedCorners(ruler.start, ruler.end);
+}
+
+RectF normalized(const AngleGeometry& angle)
+{
+    const double left = std::min({angle.first.x, angle.vertex.x, angle.second.x});
+    const double top = std::min({angle.first.y, angle.vertex.y, angle.second.y});
+    const double right = std::max({angle.first.x, angle.vertex.x, angle.second.x});
+    const double bottom = std::max({angle.first.y, angle.vertex.y, angle.second.y});
+    return RectF{left, top, right - left, bottom - top};
+}
+
+bool hitTestShape(const RulerGeometry& ruler, PointF point, double tolerance)
+{
+    return distanceToSegment(ruler.start, ruler.end, point) <= tolerance;
+}
+
+bool hitTestShape(const AngleGeometry& angle, PointF point, double tolerance)
+{
+    return distanceToSegment(angle.vertex, angle.first, point) <= tolerance
+           || distanceToSegment(angle.vertex, angle.second, point) <= tolerance;
+}
+
+AnnotationType typeOfShape(const RulerGeometry&)
+{
+    return AnnotationType::Ruler;
+}
+
+AnnotationType typeOfShape(const AngleGeometry&)
+{
+    return AnnotationType::Angle;
+}
+
+Outline outlineShape(const RulerGeometry& ruler)
+{
+    return Outline{{ruler.start, ruler.end}, false};
+}
+
+Outline outlineShape(const AngleGeometry& angle)
+{
+    return Outline{{angle.first, angle.vertex, angle.second}, false};
+}
+
+AnnotationGeometry translatedShape(const RulerGeometry& ruler, double dx, double dy)
+{
+    return RulerGeometry{PointF{ruler.start.x + dx, ruler.start.y + dy}, PointF{ruler.end.x + dx, ruler.end.y + dy}};
+}
+
+AnnotationGeometry translatedShape(const AngleGeometry& angle, double dx, double dy)
+{
+    return AngleGeometry{PointF{angle.first.x + dx, angle.first.y + dy},
+                         PointF{angle.vertex.x + dx, angle.vertex.y + dy},
+                         PointF{angle.second.x + dx, angle.second.y + dy}};
+}
+
+bool wellDefinedArea(const RulerGeometry&)
+{
+    return false;
+}
+
+bool wellDefinedArea(const AngleGeometry&)
+{
+    return false;
+}
+
 } // namespace
 
 PointF closestPointOnSegment(PointF a, PointF b, PointF point)

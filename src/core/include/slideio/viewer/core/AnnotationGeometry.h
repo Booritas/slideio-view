@@ -73,6 +73,27 @@ struct TextGeometry
 
 /// Named kind of a shape. Derived from the geometry rather than stored
 /// alongside it, so the two cannot disagree -- see typeOf() below.
+/// A distance measured on the slide (FR-ANN-07): two points, its length drawn
+/// beside it. Its own alternative, not a two-point polyline or arrow, because
+/// typeOf() derives the type from the alternative. The points are kept as
+/// drawn and never normalised -- the direction changes no length, but it is
+/// what the user drew and what the GeoJSON writes.
+struct RulerGeometry
+{
+    PointF start;
+    PointF end;
+};
+
+/// An angle measured on the slide (FR-ANN-09): two rays from `vertex`, to
+/// `first` and to `second`, in the order drawn. Its outline is the open path
+/// first -> vertex -> second.
+struct AngleGeometry
+{
+    PointF first;
+    PointF vertex;
+    PointF second;
+};
+
 enum class AnnotationType
 {
     Rectangle,
@@ -82,6 +103,8 @@ enum class AnnotationType
     Point,
     Arrow,
     Text,
+    Ruler,
+    Angle,
 };
 
 /// A sequence of vertices, closed into a polygon (FR-ANN-03) or left open as a
@@ -123,7 +146,8 @@ constexpr std::size_t kEllipseOutlineVertices = 512;
 // alternative, and AnnotationSerialization.cpp relies on that when it builds a
 // placeholder Annotation to parse into.
 using AnnotationGeometry = std::variant<RectangleGeometry, PolygonGeometry, EllipseGeometry,
-                                        PointGeometry, ArrowGeometry, TextGeometry>;
+                                        PointGeometry, ArrowGeometry, TextGeometry, RulerGeometry,
+                                        AngleGeometry>;
 
 /// Always positive-extent: a shape built from an inverted drag is normalised.
 [[nodiscard]] RectF boundingBox(const AnnotationGeometry& geom);

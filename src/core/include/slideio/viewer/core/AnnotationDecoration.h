@@ -24,6 +24,9 @@ constexpr double kArrowHeadScreenPixels = 12.0;
 /// or at low zoom; proportional alone means it disappears.
 constexpr double kArrowHeadMaxShaftFraction = 0.5;
 
+/// Half the length of a ruler's end caps, in screen pixels.
+constexpr double kRulerEndCapScreenPixels = 6.0;
+
 /// A glyph that must keep its size on SCREEN, for a shape whose slide-space
 /// outline cannot express it.
 ///
@@ -38,6 +41,7 @@ struct ScreenDecoration
     {
         Disc,
         ArrowHead,
+        EndCaps,
     };
 
     Kind kind;
@@ -63,6 +67,9 @@ struct ScreenDecoration
 ///   * `ArrowHead`: the head's LENGTH ALONG THE SHAFT, and `anchor` is the
 ///     arrow's head point. The barbs are half that length to either side,
 ///     giving a head as wide as it is long.
+///   * `EndCaps`: HALF the length of each cap, and `anchor` is the ruler's
+///     start. The painter draws a cap through both ends of the outline,
+///     perpendicular to it, so the ends read as measured points.
 ///
 /// outline() is untouched and still yields slide-space geometry: nothing here
 /// makes a measurement depend on zoom.

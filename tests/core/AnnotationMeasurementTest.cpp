@@ -1,3 +1,4 @@
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "slideio/viewer/core/AnnotationGeometry.h"
@@ -577,4 +578,46 @@ TEST_CASE("measure and measureKnown agree for a hand-traced polygon",
     REQUIRE(viaMeasure.outlineLength == viaKnown.outlineLength);
     REQUIRE(viaMeasure.closed == viaKnown.closed);
     REQUIRE(viaMeasure.selfIntersecting == viaKnown.selfIntersecting);
+}
+
+TEST_CASE("a ruler measures its length", "[core][AnnotationMeasurement][Ruler]")
+{
+    const core::ShapeMetrics metrics =
+        core::measure(core::RulerGeometry{core::PointF{0.0, 0.0}, core::PointF{3.0, 4.0}}, core::PixelSize{});
+    CHECK(metrics.outlineLength == 5.0);
+    CHECK_FALSE(metrics.area.has_value());
+    CHECK_FALSE(metrics.angleDegrees.has_value());
+}
+
+TEST_CASE("an angle measures between its rays, 0 to 180", "[core][AnnotationMeasurement][Angle]")
+{
+    const core::PointF o{0.0, 0.0};
+    const auto angleOf = [&](core::PointF a, core::PointF b) {
+        return core::angleDegrees(core::AngleGeometry{a, o, b}, core::PixelSize{});
+    };
+    REQUIRE(angleOf({1, 0}, {0, 1}).has_value());
+    CHECK(*angleOf({1, 0}, {0, 1}) == Catch::Approx(90.0));
+    CHECK(*angleOf({1, 0}, {-1, 0}) == Catch::Approx(180.0));
+    CHECK(*angleOf({1, 0}, {2, 0}) == Catch::Approx(0.0).margin(1e-9));
+    CHECK_FALSE(angleOf({0, 0}, {0, 1}).has_value());
+    CHECK_FALSE(angleOf({1, 0}, {0, 0}).has_value());
+}
+
+TEST_CASE("non-square pixels change an angle", "[core][AnnotationMeasurement][Angle]")
+{
+    // 45 degrees in pixel space; at 1 x 2 um/px the second ray is (1, 2).
+    const auto degrees = core::angleDegrees(
+        core::AngleGeometry{core::PointF{1, 0}, core::PointF{0, 0}, core::PointF{1, 1}}, core::PixelSize{1.0, 2.0});
+    REQUIRE(degrees.has_value());
+    CHECK(*degrees == Catch::Approx(63.4349488).epsilon(1e-6));
+}
+
+TEST_CASE("measure() carries an angle's degrees and nothing else's", "[core][AnnotationMeasurement][Angle]")
+{
+    const core::AngleGeometry right{core::PointF{1, 0}, core::PointF{0, 0}, core::PointF{0, 1}};
+    const core::ShapeMetrics metrics = core::measure(right, core::PixelSize{});
+    REQUIRE(metrics.angleDegrees.has_value());
+    CHECK(*metrics.angleDegrees == Catch::Approx(90.0));
+    CHECK_FALSE(core::measure(core::ArrowGeometry{core::PointF{0, 0}, core::PointF{1, 1}}, core::PixelSize{})
+                    .angleDegrees.has_value());
 }

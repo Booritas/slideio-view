@@ -46,6 +46,19 @@ std::optional<ScreenDecoration> decorationFor(const TextGeometry& text, double, 
     return ScreenDecoration{ScreenDecoration::Kind::Disc, text.anchor, std::max(0.0, discRadiusScreenPixels) / 2.0};
 }
 
+// Caps at both ends, so a ruler's ends read as measured points and not as an
+// arrow's tail. Fixed in screen pixels: they mark the ends, they measure nothing.
+std::optional<ScreenDecoration> decorationFor(const RulerGeometry& ruler, double, double)
+{
+    return ScreenDecoration{ScreenDecoration::Kind::EndCaps, ruler.start, kRulerEndCapScreenPixels};
+}
+
+// The angle's value is its label, drawn by the ui; its rays need no glyph.
+std::optional<ScreenDecoration> decorationFor(const AngleGeometry&, double, double)
+{
+    return std::nullopt;
+}
+
 std::optional<ScreenDecoration> decorationFor(const ArrowGeometry& arrow, double viewportScale,
                                               double)
 {

@@ -31,7 +31,16 @@ struct ShapeMetrics
     /// shape is simple: an open path is never tested, because its area is
     /// absent regardless and open traces carry the most vertices.
     bool selfIntersecting = false;
+    /// For an angle only: the angle between its rays in degrees, [0, 180],
+    /// measured after scaling by the pixel size. Absent for every other shape,
+    /// and for an angle with a ray of zero length, which has no direction.
+    std::optional<double> angleDegrees;
 };
+
+/// The angle between `angle`'s two rays, in degrees within [0, 180], with each
+/// ray scaled by `pixelSize` first -- on non-square pixels the physical angle
+/// is the true one. Absent when either ray has zero length (after scaling).
+[[nodiscard]] std::optional<double> angleDegrees(const AngleGeometry& angle, PixelSize pixelSize);
 
 /// Area and outline length of `geometry`, with each vertex scaled by
 /// `pixelSize` BEFORE measuring.

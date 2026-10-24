@@ -45,6 +45,16 @@ QString textName()
     return QCoreApplication::translate("AnnotationShapeName", "Text");
 }
 
+QString rulerName()
+{
+    return QCoreApplication::translate("AnnotationShapeName", "Ruler");
+}
+
+QString angleName()
+{
+    return QCoreApplication::translate("AnnotationShapeName", "Angle");
+}
+
 struct ShapeNameVisitor
 {
     QString operator()(const core::RectangleGeometry&) const
@@ -78,6 +88,16 @@ struct ShapeNameVisitor
     {
         return textName();
     }
+
+    QString operator()(const core::RulerGeometry&) const
+    {
+        return rulerName();
+    }
+
+    QString operator()(const core::AngleGeometry&) const
+    {
+        return angleName();
+    }
 };
 
 } // namespace
@@ -104,6 +124,10 @@ QString shapeTypeName(core::AnnotationType type)
         return arrowName();
     case core::AnnotationType::Text:
         return textName();
+    case core::AnnotationType::Ruler:
+        return rulerName();
+    case core::AnnotationType::Angle:
+        return angleName();
     }
     return QString();
 }

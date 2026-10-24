@@ -92,6 +92,18 @@ std::optional<AnnotationGeometry> replaceBox(const TextGeometry&, const RectF&)
     return std::nullopt;
 }
 
+// Points, not boxes: scaling a ruler's box would change its length, and an
+// angle's would change its angle.
+std::optional<AnnotationGeometry> replaceBox(const RulerGeometry&, const RectF&)
+{
+    return std::nullopt;
+}
+
+std::optional<AnnotationGeometry> replaceBox(const AngleGeometry&, const RectF&)
+{
+    return std::nullopt;
+}
+
 } // namespace
 
 RectF withBoxHandleAt(const RectF& box, BoxHandle handle, PointF position)

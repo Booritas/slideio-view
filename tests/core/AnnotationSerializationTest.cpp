@@ -1140,3 +1140,42 @@ TEST_CASE("a text with a non-finite anchor is refused", "[core][AnnotationSerial
     document.annotations.emplace_back("t1", TextGeometry{PointF{std::nan(""), 1.0}});
     REQUIRE(serializeAnnotationDocument(document).empty());
 }
+
+TEST_CASE("a ruler and an angle round-trip with their points in order", "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document = makeDocument();
+    document.annotations.clear();
+    document.annotations.emplace_back("r1", RulerGeometry{PointF{90.0, 60.5}, PointF{10.0, 20.0}});
+    document.annotations.emplace_back(
+        "g1", AngleGeometry{PointF{30.0, 5.0}, PointF{10.0, 10.0}, PointF{12.0, 40.25}});
+
+    const std::string json = serializeAnnotationDocument(document);
+    REQUIRE_FALSE(json.empty());
+    CHECK(json.find("\"ruler\"") != std::string::npos);
+    CHECK(json.find("\"angle\"") != std::string::npos);
+    const ParseResult result = parseAnnotationDocument(json);
+    REQUIRE(result.error == ParseError::None);
+    REQUIRE(result.document.annotations.size() == 2);
+
+    const auto& ruler = std::get<RulerGeometry>(result.document.annotations[0].geometry());
+    CHECK(ruler.start.x == 90.0);
+    CHECK(ruler.start.y == 60.5);
+    CHECK(ruler.end.x == 10.0);
+    CHECK(ruler.end.y == 20.0);
+    const auto& angle = std::get<AngleGeometry>(result.document.annotations[1].geometry());
+    CHECK(angle.first.x == 30.0);
+    CHECK(angle.vertex.y == 10.0);
+    CHECK(angle.second.y == 40.25);
+}
+
+TEST_CASE("a ruler or angle with a non-finite point is refused", "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document = makeDocument();
+    document.annotations.clear();
+    document.annotations.emplace_back("r1", RulerGeometry{PointF{std::nan(""), 1.0}, PointF{2.0, 2.0}});
+    CHECK(serializeAnnotationDocument(document).empty());
+    document.annotations.clear();
+    document.annotations.emplace_back(
+        "g1", AngleGeometry{PointF{1.0, 1.0}, PointF{0.0, 0.0}, PointF{1.0, std::nan("")}});
+    CHECK(serializeAnnotationDocument(document).empty());
+}

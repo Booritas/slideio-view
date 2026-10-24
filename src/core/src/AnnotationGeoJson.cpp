@@ -99,6 +99,16 @@ struct GeometryVisitor
         // nearest, and it is where the note was. slideio.type keeps it a text.
         return json{{"type", "Point"}, {"coordinates", position(shape.anchor)}};
     }
+    // Lines through their points in the order drawn; slideio.type is what keeps
+    // them a ruler and an angle rather than an ordinary line on the way back.
+    json operator()(const RulerGeometry& shape) const
+    {
+        return lineGeometry(outline(shape).points);
+    }
+    json operator()(const AngleGeometry& shape) const
+    {
+        return lineGeometry(outline(shape).points);
+    }
     json operator()(const ArrowGeometry& shape) const
     {
         // Tail first, head second: the order is the arrow's direction, and it
@@ -515,6 +525,22 @@ std::optional<AnnotationGeometry> readExportedShape(const std::string& slideioTy
         }
         // Tail first: the export's order is the arrow's direction.
         return AnnotationGeometry{ArrowGeometry{points[0], points[1]}};
+    }
+    // The tag is honoured only when the geometry fits it: a ruler is exactly
+    // two positions and an angle exactly three; anything else stays the line
+    // it is (the geometry wins).
+    if (type == "LineString" && (slideioType == "ruler" || slideioType == "angle")) {
+        std::vector<PointF> points;
+        if (!readLine(coordinates, points)) {
+            return std::nullopt;
+        }
+        if (slideioType == "ruler" && points.size() == 2) {
+            return AnnotationGeometry{RulerGeometry{points[0], points[1]}};
+        }
+        if (slideioType == "angle" && points.size() == 3) {
+            return AnnotationGeometry{AngleGeometry{points[0], points[1], points[2]}};
+        }
+        return std::nullopt;
     }
     return std::nullopt;
 }

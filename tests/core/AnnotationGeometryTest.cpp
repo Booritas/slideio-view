@@ -610,3 +610,44 @@ TEST_CASE("a text is a point of anchor with no extent", "[core][AnnotationGeomet
     CHECK(hitTest(text, PointF{5.5, 6.0}, 1.0));
     CHECK_FALSE(hitTest(text, PointF{8.0, 6.0}, 1.0));
 }
+
+TEST_CASE("a ruler is its two points, kept in the order drawn", "[core][AnnotationGeometry][Ruler]")
+{
+    const AnnotationGeometry ruler = RulerGeometry{PointF{90.0, 60.0}, PointF{10.0, 20.0}};
+    REQUIRE(typeOf(ruler) == AnnotationType::Ruler);
+    const Outline shape = outline(ruler);
+    REQUIRE(shape.points.size() == 2);
+    CHECK(shape.points[0].x == 90.0);
+    CHECK(shape.points[1].x == 10.0);
+    CHECK_FALSE(shape.closed);
+    CHECK_FALSE(hasWellDefinedArea(ruler));
+    CHECK(hitTest(ruler, PointF{50.0, 40.0}, 1.0));
+    CHECK_FALSE(hitTest(ruler, PointF{50.0, 10.0}, 1.0));
+
+    const AnnotationGeometry moved = translated(ruler, 1.0, 2.0);
+    REQUIRE(std::holds_alternative<RulerGeometry>(moved));
+    CHECK(std::get<RulerGeometry>(moved).start.x == 91.0);
+    CHECK(std::get<RulerGeometry>(moved).end.y == 22.0);
+}
+
+TEST_CASE("an angle is first, vertex, second, as an open path", "[core][AnnotationGeometry][Angle]")
+{
+    const AnnotationGeometry angle = AngleGeometry{PointF{10.0, 0.0}, PointF{0.0, 0.0}, PointF{0.0, 10.0}};
+    REQUIRE(typeOf(angle) == AnnotationType::Angle);
+    const Outline shape = outline(angle);
+    REQUIRE(shape.points.size() == 3);
+    CHECK(shape.points[0].x == 10.0);
+    CHECK(shape.points[1].x == 0.0);
+    CHECK(shape.points[2].y == 10.0);
+    CHECK_FALSE(shape.closed);
+    CHECK_FALSE(hasWellDefinedArea(angle));
+    CHECK(hitTest(angle, PointF{5.0, 0.5}, 1.0));
+    CHECK(hitTest(angle, PointF{0.5, 5.0}, 1.0));
+    CHECK_FALSE(hitTest(angle, PointF{5.0, 5.0}, 1.0));
+
+    const AnnotationGeometry moved = translated(angle, 1.0, 1.0);
+    REQUIRE(std::holds_alternative<AngleGeometry>(moved));
+    CHECK(std::get<AngleGeometry>(moved).first.x == 11.0);
+    CHECK(std::get<AngleGeometry>(moved).vertex.x == 1.0);
+    CHECK(std::get<AngleGeometry>(moved).second.y == 11.0);
+}

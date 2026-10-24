@@ -62,3 +62,12 @@ TEST_CASE("a text is called Text", "[ui][AnnotationShapeName]")
     REQUIRE(shapeName(text) == QStringLiteral("Text"));
     REQUIRE(shapeTypeName(core::AnnotationType::Text) == QStringLiteral("Text"));
 }
+
+TEST_CASE("a ruler and an angle are named", "[ui][AnnotationShapeName]")
+{
+    CHECK(shapeTypeName(core::AnnotationType::Ruler) == QStringLiteral("Ruler"));
+    CHECK(shapeTypeName(core::AnnotationType::Angle) == QStringLiteral("Angle"));
+    const core::Annotation ruler =
+        annotationWith(core::RulerGeometry{core::PointF{0.0, 0.0}, core::PointF{1.0, 1.0}});
+    CHECK(shapeName(ruler) == QStringLiteral("Ruler"));
+}
