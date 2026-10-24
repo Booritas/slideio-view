@@ -9,6 +9,7 @@ add_library(slideio-viewer-core STATIC
     src/TileSampling.cpp
     src/ColorProfileInfo.cpp
     src/ColorManagement.cpp
+    src/DisplayRangePolicy.cpp
     src/SlideId.cpp
     src/AnnotationGeometry.cpp
     src/AnnotationMeasurement.cpp

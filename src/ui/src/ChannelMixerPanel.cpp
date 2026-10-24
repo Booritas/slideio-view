@@ -1,5 +1,6 @@
 #include "slideio/viewer/ui/ChannelMixerPanel.h"
 #include "slideio/viewer/ui/ChannelHistogramView.h"
+#include "slideio/viewer/core/DisplayRangePolicy.h"
 
 #include <QCheckBox>
 #include <QColorDialog>
@@ -411,7 +412,7 @@ struct ChannelMixerPanel::Impl
     {
         if (index >= channels.size() || index >= rows.size()) return;
         auto& ch = channels[index];
-        const auto [rMin, rMax] = dataTypeFullRange(ch.dataType);
+        const auto [rMin, rMax] = core::dataTypeFullRange(ch.dataType);
         ch.displayRange.displayMin = rMin;
         ch.displayRange.displayMax = rMax;
         ch.displayRange.autoDetected = false;
@@ -502,24 +503,6 @@ struct ChannelMixerPanel::Impl
         if (row.histogramView) {
             row.histogramView->setDisplayRange(ch.displayRange.displayMin,
                                                ch.displayRange.displayMax);
-        }
-    }
-
-    static std::pair<double, double> dataTypeFullRange(core::DataType dt)
-    {
-        switch (dt) {
-            case core::DataType::Byte:    return {0.0, 255.0};
-            case core::DataType::Int8:    return {-128.0, 127.0};
-            case core::DataType::UInt16:  return {0.0, 65535.0};
-            case core::DataType::Int16:   return {0.0, 32767.0};
-            case core::DataType::UInt32:  return {0.0, 4294967295.0};
-            case core::DataType::Int32:   return {0.0, 2147483647.0};
-            case core::DataType::Int64:   return {-9223372036854775808.0, 9223372036854775807.0};
-            case core::DataType::UInt64:  return {0.0, 18446744073709551615.0};
-            case core::DataType::Float16: return {0.0, 1.0};
-            case core::DataType::Float32: return {0.0, 1.0};
-            case core::DataType::Float64: return {0.0, 1.0};
-            default:                      return {0.0, 255.0};
         }
     }
 

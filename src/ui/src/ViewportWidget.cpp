@@ -17,6 +17,7 @@
 #include "slideio/viewer/core/BoxResize.h"
 #include "slideio/viewer/core/VertexEditing.h"
 #include "slideio/viewer/core/CoordinateSystem.h"
+#include "slideio/viewer/core/DisplayRangePolicy.h"
 #include "slideio/viewer/core/Histogram.h"
 #include "slideio/viewer/core/ISlideSource.h"
 #include "slideio/viewer/core/ITileCache.h"
@@ -523,6 +524,12 @@ QImage tileDataToQImage(const slideio::viewer::core::TileData& block,
             double mx = std::numeric_limits<double>::lowest();
             computeMinMaxStrided(src, pixelCount, srcCh, ch, dt, mn, mx);
             m.minVal = mn; m.maxVal = mx;
+            // Native colours, as in the viewport: no per-channel stretch.
+            if (slideio::viewer::core::rendersNativeRange(isBrightfield, slideNumChannels, dt)) {
+                const auto [fullMin, fullMax] = slideio::viewer::core::dataTypeFullRange(dt);
+                m.minVal = fullMin;
+                m.maxVal = fullMax;
+            }
             const auto& chInfo = channels[static_cast<size_t>(ch)];
             if (!chInfo.visible) continue;
             float intensity = std::clamp(chInfo.intensity, 0.0f, 4.0f);
@@ -680,6 +687,14 @@ QImage buildCoarseLevelThumbnailFallback(slideio::viewer::core::ISlideSource& so
                 computeMinMaxStrided(td.buffer().data(), pixelCount, srcCh, ch, dt,
                                      mix[static_cast<size_t>(ch)].minVal,
                                      mix[static_cast<size_t>(ch)].maxVal);
+            }
+        }
+        // Native colours, as in the viewport: no per-channel stretch.
+        if (core::rendersNativeRange(isBrightfield, slideNumChannels, dt)) {
+            const auto [fullMin, fullMax] = core::dataTypeFullRange(dt);
+            for (auto& m : mix) {
+                m.minVal = fullMin;
+                m.maxVal = fullMax;
             }
         }
     } else {
@@ -1078,6 +1093,15 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
         chInfo.autoDisplayRange = chInfo.displayRange;
     }
 
+    // An RGB brightfield slide opens at its native colours; the detected
+    // stretch stays in autoDisplayRange for the Auto button. globalMin/Max
+    // follow, because the thumbnail below falls back to them.
+    if (core::rendersNativeRange(slideInfo.isBrightfield, numCh, dt)) {
+        core::applyNativeDisplayRange(slideInfo);
+        globalMin = slideInfo.displayRange.displayMin;
+        globalMax = slideInfo.displayRange.displayMax;
+    }
+
     // Final ranges, after both passes
     spdlog::info("autodetect: final slide-wide: min={} max={} autoDetected={}",
                  slideInfo.displayRange.displayMin,
@@ -1312,8 +1336,11 @@ SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
             spdlog::warn("openSceneSync: thumbnail/coarse-cache pass failed: {}", ex.what());
         }
 
-        // Apply fallback display range if auto-detection didn't yield one
-        if (!r.slideInfo.displayRange.autoDetected) {
+        // Apply fallback display range if auto-detection didn't yield one. A
+        // slide shown at its native range is not marked detected on purpose.
+        if (!r.slideInfo.displayRange.autoDetected
+            && !core::rendersNativeRange(r.slideInfo.isBrightfield, r.slideInfo.numChannels,
+                                         r.slideInfo.channelDataType)) {
             spdlog::warn("openSceneSync: autodetection FAILED, applying fallback for dt={}",
                          static_cast<int>(r.slideInfo.channelDataType));
             switch (r.slideInfo.channelDataType) {
