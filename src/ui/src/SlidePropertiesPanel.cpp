@@ -325,4 +325,25 @@ void SlidePropertiesPanel::rebuildColorProfileRows(const core::ColorProfileInfo&
     }
 }
 
+void SlidePropertiesPanel::setCalibration(const core::Calibration& calibration)
+{
+    // Replaced in place, like the colour-profile rows: the user changes it with
+    // the slide open, and the metadata rows above must stay as the scanner wrote
+    // them so the two can be compared.
+    for (int i = 0; i < m_impl->tree->topLevelItemCount(); ++i) {
+        if (m_impl->tree->topLevelItem(i)->text(0) == QStringLiteral("Calibration")) {
+            delete m_impl->tree->takeTopLevelItem(i);
+            break;
+        }
+    }
+    QString value = QString::fromLatin1(core::calibrationSourceName(calibration.source));
+    if (calibration.source != core::CalibrationSource::None) {
+        // Byte escapes for the multiplication and micro signs: MSVC compiles
+        // without /utf-8.
+        value += QString::fromUtf8(", %1 \xC3\x97 %2 \xC2\xB5m/px")
+                     .arg(formatDouble(calibration.micronsPerPixel.x, 4), formatDouble(calibration.micronsPerPixel.y, 4));
+    }
+    addRow(m_impl->tree, QStringLiteral("Calibration"), value);
+}
+
 } // namespace slideio::viewer::ui

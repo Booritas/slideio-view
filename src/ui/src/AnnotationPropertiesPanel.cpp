@@ -4,6 +4,7 @@
 #include "slideio/viewer/core/Iso8601.h"
 #include "slideio/viewer/ui/AnnotationPropertiesEdit.h"
 #include "slideio/viewer/ui/AnnotationShapeName.h"
+#include "slideio/viewer/ui/CalibrationPolicy.h"
 
 #include <QColorDialog>
 #include <QComboBox>
@@ -54,9 +55,12 @@ struct AnnotationPropertiesPanel::Impl
     /// as the shape changes.
     QLabel* lengthCaption = nullptr;
 
-    /// Physical size of one pixel on the open slide. A non-positive component
-    /// means the slide carries no calibration and measurements read in pixels.
-    core::PixelSize pixelSize;
+    /// The open scene's calibration. With source None, measurements read in
+    /// pixels.
+    core::Calibration calibration;
+    /// Says when a measurement rests on a value the user typed, or on nothing.
+    QLabel* calibrationBadge = nullptr;
+    int calibrationRow = -1;
 
     /// Self-intersection by annotation id.
     ///
@@ -137,6 +141,15 @@ AnnotationPropertiesPanel::AnnotationPropertiesPanel(QWidget* parent)
     m_impl->lengthCaption = new QLabel(tr("Perimeter"), contents);
     m_impl->lengthValue = new QLabel(contents);
     form->addRow(m_impl->lengthCaption, m_impl->lengthValue);
+
+    // Under the numbers it qualifies, in words: a measurement on a manually
+    // calibrated or uncalibrated slide must never read like one on the
+    // scanner's own calibration (FR-MEAS-05).
+    m_impl->calibrationBadge = new QLabel(contents);
+    m_impl->calibrationBadge->setStyleSheet(QStringLiteral("color: #B9770E; font-weight: bold;"));
+    form->addRow(QString(), m_impl->calibrationBadge);
+    m_impl->calibrationRow = form->rowCount() - 1;
+    form->setRowVisible(m_impl->calibrationRow, false);
 
     setWidget(contents);
     setFieldsEnabled(false);
@@ -277,9 +290,9 @@ void AnnotationPropertiesPanel::setEditingAllowed(bool allowed)
     repopulate(true);
 }
 
-void AnnotationPropertiesPanel::setPixelSize(core::PixelSize pixelSize)
+void AnnotationPropertiesPanel::setCalibration(const core::Calibration& calibration)
 {
-    m_impl->pixelSize = pixelSize;
+    m_impl->calibration = calibration;
     // A different slide means different calibration and a different set of
     // annotations. Ids are not unique across slides, so a surviving entry could
     // answer for the wrong shape.
@@ -289,8 +302,12 @@ void AnnotationPropertiesPanel::setPixelSize(core::PixelSize pixelSize)
 
 void AnnotationPropertiesPanel::updateMeasurements(const core::Annotation& annotation)
 {
-    const bool calibrated = m_impl->pixelSize.x > 0.0 && m_impl->pixelSize.y > 0.0;
-    const core::PixelSize scale = calibrated ? m_impl->pixelSize : core::PixelSize{1.0, 1.0};
+    // measure() and formatLength/formatArea work in metres.
+    const core::Calibration& calibration = m_impl->calibration;
+    const bool calibrated = calibration.source != core::CalibrationSource::None;
+    const core::PixelSize scale = calibrated ? core::PixelSize{calibration.micronsPerPixel.x * 1e-6,
+                                                               calibration.micronsPerPixel.y * 1e-6}
+                                             : core::PixelSize{1.0, 1.0};
     const auto units = calibrated ? core::MeasurementUnits::Physical : core::MeasurementUnits::Pixels;
 
     // Ask the expensive question only when the answer is not already known.
@@ -339,6 +356,18 @@ void AnnotationPropertiesPanel::updateMeasurements(const core::Annotation& annot
 
     m_impl->lengthValue->setText(
         QString::fromStdString(core::formatLength(metrics.outlineLength, units)));
+
+    const QString badge = QString::fromStdString(calibrationBadgeText(calibration.source));
+    m_impl->calibrationBadge->setText(badge);
+    m_impl->calibrationBadge->setToolTip(
+        calibration.source == core::CalibrationSource::Manual
+            ? tr("Measured at %1 \xC3\x97 %2 \xC2\xB5m per pixel, entered under View > Calibration\xE2\x80\xA6")
+                  .arg(calibration.micronsPerPixel.x, 0, 'f', 4)
+                  .arg(calibration.micronsPerPixel.y, 0, 'f', 4)
+            : tr("This slide carries no pixel size; set one under View > Calibration\xE2\x80\xA6"));
+    if (form != nullptr && m_impl->calibrationRow >= 0) {
+        form->setRowVisible(m_impl->calibrationRow, !badge.isEmpty());
+    }
 }
 
 void AnnotationPropertiesPanel::updateColorSwatch()
@@ -423,6 +452,9 @@ void AnnotationPropertiesPanel::repopulate(bool force)
                 widget() != nullptr ? widget()->layout() : nullptr);
             emptyForm != nullptr && m_impl->areaRow >= 0) {
             emptyForm->setRowVisible(m_impl->areaRow, false);
+            if (m_impl->calibrationRow >= 0) {
+                emptyForm->setRowVisible(m_impl->calibrationRow, false);
+            }
         }
         m_impl->lengthCaption->setText(tr("Length"));
         setFieldsEnabled(false);

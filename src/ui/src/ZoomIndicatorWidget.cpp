@@ -88,13 +88,25 @@ void ZoomIndicatorWidget::setZoomLevel(double scale, double baseMagnification)
     m_updatingSlider = true;
     m_slider->setValue(scaleToSliderValue(scale));
     m_updatingSlider = false;
-    m_scaleBar->setScale(m_metersPerPixel, scale);
+    m_scaleBar->setScale(m_metersPerPixel, m_hasSlide ? scale : 0.0, m_calibrationSource);
 }
 
-void ZoomIndicatorWidget::setResolution(double metersPerPixel)
+void ZoomIndicatorWidget::setCalibration(const core::Calibration& calibration)
 {
-    m_metersPerPixel = metersPerPixel;
-    m_scaleBar->setScale(m_metersPerPixel, m_currentScale);
+    // Square-pixel assumption, as before: the bar is horizontal, so it is
+    // drawn at the X pixel size.
+    m_metersPerPixel = calibration.micronsPerPixel.x * 1e-6;
+    m_calibrationSource = calibration.source;
+    m_hasSlide = true;
+    m_scaleBar->setScale(m_metersPerPixel, m_currentScale, m_calibrationSource);
+}
+
+void ZoomIndicatorWidget::clearCalibration()
+{
+    m_metersPerPixel = 0.0;
+    m_calibrationSource = core::CalibrationSource::None;
+    m_hasSlide = false;
+    m_scaleBar->setScale(0.0, 0.0, m_calibrationSource);
 }
 
 void ZoomIndicatorWidget::onSliderValueChanged(int value)

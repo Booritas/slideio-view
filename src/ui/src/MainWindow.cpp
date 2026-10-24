@@ -14,6 +14,7 @@
 #include "slideio/viewer/core/SlideId.h"
 #include "slideio/viewer/infra/JsonAnnotationRepository.h"
 #include "slideio/viewer/infra/QSettingsAnnotationCategoryStore.h"
+#include "slideio/viewer/infra/QSettingsCalibrationOverrideStore.h"
 #include "slideio/viewer/infra/QSettingsColorProfileOverrideStore.h"
 #include "slideio/viewer/ui/AboutDialog.h"
 #include "slideio/viewer/ui/AnnotationCountExport.h"
@@ -36,6 +37,7 @@
 #include "slideio/viewer/ui/SceneThumbnailPanel.h"
 #include "slideio/viewer/ui/ShortcutPolicy.h"
 #include "slideio/viewer/ui/SlidePropertiesPanel.h"
+#include "slideio/viewer/ui/CalibrationDialog.h"
 #include "slideio/viewer/ui/SlideProfilesDialog.h"
 #include "slideio/viewer/ui/WorkspaceChangeDialog.h"
 #include "slideio/viewer/ui/MetadataPanel.h"
@@ -260,6 +262,7 @@ struct MainWindow::Impl
     QAction* setSlideProfileAction = nullptr;
     QAction* clearSlideProfileAction = nullptr;
     QAction* manageSlideProfilesAction = nullptr;
+    QAction* calibrationAction = nullptr;
     QAction* panToolAction = nullptr;
     QAction* rectangleToolAction = nullptr;
     QAction* ellipseToolAction = nullptr;
@@ -295,6 +298,11 @@ struct MainWindow::Impl
     std::string pendingColorManagementEnableSlideId;
 
     std::unique_ptr<infra::QSettingsColorProfileOverrideStore> overrideStore;
+    std::unique_ptr<infra::QSettingsCalibrationOverrideStore> calibrationStore;
+    /// The open scene's calibration, recomputed by refreshCalibration() on every
+    /// open and every change. The ONE value every surface and export reads, so
+    /// no two of them can disagree about a scene's pixel size.
+    core::Calibration currentCalibration;
     std::unique_ptr<infra::QSettingsAnnotationCategoryStore> categoryStore;
 
     /// Owned here, not by the viewport. The viewport renders it, the panels
@@ -358,6 +366,13 @@ struct MainWindow::Impl
     /// False, after warning, when the model is empty for a reason other than
     /// an empty scene; see AnnotationPersistenceService::annotationsLoaded().
     bool annotationsReadyToExport(const QString& title);
+
+    /// Recomputes currentCalibration from the open scene's metadata and its
+    /// stored override, and hands it to every surface that shows a physical
+    /// number. The only place measurement reads SlideInfo::resolutionX/Y.
+    void refreshCalibration();
+    /// View > Calibration...: the dialog, the store, the log line.
+    void editCalibration();
     /// The one save-dialog-and-write every export uses: offers `suggestedName`
     /// in the annotation workspace, writes `contents` whole, and reports a
     /// failure with `failureText`, whose %1 is the path and %2 the reason.
@@ -449,6 +464,13 @@ struct MainWindow::Impl
         manageSlideProfilesAction = new QAction("Manage Slide ICC Profiles…", owner);
         manageSlideProfilesAction->setStatusTip(
             "See and remove stored per-slide color profile overrides");
+
+        // Beside the ICC profiles: both correct what the scanner wrote, per
+        // slide. Enabled on any identified scene, read-only ones included -- it
+        // writes no annotation.
+        calibrationAction = new QAction(QString::fromUtf8("Calibration\xE2\x80\xA6"), owner);
+        calibrationAction->setStatusTip("Set the pixel size measurements use for this scene");
+        calibrationAction->setEnabled(false);
 
         panToolAction = new QAction("&Navigate", owner);
         panToolAction->setCheckable(true);
@@ -665,6 +687,7 @@ struct MainWindow::Impl
         viewMenu->addAction(setSlideProfileAction);
         viewMenu->addAction(clearSlideProfileAction);
         viewMenu->addAction(manageSlideProfilesAction);
+        viewMenu->addAction(calibrationAction);
 
         QMenu* toolsMenu = owner->menuBar()->addMenu("&Tools");
         toolsMenu->addAction(panToolAction);
@@ -931,6 +954,8 @@ struct MainWindow::Impl
             }
         });
 
+        QObject::connect(calibrationAction, &QAction::triggered, owner, [this]() { editCalibration(); });
+
         QObject::connect(manageSlideProfilesAction, &QAction::triggered, owner, [this]() {
             const std::string openSlideId = owner->currentSlideId();
             const bool hadOverride =
@@ -1006,13 +1031,6 @@ struct MainWindow::Impl
                 // NOT changed here — those are user-controlled via the View
                 // menu and persisted across runs by save/restoreState().
                 const auto& info = viewportWidget->slideInfo();
-                zoomIndicatorWidget->setResolution(info.resolutionX);
-                if (annotationPropertiesPanel != nullptr) {
-                    // Measurements need both axes: pixels are not necessarily
-                    // square, and a perimeter does not scale by a single factor.
-                    annotationPropertiesPanel->setPixelSize(
-                        core::PixelSize{info.resolutionX, info.resolutionY});
-                }
                 if (info.numChannels > 0) {
                     channelMixerPanel->setChannels(info.channels);
                 } else {
@@ -1050,6 +1068,27 @@ struct MainWindow::Impl
                 }
 
                 propertiesPanel->setSlideInfo(info);
+
+                // After setSlideInfo, which rebuilds the Slide Properties tree
+                // the Calibration row lives in. Every open, scene switches
+                // included: an override is per scene, and the previous scene's
+                // must never be the one a measurement here is taken with.
+                refreshCalibration();
+                // An associated image has no annotations to measure, and its
+                // scene index does not name it, so it gets no override.
+                const bool calibratable =
+                    !viewportWidget->isAuxImageShown() && !viewportWidget->currentSlideId().empty();
+                calibrationAction->setEnabled(calibratable);
+                calibrationAction->setStatusTip(
+                    calibratable || viewportWidget->isAuxImageShown()
+                        ? QStringLiteral("Set the pixel size measurements use for this scene")
+                        : QStringLiteral("This slide could not be identified, so a calibration cannot be "
+                                         "stored for it"));
+                if (calibratable && currentCalibration.source == core::CalibrationSource::None) {
+                    statusBarManager->showTransientMessage(QString::fromUtf8(
+                        "This slide has no calibration \xE2\x80\x94 measurements are in pixels. Set one under "
+                        "View > Calibration\xE2\x80\xA6"));
+                }
 
                 const bool available =
                     info.colorManagement == core::ColorManagementAvailability::Available;
@@ -1202,7 +1241,8 @@ struct MainWindow::Impl
             minimapWidget->clearThumbnail();
             statusBarManager->updateCursorPosition(0.0, 0.0);
             statusBarManager->updateMagnification(1.0, 0.0);
-            zoomIndicatorWidget->setResolution(0.0);
+            zoomIndicatorWidget->clearCalibration();
+            calibrationAction->setEnabled(false);
             channelMixerPanel->clearChannels();
             propertiesPanel->clear();
             metadataPanel->clear();
@@ -2109,11 +2149,12 @@ void MainWindow::Impl::exportMeasurements()
     context.slidePath = slidePath;
     context.slideId = viewportWidget->currentSlideId();
     context.sceneIndex = sceneIndex;
-    // SlideInfo carries metres; zero means the slide did not say, and the
-    // formatter then leaves every micron column empty rather than guess.
-    const core::SlideInfo& info = viewportWidget->slideInfo();
-    context.pixelWidthMicrons = info.resolutionX * 1e6;
-    context.pixelHeightMicrons = info.resolutionY * 1e6;
+    // The calibration on screen, never the raw metadata: a manual override is
+    // what every measurement shown was taken with. With none, the formatter
+    // leaves every micron column empty rather than guess.
+    context.pixelWidthMicrons = currentCalibration.micronsPerPixel.x;
+    context.pixelHeightMicrons = currentCalibration.micronsPerPixel.y;
+    context.calibrationSource = currentCalibration.source;
 
     // Every annotation in the model, never the list's filtered view. Built
     // before the dialog, as the GeoJSON export is, so a scene that cannot be
@@ -2136,6 +2177,64 @@ void MainWindow::Impl::exportMeasurements()
     if (!chosen.isEmpty()) {
         statusBarManager->showTransientMessage(tr("Measurements exported to %1").arg(QFileInfo(chosen).fileName()));
     }
+}
+
+void MainWindow::Impl::refreshCalibration()
+{
+    const core::SlideInfo& info = viewportWidget->slideInfo();
+    const std::string slideId = viewportWidget->currentSlideId();
+    std::optional<core::PixelSize> stored;
+    if (!slideId.empty() && !viewportWidget->isAuxImageShown()) {
+        if (const auto entry = calibrationStore->find(slideId, viewportWidget->currentSceneIndex())) {
+            stored = entry->micronsPerPixel;
+        }
+    }
+    currentCalibration = core::effectiveCalibration(info.resolutionX, info.resolutionY, stored);
+    zoomIndicatorWidget->setCalibration(currentCalibration);
+    propertiesPanel->setCalibration(currentCalibration);
+    if (annotationPropertiesPanel != nullptr) {
+        annotationPropertiesPanel->setCalibration(currentCalibration);
+    }
+}
+
+void MainWindow::Impl::editCalibration()
+{
+    const std::string slideId = viewportWidget->currentSlideId();
+    if (slideId.empty() || viewportWidget->isAuxImageShown()) {
+        return;
+    }
+    const int sceneIndex = viewportWidget->currentSceneIndex();
+    const core::SlideInfo& info = viewportWidget->slideInfo();
+    const auto existing = calibrationStore->find(slideId, sceneIndex);
+
+    CalibrationDialog dialog(info.resolutionX, info.resolutionY,
+                             existing ? std::optional<core::PixelSize>(existing->micronsPerPixel) : std::nullopt,
+                             owner);
+    dialog.exec();
+    if (dialog.outcome() == CalibrationDialog::Outcome::Cancelled) {
+        return;
+    }
+    if (dialog.outcome() == CalibrationDialog::Outcome::Reset) {
+        calibrationStore->remove(slideId, sceneIndex);
+    } else {
+        core::CalibrationOverride entry;
+        entry.slideId = slideId;
+        entry.sceneIndex = sceneIndex;
+        entry.micronsPerPixel = dialog.value();
+        entry.slideDisplayName = QFileInfo(QString::fromStdString(lastOpenedFilePath)).fileName().toStdString();
+        if (!calibrationStore->set(entry)) {
+            return;
+        }
+    }
+
+    const core::Calibration before = currentCalibration;
+    refreshCalibration();
+    // The critical review's "log calibration source": a measurement filed
+    // later can be traced to the value it was taken with.
+    spdlog::info("Calibration for {} scene {}: {} {}x{} -> {} {}x{}", slideId, sceneIndex,
+                 core::calibrationSourceName(before.source), before.micronsPerPixel.x, before.micronsPerPixel.y,
+                 core::calibrationSourceName(currentCalibration.source), currentCalibration.micronsPerPixel.x,
+                 currentCalibration.micronsPerPixel.y);
 }
 
 bool MainWindow::Impl::annotationsReadyToExport(const QString& title)
@@ -2181,11 +2280,12 @@ void MainWindow::Impl::exportAnnotations()
     context.slidePath = slidePath;
     context.slideId = viewportWidget->currentSlideId();
     context.sceneIndex = sceneIndex;
-    // SlideInfo carries metres; zero means the slide did not say, and the
-    // writer then leaves the pixel size out rather than claiming zero.
-    const core::SlideInfo& info = viewportWidget->slideInfo();
-    context.pixelSizeMicronsX = info.resolutionX * 1e6;
-    context.pixelSizeMicronsY = info.resolutionY * 1e6;
+    // The calibration on screen, as the measurements file has it. With none
+    // the sizes are zero, and the writer leaves the pixel size out rather than
+    // claiming zero.
+    context.pixelSizeMicronsX = currentCalibration.micronsPerPixel.x;
+    context.pixelSizeMicronsY = currentCalibration.micronsPerPixel.y;
+    context.calibrationSource = currentCalibration.source;
 
     // Every annotation in the scene -- the model's, never the list's filtered
     // view. Built before the dialog, so a scene that cannot be written is
@@ -2381,6 +2481,7 @@ MainWindow::MainWindow(QWidget* parent)
 {
     m_impl->owner = this;
     m_impl->overrideStore = std::make_unique<infra::QSettingsColorProfileOverrideStore>();
+    m_impl->calibrationStore = std::make_unique<infra::QSettingsCalibrationOverrideStore>();
     m_impl->categoryStore = std::make_unique<infra::QSettingsAnnotationCategoryStore>();
 
     setWindowTitle(kApplicationTitle);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "slideio/viewer/core/Calibration.h"
 #include "slideio/viewer/core/TileKey.h"
 #include "slideio/viewer/core/Types.h"
 
@@ -50,6 +51,11 @@ public:
 
     void setSlideInfo(const core::SlideInfo& info);
     void clear();
+
+    // Adds or replaces the "Calibration" row: the source and, unless it is
+    // none, the pixel size measurements use -- beside the metadata rows, which
+    // stay as the scanner wrote them.
+    void setCalibration(const core::Calibration& calibration);
 
     // Replaces the colour-profile rows with the profile of the scene currently
     // being read, leaving every other row as setSlideInfo left it. `origin` and

@@ -3,6 +3,7 @@
 #include "slideio/viewer/core/Annotation.h"
 
 #include "slideio/viewer/core/AnnotationMeasurement.h"
+#include "slideio/viewer/core/Calibration.h"
 
 #include <QDockWidget>
 
@@ -68,12 +69,12 @@ public:
     /// explained rather than mysterious.
     void setEditingAllowed(bool allowed);
 
-    /// Physical size of one pixel on the open slide, from SlideInfo's
-    /// resolutionX/resolutionY. A non-positive component means the slide
-    /// carries no calibration, and measurements are then shown in pixels
-    /// rather than suppressed -- a labelled "12480 px²" is a real number that
-    /// can be exported, where a scale bar with no scale would be meaningless.
-    void setPixelSize(core::PixelSize pixelSize);
+    /// The open scene's calibration, as core::effectiveCalibration decided it.
+    /// With source None, measurements are shown in pixels rather than
+    /// suppressed -- a labelled "12480 px²" is a real number that can be
+    /// exported, where a scale bar with no scale would be meaningless. Any
+    /// source but Metadata is badged beside the numbers.
+    void setCalibration(const core::Calibration& calibration);
 
     /// The user's configured category list, offered in the Classification
     /// combo. The combo stays editable, so a classification already on an

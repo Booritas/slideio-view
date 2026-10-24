@@ -1,5 +1,7 @@
 #pragma once
 
+#include "slideio/viewer/core/Calibration.h"
+
 #include <QWidget>
 
 class QLabel;
@@ -19,7 +21,10 @@ public:
     ~ZoomIndicatorWidget() override;
 
     void setZoomLevel(double scale, double baseMagnification);
-    void setResolution(double metersPerPixel);
+    /// The open scene's calibration; the scale bar draws it, or "Uncalibrated".
+    void setCalibration(const core::Calibration& calibration);
+    /// No slide open: the scale bar is hidden rather than saying "Uncalibrated".
+    void clearCalibration();
 
 signals:
     void zoomChanged(double newScale);
@@ -39,6 +44,8 @@ private:
     double m_baseMagnification;
     double m_currentScale;
     double m_metersPerPixel;
+    core::CalibrationSource m_calibrationSource = core::CalibrationSource::None;
+    bool m_hasSlide = false;
     bool m_updatingSlider;
 
     static constexpr int kSliderMinimum = 0;

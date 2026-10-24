@@ -1,12 +1,14 @@
 #include "slideio/viewer/ui/ScaleBarWidget.h"
 
 #include "slideio/viewer/core/ScaleBar.h"
+#include "slideio/viewer/ui/CalibrationPolicy.h"
 
 #include <QFont>
 #include <QPaintEvent>
 #include <QPainter>
 #include <QPen>
 #include <QString>
+#include <QStyle>
 
 namespace slideio::viewer::ui
 {
@@ -36,12 +38,15 @@ ScaleBarWidget::ScaleBarWidget(QWidget* parent)
 
 ScaleBarWidget::~ScaleBarWidget() = default;
 
-void ScaleBarWidget::setScale(double metersPerPixelNative, double viewportScale)
+void ScaleBarWidget::setScale(double metersPerPixelNative, double viewportScale, core::CalibrationSource source)
 {
     m_metersPerPixelNative = metersPerPixelNative;
     m_viewportScale        = viewportScale;
+    m_source               = source;
 
-    const bool valid = metersPerPixelNative > 0.0 && viewportScale > 0.0;
+    // An uncalibrated slide keeps the widget, to say so; only no slide hides it.
+    const bool slideOpen = viewportScale > 0.0;
+    const bool valid = slideOpen && (source == core::CalibrationSource::None || metersPerPixelNative > 0.0);
     setVisible(valid);
     if (valid) {
         update();
@@ -50,7 +55,24 @@ void ScaleBarWidget::setScale(double metersPerPixelNative, double viewportScale)
 
 void ScaleBarWidget::paintEvent(QPaintEvent* /*event*/)
 {
-    if (m_metersPerPixelNative <= 0.0 || m_viewportScale <= 0.0) {
+    if (m_viewportScale <= 0.0) {
+        return;
+    }
+    if (m_source == core::CalibrationSource::None) {
+        // No bar at all: a bar would have to claim a length (UI design 11.5).
+        QPainter painter(this);
+        const int iconSize = kLabelHeight;
+        style()->standardIcon(QStyle::SP_MessageBoxWarning)
+            .paint(&painter, QRect(kHandleInset, kBarY, iconSize, iconSize));
+        QFont labelFont = painter.font();
+        labelFont.setPixelSize(10);
+        painter.setFont(labelFont);
+        painter.setPen(QColor("#CCCCCC"));
+        painter.drawText(QRect(kHandleInset + iconSize + 4, kBarY, width(), iconSize),
+                         Qt::AlignLeft | Qt::AlignVCenter, tr("Uncalibrated"));
+        return;
+    }
+    if (m_metersPerPixelNative <= 0.0) {
         return;
     }
 
@@ -89,9 +111,12 @@ void ScaleBarWidget::paintEvent(QPaintEvent* /*event*/)
     labelFont.setPixelSize(10);
     painter.setFont(labelFont);
 
-    const QString text  = formatLabel(tick.lengthMicrons);
+    const QString text  = formatLabel(tick.lengthMicrons) + QString::fromStdString(scaleBarSuffix(m_source));
     const int labelY    = kBarY + kCapHalfLen + kLabelGap;
-    const QRect textRect(x0, labelY, x1 - x0, kLabelHeight);
+    // Centred under the bar but as wide as the widget: a short bar would clip
+    // " (manual)", the one part of the label that must not be lost.
+    const int centre = (x0 + x1) / 2;
+    const QRect textRect(centre - width() / 2, labelY, width(), kLabelHeight);
     painter.drawText(textRect, Qt::AlignHCenter | Qt::AlignTop, text);
 }
 
