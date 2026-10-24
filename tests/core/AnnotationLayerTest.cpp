@@ -115,9 +115,10 @@ TEST_CASE("merging layer lists keeps ours and adds theirs on top", "[core][Annot
 
 TEST_CASE("merging with a file that said nothing about layers keeps ours", "[core][AnnotationLayer]")
 {
-    std::vector<AnnotationLayer> ours = {AnnotationLayer{"only", "Only"}};
-    // An empty list is a version-1 file: the defaults, which then add their three.
-    CHECK(mergeLayerLists(ours, {}).size() == 4);
-    CHECK(mergeLayerLists(ours, {}).front() == ours.front());
+    // An empty list is a version-1 file. Its annotations name no layer and
+    // land on our bottom one, so it adds nothing -- and in particular does not
+    // bring back the default layers the user deleted here.
+    const std::vector<AnnotationLayer> ours = {AnnotationLayer{"only", "Only"}};
+    CHECK(mergeLayerLists(ours, {}) == ours);
     CHECK(mergeLayerLists(defaultLayers(), {}) == defaultLayers());
 }

@@ -60,7 +60,9 @@ struct AnnotationLayer
 /// The layers of two copies of one scene merged: `ours` as they are, then each
 /// of `theirs` whose id `ours` lacks, on top in their own order. Ours win a
 /// shared id, because they are what the user is looking at. An empty `theirs`
-/// is a file that said nothing about layers: defaultLayers().
+/// is a file that said nothing about layers, so it adds none: its annotations
+/// name no layer and land on our bottom one, and the default layers the user
+/// deleted here do not come back.
 [[nodiscard]] std::vector<AnnotationLayer> mergeLayerLists(const std::vector<AnnotationLayer>& ours,
                                                            const std::vector<AnnotationLayer>& theirs);
 

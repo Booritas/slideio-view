@@ -96,7 +96,7 @@ std::vector<AnnotationLayer> mergeLayerLists(const std::vector<AnnotationLayer>&
                                              const std::vector<AnnotationLayer>& theirs)
 {
     std::vector<AnnotationLayer> merged = ours;
-    for (const AnnotationLayer& layer : theirs.empty() ? defaultLayers() : theirs) {
+    for (const AnnotationLayer& layer : theirs) {
         if (findLayer(merged, layer.id) == nullptr) {
             merged.push_back(layer);
         }

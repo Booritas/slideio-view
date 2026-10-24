@@ -191,7 +191,8 @@ LayersPanel::LayersPanel(QWidget* parent)
         for (const std::string& target : mergeTargets(m_impl->model->layers(), source)) {
             const core::AnnotationLayer* layer = core::findLayer(m_impl->model->layers(), target);
             QAction* action = menu.addAction(QString::fromStdString(layer->name));
-            connect(action, &QAction::triggered, this, [this, source, target]() { emit mergeRequested(source, target); });
+            connect(action, &QAction::triggered, this,
+                    [this, source, target]() { emit mergeRequested(source, target); });
         }
         menu.exec(m_impl->mergeButton->mapToGlobal(QPoint(0, m_impl->mergeButton->height())));
     });

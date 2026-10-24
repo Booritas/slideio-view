@@ -230,6 +230,12 @@ signals:
     void activeLayerChanged(const std::string& layerId);
 
 private:
+    /// Clears the selection when it names an annotation on a hidden layer: a
+    /// selection names something shown, or Delete and the properties panel
+    /// would act on what the user cannot see. Run after every change that can
+    /// hide one -- setLayers, and restoreMany, which a move and its undo use.
+    void dropHiddenSelection();
+
     std::vector<core::Annotation> m_annotations;
     std::string m_selectedId;
     std::string m_defaultAuthor;

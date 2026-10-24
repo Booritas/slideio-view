@@ -119,7 +119,20 @@ bool AnnotationModel::setLayers(std::vector<core::AnnotationLayer> layers)
     if (activeGone) {
         emit activeLayerChanged(m_activeLayerId);
     }
+    dropHiddenSelection();
     return true;
+}
+
+void AnnotationModel::dropHiddenSelection()
+{
+    const core::Annotation* selected = find(m_selectedId);
+    if (selected == nullptr) {
+        return;
+    }
+    const core::AnnotationLayer* layer = core::findLayer(m_layers, core::effectiveLayerId(*selected, m_layers));
+    if (layer != nullptr && !layer->visible) {
+        clearSelection();
+    }
 }
 
 void AnnotationModel::setActiveLayer(const std::string& layerId)
@@ -281,6 +294,8 @@ std::size_t AnnotationModel::restoreMany(const std::vector<core::Annotation>& an
     }
     if (stored > 0) {
         emit annotationsBulkChanged();
+        // A move, or the undo of one, can carry the selection onto a hidden layer.
+        dropHiddenSelection();
     }
     return stored;
 }

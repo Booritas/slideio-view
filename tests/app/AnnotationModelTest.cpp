@@ -947,3 +947,36 @@ TEST_CASE("clear and replaceAll restore the default layers", "[app][AnnotationMo
     model.replaceAll({}, {});
     CHECK(model.layers() == core::defaultLayers());
 }
+
+TEST_CASE("a selection never names an annotation on a hidden layer", "[app][AnnotationModel][Layers]")
+{
+    // Otherwise Delete and the properties panel act on something not shown.
+    app::AnnotationModel model;
+    std::vector<core::AnnotationLayer> layers = core::defaultLayers();
+    layers[1].visible = false;  // Teaching hidden
+    REQUIRE(model.setLayers(layers));
+
+    SECTION("moved onto a hidden layer")
+    {
+        const std::string a = addRect(model, 0, 0, 1, 1);
+        model.setSelected(a);
+        REQUIRE(model.moveToLayer({a}, "teaching").size() == 1);
+        CHECK(model.selectedId().empty());
+    }
+    SECTION("moved onto a shown layer keeps it")
+    {
+        const std::string a = addRect(model, 0, 0, 1, 1);
+        model.setSelected(a);
+        REQUIRE(model.moveToLayer({a}, "research").size() == 1);
+        CHECK(model.selectedId() == a);
+    }
+    SECTION("its layer hidden")
+    {
+        const std::string a = addRect(model, 0, 0, 1, 1);
+        REQUIRE(model.moveToLayer({a}, "research").size() == 1);
+        model.setSelected(a);
+        layers[2].visible = false;
+        REQUIRE(model.setLayers(layers));
+        CHECK(model.selectedId().empty());
+    }
+}
