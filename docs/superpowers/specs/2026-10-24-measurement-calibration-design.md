@@ -209,17 +209,19 @@ Written before the run.
 
 | | Check | Result |
 |---|---|---|
-| AK1 | A slide with metadata: panel, scale bar and Slide Properties show it with no badge; CSV `calibration_source` = `metadata`. | |
-| AK2 | View > Calibration… shows the metadata value; set 0.5 × 0.5: the selected polygon's area changes by (0.5 / metadata)², the badge reads "manual calibration", the scale bar shows "(manual)". | |
-| AK3 | Close and reopen the slide, and restart the viewer: the override is still applied. | |
-| AK4 | A multi-scene file: an override on scene 0 does not change scene 1's numbers. | |
-| AK5 | Reset to metadata: every surface is back to AK1. | |
-| AK6 | A slide with no calibration: status-bar prompt on open, "Uncalibrated" on the scale bar, "uncalibrated" badge, measurements in px; set an override and they turn into µm with the manual badge. | |
-| AK7 | Square pixels off, X 0.25 Y 0.5: a rectangle's area and perimeter follow both axes. | |
-| AK8 | Enter 250 (mm typed as µm) and 0: refused in the dialog with the range named; nothing stored. | |
-| AK9 | A read-only scene (second window): the dialog works and the numbers change; the annotation file is unchanged byte for byte. | |
-| AK10 | Export Measurements and GeoJSON with a manual override: the CSV and the GeoJSON carry `manual` and the manual pixel size. | |
-| AK11 | The log has one info line per apply and per reset, naming slide, scene and both sources. | |
+| AK1 | A slide with metadata: panel, scale bar and Slide Properties show it with no badge; CSV `calibration_source` = `metadata`. | **Pass.** CMU-1-Small-Region: polygon 85600 µm², no badge; Slide Properties "metadata, 0.4990 × 0.4990 µm/px"; CSV `metadata`, 0.499. |
+| AK2 | View > Calibration… shows the metadata value; set 0.5 × 0.5: the selected polygon's area changes by (0.5 / metadata)², the badge reads "manual calibration", the scale bar shows "(manual)". | **Pass.** 85600 → 85900 µm² (×1.004 = (0.5/0.499)²); badge "manual calibration"; scale bar "100 µm (manual)". |
+| AK3 | Close and reopen the slide, and restart the viewer: the override is still applied. | **Pass** across a viewer restart (which closes and reopens the slide): 43000 µm², badge, on relaunch. |
+| AK4 | A multi-scene file: an override on scene 0 does not change scene 1's numbers. | **Open — for the owner.** The override was set on scene 0 of the Leica SCN (2000 µm (manual) on its scale bar), but scene 1 could not be reached: on 2026-10-24 scripted clicks into the dock panels did not register, the condition recorded in group AJ. The per-scene key is pinned by `"an override is per scene"`. |
+| AK5 | Reset to metadata: every surface is back to AK1. | **Pass.** Panel 85600 µm² with no badge, scale bar "100 µm", Slide Properties "metadata, 0.4990 × 0.4990 µm/px", the next CSV `metadata` 0.499. |
+| AK6 | A slide with no calibration: status-bar prompt on open, "Uncalibrated" on the scale bar, "uncalibrated" badge, measurements in px; set an override and they turn into µm with the manual badge. | **Pass** on CMU-1-Small-Region-page-2.tif: the status-bar prompt on open, "Uncalibrated" with a warning icon, a rectangle 2975 px² / 225 px badged "uncalibrated"; at 0.5 it read 744 µm² / 113 µm badged "manual calibration". |
+| AK7 | Square pixels off, X 0.25 Y 0.5: a rectangle's area and perimeter follow both axes. | **Pass.** The CMU polygon at 0.25 × 0.5: 43000 µm² and 904 µm, against 42953 µm² and 904.0 µm computed from its vertices. |
+| AK8 | Enter 250 (mm typed as µm) and 0: refused in the dialog with the range named; nothing stored. | **Pass.** 250 and 0 each left the dialog open with "Enter a pixel size between 0.01 and 100 µm per pixel."; the stored value was unchanged. |
+| AK9 | A read-only scene (second window): the dialog works and the numbers change; the annotation file is unchanged byte for byte. | **Pass.** A second window on CMU (Rectangle and Text disabled): set 0.3, the polygon read 30900 µm² (30926 computed); the annotation file hash unchanged. |
+| AK10 | Export Measurements and GeoJSON with a manual override: the CSV and the GeoJSON carry `manual` and the manual pixel size. | **Pass.** CSV `0.25,0.5,manual` on every row; GeoJSON `calibrationSource: "manual"`, `pixelSizeMicrons: [0.25, 0.5]`. |
+| AK11 | The log has one info line per apply and per reset, naming slide, scene and both sources. | **Pass.** One `Calibration for <slide> scene <n>: <old source> <x>x<y> -> <new source> <x>x<y>` line per apply and per reset, including none → manual and manual → none. |
+
+Run 2026-10-24 against `28fc1f2`, **10 of 11 pass, AK4 open for the owner**; the settings had no calibration group before the run, and every override set was reset, so none is left stored. One behaviour observed outside the checks: a window measures with the override it last read, so after a second window changed it the first kept its old value until the scene was reopened, while its dialog already prefilled the new one. Overrides are rarely changed and the stale window still badges its numbers "manual calibration", so this is recorded, not fixed.
 
 ## 10. Left to the builder
 
