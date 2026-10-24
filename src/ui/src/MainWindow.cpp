@@ -1533,14 +1533,17 @@ void MainWindow::Impl::buildAnnotationPersistence()
         if (routeEditShortcutToFocusWidget(owner, /*redo=*/true)) {
             return;
         }
-        // An open text editor would otherwise be left on an annotation the undo
-        // may remove; its words are committed first, as a focus loss would.
-        viewportWidget->commitTextEditing();
         if (viewportWidget->isDragInFlight()) {
             return;
         }
         const QString what = QString::fromStdString(undoStack->redoDescription());
         undoStack->redo();
+        // An open text editor's words are committed AFTER the redo, not before
+        // as Undo does: committing records a new step, and a new step empties
+        // the redo stack, so committing first left Redo nothing to redo. A redo
+        // that removes the very text being edited closes its editor through
+        // annotationRemoved.
+        viewportWidget->commitTextEditing();
         statusBarManager->showTransientMessage(tr("Redo: %1").arg(what));
     });
 
@@ -2144,6 +2147,12 @@ bool MainWindow::Impl::annotationsReadyToExport(const QString& title)
     // empty without the scene being empty, and the export would file a
     // complete-looking false zero. A locked or read-only scene IS loaded and
     // stays exportable: that is what a reader wants to take away.
+    //
+    // Words still being typed into a text are committed first: opening the
+    // File menu does not commit them (a popup is the user still at work), and
+    // every export is built from the model before its dialog opens, so the
+    // file would otherwise disagree with what is on screen.
+    viewportWidget->commitTextEditing();
     if (annotationPersistence->annotationsLoaded()) {
         return true;
     }

@@ -31,6 +31,12 @@ public:
     /// Stores a new annotation under a freshly generated id, which is returned.
     std::string add(core::AnnotationGeometry geometry);
 
+    /// As add(), with `label` already set when annotationAdded is emitted. A
+    /// text is created with its words: adding it empty and setting them after
+    /// would show every listener -- the list, autosave -- a text with no words
+    /// and rebuild the list twice.
+    std::string add(core::AnnotationGeometry geometry, std::string label);
+
     /// Stores `annotation` under the id it already carries, with its metadata
     /// exactly as given. This is the loading path: `add()` mints a fresh id and
     /// stamps the current time, which would churn every id on every save/load

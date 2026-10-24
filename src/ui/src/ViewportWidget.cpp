@@ -1498,11 +1498,28 @@ struct ViewportWidget::Impl
     core::PointF textAnchorSlide{};
 
     /// Every text is drawn in this, at a fixed screen size.
-    [[nodiscard]] static QFont textFont()
+    /// Built once, on first use (an application exists by then): every paint
+    /// and every hit test measures every text, and both depend only on this.
+    [[nodiscard]] static const QFont& textFont(bool italic = false)
     {
-        QFont font = QGuiApplication::font();
-        font.setPointSizeF(kTextPointSize);
-        return font;
+        static const QFont plain = [] {
+            QFont font = QGuiApplication::font();
+            font.setPointSizeF(kTextPointSize);
+            return font;
+        }();
+        static const QFont slanted = [] {
+            QFont font = plain;
+            font.setItalic(true);
+            return font;
+        }();
+        return italic ? slanted : plain;
+    }
+
+    [[nodiscard]] static const QFontMetricsF& textMetrics(bool italic = false)
+    {
+        static const QFontMetricsF plain(textFont(false));
+        static const QFontMetricsF slanted(textFont(true));
+        return italic ? slanted : plain;
     }
 
     /// What a text's plate shows: its words, or a placeholder that keeps a
@@ -2250,19 +2267,7 @@ ViewportWidget::ViewportWidget(app::AnnotationModel& model, QWidget* parent)
     // An editor whose annotation has gone -- deleted from the list panel, or
     // the model emptied -- has nothing left to commit to, and left open it
     // would show words over a spot where nothing is stored any more.
-    const auto dropTextEditor = [this]() {
-        if (!m_impl->textEditorOpen) {
-            return;
-        }
-        m_impl->textEditorOpen = false;
-        m_impl->textEditingId.clear();
-        const bool editorHadFocus = m_impl->textEditor->hasFocus();
-        m_impl->textEditor->hide();
-        if (editorHadFocus) {
-            setFocus();
-        }
-        update();
-    };
+    const auto dropTextEditor = [this]() { finishTextEditor(false); };
     connect(m_impl->annotations, &app::AnnotationModel::annotationRemoved, this,
             [this, dropTextEditor](const std::string& id) {
                 if (!m_impl->textEditingId.empty() && id == m_impl->textEditingId) {
@@ -3346,7 +3351,8 @@ QRectF ViewportWidget::textPlateFor(const core::Annotation& annotation) const
     double sx = 0.0;
     double sy = 0.0;
     m_impl->controller->viewport().slideToScreen(text->anchor.x, text->anchor.y, sx, sy);
-    const QFontMetricsF metrics(Impl::textFont());
+    // The same metrics the words are painted with, so the plate fits them.
+    const QFontMetricsF& metrics = Impl::textMetrics(annotation.properties().label.empty());
     return textPlateRect(QPointF(sx, sy), metrics.horizontalAdvance(Impl::textWords(annotation)),
                          metrics.height());
 }
@@ -3414,7 +3420,7 @@ void ViewportWidget::positionTextEditor()
     double sx = 0.0;
     double sy = 0.0;
     m_impl->controller->viewport().slideToScreen(m_impl->textAnchorSlide.x, m_impl->textAnchorSlide.y, sx, sy);
-    const QFontMetricsF metrics(Impl::textFont());
+    const QFontMetricsF& metrics = Impl::textMetrics();
     const double width = std::max(160.0, metrics.horizontalAdvance(m_impl->textEditor->text()) + 40.0);
     const QRectF plate = textPlateRect(QPointF(sx, sy), width, metrics.height());
     const QRect geometry = plate.toAlignedRect();
@@ -3432,12 +3438,16 @@ void ViewportWidget::finishTextEditor(bool commit)
     const std::string words = m_impl->textEditor->text().trimmed().toStdString();
     const std::string id = std::exchange(m_impl->textEditingId, std::string());
     // Focus comes back to the viewport only when the editor still holds it --
-    // Enter, Escape, a tool shortcut. On a focus loss Qt has already handed it
-    // to the widget the user clicked, and taking it back would send what they
-    // type there to the viewport's bare-letter tool shortcuts and Delete.
+    // Enter, Escape, a tool shortcut. On a focus loss within the window Qt has
+    // already handed it to the widget the user clicked, and taking it back
+    // would send what they type there to the viewport's bare-letter tool
+    // shortcuts and Delete. A switch to another window is the exception: no
+    // widget here has focus then, and without this the hidden editor would
+    // stay the window's focus child, so on return Qt would pick some other
+    // widget and the tool shortcuts would stay dead until the slide was clicked.
     const bool editorHadFocus = m_impl->textEditor->hasFocus();
     m_impl->textEditor->hide();
-    if (editorHadFocus) {
+    if (editorHadFocus || !isActiveWindow()) {
         setFocus();
     }
     update();
@@ -3452,17 +3462,10 @@ void ViewportWidget::finishTextEditor(bool commit)
         return;
     }
     if (id.empty()) {
-        // The words go on BEFORE pushCreateCommand copies the annotation, so
-        // creating a text with its words is one undo step, not a create
-        // followed by an edit.
-        const std::string created = m_impl->annotations->add(core::TextGeometry{m_impl->textAnchorSlide});
-        if (const core::Annotation* stored = m_impl->annotations->find(created)) {
-            core::Annotation withWords = *stored;
-            core::AnnotationProperties properties = withWords.properties();
-            properties.label = words;
-            withWords.setProperties(std::move(properties));
-            m_impl->annotations->restore(std::move(withWords));
-        }
+        // Created with its words, so pushCreateCommand copies them and creating
+        // a text is one undo step -- and every listener sees it once, whole.
+        const std::string created =
+            m_impl->annotations->add(core::TextGeometry{m_impl->textAnchorSlide}, words);
         pushCreateCommand(created);
         m_impl->annotations->setSelected(created);
         return;
@@ -3686,7 +3689,6 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
     const std::string& selectedId = m_impl->annotations->selectedId();
 
     const QRect widgetRect = rect();
-    const QFont textFont = Impl::textFont();
 
     for (const core::Annotation& annotation : m_impl->annotations->annotations()) {
         // A text is its words, not its outline, and the words reach far past
@@ -3717,15 +3719,20 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
             painter.setBrush(QBrush(plateFill));
             painter.setPen(props.lineWidth > 0.0 ? QPen(stroke, props.lineWidth) : QPen(Qt::NoPen));
             painter.drawRoundedRect(plate, 3.0, 3.0);
-            QFont font = textFont;
-            if (props.label.empty()) {
-                font.setItalic(true);
-                painter.setPen(QColor(0x80, 0x80, 0x80));
-            } else {
-                painter.setPen(stroke);
-            }
-            painter.setFont(font);
-            painter.drawText(plate, Qt::AlignCenter | Qt::TextSingleLine, Impl::textWords(annotation));
+            const bool placeholder = props.label.empty();
+            const QFont& font = Impl::textFont(placeholder);
+            // The words are filled as outlines, never drawText: drawText goes
+            // through Qt's glyph-cache textures, and the GL state the tile
+            // passes leave behind uploads those glyphs garbled -- every letter
+            // came out upside down. A path is drawn the way every other shape
+            // here is, so it cannot be affected.
+            const QString words = Impl::textWords(annotation);
+            const QFontMetricsF& metrics = Impl::textMetrics(placeholder);
+            const QPointF baseline(plate.center().x() - metrics.horizontalAdvance(words) / 2.0,
+                                   plate.center().y() + (metrics.ascent() - metrics.descent()) / 2.0);
+            QPainterPath glyphs;
+            glyphs.addText(baseline, font, words);
+            painter.fillPath(glyphs, props.label.empty() ? QColor(0x80, 0x80, 0x80) : stroke);
             continue;
         }
 
@@ -4036,15 +4043,8 @@ void ViewportWidget::resetAnnotationState()
     // one slide's marks drawn over another's tissue.
     m_impl->annotations->clear();
     m_impl->drawing = false;
-    // closeSlide() committed any open editor before the flush; anything still
-    // open here belongs to a slide whose annotations are already gone, so it
-    // is dropped -- open cleared first, since hiding a focused editor emits
-    // editingFinished.
-    if (m_impl->textEditorOpen) {
-        m_impl->textEditorOpen = false;
-        m_impl->textEditingId.clear();
-        m_impl->textEditor->hide();
-    }
+    // Nothing to do for an open text editor: closeSlide() committed it before
+    // the flush, and clear() above emits cleared, which drops anything left.
     // A half-traced shape is never committed on slide close. It is not in the
     // model, persistence never sees it, and materialising a partial outline
     // into a saved file would be worse than losing it.

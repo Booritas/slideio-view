@@ -73,6 +73,24 @@ TEST_CASE("add emits annotationAdded with the new id", "[app][AnnotationModel]")
     REQUIRE(seen.front() == id);
 }
 
+TEST_CASE("add with a label emits once, already carrying the label", "[app][AnnotationModel]")
+{
+    app::AnnotationModel model;
+    std::vector<std::string> labelsSeen;
+    int changes = 0;
+    QObject::connect(&model, &app::AnnotationModel::annotationAdded, [&](const std::string& id) {
+        labelsSeen.push_back(model.find(id)->properties().label);
+    });
+    QObject::connect(&model, &app::AnnotationModel::annotationChanged,
+                     [&changes](const std::string&) { ++changes; });
+
+    const std::string id = model.add(core::TextGeometry{core::PointF{5.0, 7.0}}, "Margin involved");
+
+    REQUIRE(labelsSeen == std::vector<std::string>{"Margin involved"});
+    CHECK(changes == 0);
+    CHECK(model.find(id)->properties().label == "Margin involved");
+}
+
 TEST_CASE("remove deletes the annotation and emits annotationRemoved",
           "[app][AnnotationModel]")
 {

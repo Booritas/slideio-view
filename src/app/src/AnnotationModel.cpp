@@ -31,6 +31,11 @@ AnnotationModel::~AnnotationModel() = default;
 
 std::string AnnotationModel::add(core::AnnotationGeometry geometry)
 {
+    return add(std::move(geometry), std::string());
+}
+
+std::string AnnotationModel::add(core::AnnotationGeometry geometry, std::string label)
+{
     std::string id = generateId();
     core::AnnotationMetadata metadata;
     metadata.author = m_defaultAuthor;
@@ -39,6 +44,7 @@ std::string AnnotationModel::add(core::AnnotationGeometry geometry)
     metadata.modifiedAt = now;
 
     core::AnnotationProperties properties;
+    properties.label = std::move(label);
     // Markers only: see setCurrentCategory.
     if (core::typeOf(geometry) == core::AnnotationType::Point) {
         properties.classification = m_currentCategory;
