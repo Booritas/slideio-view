@@ -225,22 +225,24 @@ dirty and is saved by the existing debounced autosave.
 
 ## 10. Manual checks — group AM
 
-Written before the run.
+Written before the run; run 2026-10-24 against the installed build on
+CMU-1-Small-Region. **12 of 12 pass**, with one defect found and fixed during
+the run (AM5). The CMU annotation file was restored from its backup afterwards.
 
 | | Check | Result |
 |---|---|---|
-| AM1 | A slide with existing annotations opens with Diagnostic, Teaching, Research; every annotation is on Diagnostic; the file is unchanged on disk until something is changed. | |
-| AM2 | Make Teaching active (status bar says so), draw a rectangle: it is on Teaching. The file is now version 2 with `layers` and `layerId`. | |
-| AM3 | Hide Teaching: its annotations vanish from the slide and the list, a click there selects nothing, the tally still counts them and says "Includes n on hidden layers". | |
-| AM4 | Lock Diagnostic: its annotations show a padlock in the list; move, resize, Delete and property edits are refused with the reason. Drawing with Diagnostic active is refused. | |
-| AM5 | Opacity 30% on Research: its annotations fade; the stored colour is unchanged in the properties panel. | |
-| AM6 | Move to Layer from the viewport and the list menus; undo puts it back; one step each. | |
-| AM7 | Reorder: Research above Diagnostic paints on top and is hit first where they overlap; move it below and the reverse. | |
-| AM8 | New, rename, merge (Research into Diagnostic, one undo step), delete the emptied layer; Delete is disabled on a non-empty layer and on the last layer. | |
-| AM9 | Close and reopen the slide: layers, settings and assignments come back. | |
-| AM10 | A read-only second window: visibility works, every other layer control is disabled. | |
-| AM11 | Export Counts and Measurements with a hidden layer: its annotations are in both. GeoJSON carries `slideio.layer`. | |
-| AM12 | The pre-change build: a version-2 file is refused (version too new) and left byte for byte; a version-1 file written by this build after edits that use only Diagnostic still opens. | |
+| AM1 | A slide with existing annotations opens with Diagnostic, Teaching, Research; every annotation is on Diagnostic; the file is unchanged on disk until something is changed. | **Pass.** Three layers, Diagnostic bold and active, every row on Diagnostic; the file's hash was unchanged by the open. |
+| AM2 | Make Teaching active (status bar says so), draw a rectangle: it is on Teaching. The file is now version 2 with `layers` and `layerId`. | **Pass.** Status bar `Layer: Teaching`; the rectangle's `layerId` is `teaching`; the file was rewritten as version 2 with `layers` ahead of `annotations`. |
+| AM3 | Hide Teaching: its annotations vanish from the slide and the list, a click there selects nothing, the tally still counts them and says "Includes n on hidden layers". | **Pass.** The rectangle left the slide and the list, a click on its place selected nothing, the strip still read Unclassified 4 with "Includes 1 on hidden layers", and autosave wrote `visible: false`. |
+| AM4 | Lock Diagnostic: its annotations show a padlock in the list; move, resize, Delete and property edits are refused with the reason. Drawing with Diagnostic active is refused. | **Pass**, with the padlock drawn as the text "(locked)" after the type (§11's call). A drag became a pan, Delete did nothing, the property fields were disabled, and drawing was refused with "Layer Diagnostic is locked". |
+| AM5 | Opacity 30% on Research: its annotations fade; the stored colour is unchanged in the properties panel. | **Pass** at 25%, set by a click on the slider track — **which did not apply until a fix made during this run**: the slider applied only on `sliderReleased`, which a track click never emits; it now also applies on `valueChanged` while the handle is not held. The ellipse faded; its stored colour stayed `#E67E22FF`. |
+| AM6 | Move to Layer from the viewport and the list menus; undo puts it back; one step each. | **Pass** from the list's row menu and Edit > Move to Layer; the slide view has no context menu (§7), so the Edit menu stands in for "the viewport". Undo and Redo each one step. |
+| AM7 | Reorder: Research above Diagnostic paints on top and is hit first where they overlap; move it below and the reverse. | **Pass.** Research on top: a click on the overlap selected the ellipse (Research); after Down twice the same click selected the rectangle (Diagnostic), and the file's `layers` order followed. |
+| AM8 | New, rename, merge (Research into Diagnostic, one undo step), delete the emptied layer; Delete is disabled on a non-empty layer and on the last layer. | **Pass.** New made "Layer 1" on top and active, renamed in place to "Students"; Delete was enabled on the empty Students and disabled on non-empty Research and Diagnostic; Merge moved the ellipse to Diagnostic, undo and redo one step each; Delete then removed the emptied Research and the empty Students. **The last-layer clause is unreachable from the UI** while that layer holds annotations, since non-empty already disables Delete; `canDeleteLayer`'s test pins it. |
+| AM9 | Close and reopen the slide: layers, settings and assignments come back. | **Pass.** With Teaching also locked, the viewer was closed and relaunched: order, Teaching hidden and locked, counts 1 and 4, Diagnostic bold; the file's hash was unchanged by the reopen. |
+| AM10 | A read-only second window: visibility works, every other layer control is disabled. | **Pass.** A second instance (read-only through the lock): New, Delete, Merge, Up, Down disabled; a Lock click and a double-click on a name did nothing; Show toggled Teaching visible there; the file's hash did not change. |
+| AM11 | Export Counts and Measurements with a hidden layer: its annotations are in both. GeoJSON carries `slideio.layer`. | **Pass** with Teaching hidden: counts CSV Unclassified 5; measurements CSV 5 rows, the Teaching rectangle included; every GeoJSON feature carries `slideio.layer` with its layer's name. |
+| AM12 | The pre-change build: a version-2 file is refused (version too new) and left byte for byte; a version-1 file written by this build after edits that use only Diagnostic still opens. | **Pass.** The pre-layers build (`42310bb`) said "the file uses schema version 2, which is newer than this version of SlideIO Viewer understands (1)" and left the file byte for byte. A version-1 file restored and drawn on with Diagnostic active stayed version 1 with no `layers` or `layerId`; the old build opened all four shapes and did not rewrite it. |
 
 ## 11. Left to the builder
 
