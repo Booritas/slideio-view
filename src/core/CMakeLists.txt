@@ -40,5 +40,14 @@ target_compile_features(slideio-viewer-core PUBLIC cxx_std_17)
 # no Qt.
 target_link_libraries(slideio-viewer-core PRIVATE nlohmann_json::nlohmann_json)
 
+# No fused multiply-add. Clang contracts `a + t * b` into one FMA by default on
+# arm64, skipping the rounding of the product: a point lying exactly on a
+# polygon edge then lands 3.6e-15 off it and misses a zero-tolerance hit test,
+# and a stored annotation measures differently on Apple Silicon than on x86.
+# MSVC does not contract without /fp:contract, so it needs nothing.
+if(NOT MSVC)
+    target_compile_options(slideio-viewer-core PRIVATE -ffp-contract=off)
+endif()
+
 include(CompilerWarnings)
 set_project_warnings(slideio-viewer-core)
