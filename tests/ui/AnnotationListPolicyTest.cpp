@@ -739,3 +739,45 @@ TEST_CASE("categoryTally does not count rulers or angles", "[ui][CategoryTally]"
     CHECK(rows[0].category == "Tumor");
     CHECK(rows[0].count == 1);
 }
+
+TEST_CASE("the list omits hidden layers and marks locked ones", "[ui][AnnotationList][Layers]")
+{
+    core::Annotation shown("a", core::PointGeometry{core::PointF{1.0, 1.0}});
+    core::Annotation hidden("b", core::PointGeometry{core::PointF{2.0, 2.0}});
+    hidden.setLayerId("teaching");
+    core::Annotation locked("c", core::PointGeometry{core::PointF{3.0, 3.0}});
+    locked.setLayerId("research");
+    std::vector<core::AnnotationLayer> layers = core::defaultLayers();
+    layers[1].visible = false;
+    layers[2].locked = true;
+
+    const auto rows = ui::annotationRows({shown, hidden, locked}, "", ui::AnnotationSortKey::CreationOrder,
+                                         testTypeName, layers);
+    REQUIRE(rows.size() == 2);
+    CHECK(rows[0].id == "a");
+    CHECK_FALSE(rows[0].locked);
+    CHECK(rows[1].id == "c");
+    CHECK(rows[1].locked);
+}
+
+TEST_CASE("the tally counts hidden layers and says how many", "[ui][CategoryTally][Layers]")
+{
+    core::Annotation shown = markerWith("a", "Tumor");
+    core::Annotation hiddenOne = markerWith("b", "Tumor");
+    hiddenOne.setLayerId("teaching");
+    core::Annotation hiddenTwo = markerWith("c", "");
+    hiddenTwo.setLayerId("teaching");
+    core::Annotation hiddenRuler("r", core::RulerGeometry{core::PointF{0, 0}, core::PointF{1, 1}});
+    hiddenRuler.setLayerId("teaching");
+    std::vector<core::AnnotationLayer> layers = core::defaultLayers();
+    layers[1].visible = false;
+
+    const std::vector<core::Annotation> annotations{shown, hiddenOne, hiddenTwo, hiddenRuler};
+    const auto rows = ui::categoryTally(annotations, {"Tumor"});
+    REQUIRE(rows.size() == 2);
+    CHECK(rows[0].count == 2);
+    CHECK(rows[1].count == 1);
+    // The ruler is a measurement, not counted, so not reported either.
+    CHECK(ui::hiddenLayerCount(annotations, layers) == 2);
+    CHECK(ui::hiddenLayerCount(annotations, core::defaultLayers()) == 0);
+}

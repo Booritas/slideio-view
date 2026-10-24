@@ -1,6 +1,7 @@
 #pragma once
 
 #include "slideio/viewer/core/Annotation.h"
+#include "slideio/viewer/core/AnnotationLayer.h"
 
 #include <cstddef>
 #include <functional>
@@ -28,6 +29,8 @@ struct AnnotationRow
     std::string label;
     std::string type;
     std::string classification;
+    /// On a locked layer: shown, but nothing about it may change.
+    bool locked = false;
 };
 
 /// The user's word for a geometry type. Passed in rather than looked up here
@@ -51,9 +54,21 @@ using AnnotationTypeNames = std::function<std::string(core::AnnotationType)>;
 ///
 /// Every sort breaks ties by creation order, so two rows with equal keys never
 /// swap between rebuilds -- and the list rebuilds on every model change.
+///
+/// With `layers`, rows on a HIDDEN layer are omitted -- the list is a view of
+/// what is shown, and a teaching layer is hidden precisely so its answers are
+/// not read -- and rows on a locked layer say so. Empty `layers` filters
+/// nothing.
 [[nodiscard]] std::vector<AnnotationRow> annotationRows(
     const std::vector<core::Annotation>& annotations, const std::string& filterText,
-    AnnotationSortKey sort, const AnnotationTypeNames& typeName);
+    AnnotationSortKey sort, const AnnotationTypeNames& typeName,
+    const std::vector<core::AnnotationLayer>& layers = {});
+
+/// How many of the annotations categoryTally counts sit on a hidden layer --
+/// for the strip's "Includes n on hidden layers". The tally itself counts them:
+/// a clinical count never follows visibility.
+[[nodiscard]] std::size_t hiddenLayerCount(const std::vector<core::Annotation>& annotations,
+                                           const std::vector<core::AnnotationLayer>& layers);
 
 /// "Annotations (12)", or "Annotations (3 of 12)" when a filter is hiding some
 /// -- so a filtered list is never mistaken for an empty slide.

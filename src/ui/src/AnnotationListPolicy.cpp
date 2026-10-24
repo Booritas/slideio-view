@@ -57,7 +57,8 @@ struct IndexedRow
 
 std::vector<AnnotationRow> annotationRows(const std::vector<core::Annotation>& annotations,
                                           const std::string& filterText, AnnotationSortKey sort,
-                                          const AnnotationTypeNames& typeName)
+                                          const AnnotationTypeNames& typeName,
+                                          const std::vector<core::AnnotationLayer>& layers)
 {
     const std::string needle = toLower(filterText);
 
@@ -67,6 +68,11 @@ std::vector<AnnotationRow> annotationRows(const std::vector<core::Annotation>& a
     for (std::size_t i = 0; i < annotations.size(); ++i) {
         const core::Annotation& annotation = annotations[i];
         const core::AnnotationProperties& properties = annotation.properties();
+        const core::AnnotationLayer* layer =
+            layers.empty() ? nullptr : core::findLayer(layers, core::effectiveLayerId(annotation, layers));
+        if (layer != nullptr && !layer->visible) {
+            continue;
+        }
 
         const std::string type = typeName(annotation.type());
 
@@ -86,6 +92,7 @@ std::vector<AnnotationRow> annotationRows(const std::vector<core::Annotation>& a
         row.label = displayLabel;
         row.type = type;
         row.classification = properties.classification;
+        row.locked = layer != nullptr && layer->locked;
 
         indexed.push_back(IndexedRow{std::move(row), i, annotation.metadata().modifiedAt});
     }
@@ -225,6 +232,25 @@ std::vector<CategoryTallyRow> categoryTally(const std::vector<core::Annotation>&
         rows.push_back(CategoryTallyRow{"Unclassified", unclassified, false, true});
     }
     return rows;
+}
+
+std::size_t hiddenLayerCount(const std::vector<core::Annotation>& annotations,
+                             const std::vector<core::AnnotationLayer>& layers)
+{
+    std::size_t count = 0;
+    for (const core::Annotation& annotation : annotations) {
+        // The tally's own exclusions: what it does not count, it does not report.
+        const core::AnnotationType type = annotation.type();
+        if (type == core::AnnotationType::Text || type == core::AnnotationType::Ruler
+            || type == core::AnnotationType::Angle) {
+            continue;
+        }
+        const core::AnnotationLayer* layer = core::findLayer(layers, core::effectiveLayerId(annotation, layers));
+        if (layer != nullptr && !layer->visible) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 bool countingComboSwallowsKey(int key, bool popupVisible)
