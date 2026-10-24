@@ -92,4 +92,16 @@ std::vector<std::size_t> paintOrder(const std::vector<Annotation>& annotations,
     return order;
 }
 
+std::vector<AnnotationLayer> mergeLayerLists(const std::vector<AnnotationLayer>& ours,
+                                             const std::vector<AnnotationLayer>& theirs)
+{
+    std::vector<AnnotationLayer> merged = ours;
+    for (const AnnotationLayer& layer : theirs.empty() ? defaultLayers() : theirs) {
+        if (findLayer(merged, layer.id) == nullptr) {
+            merged.push_back(layer);
+        }
+    }
+    return merged;
+}
+
 } // namespace slideio::viewer::core

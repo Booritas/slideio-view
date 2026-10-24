@@ -22,14 +22,11 @@ namespace slideio::viewer::ui
 namespace
 {
 
-enum Column
-{
-    VisibleColumn,
-    LockedColumn,
-    NameColumn,
-    CountColumn,
-    OpacityColumn,
-};
+constexpr int VisibleColumn = static_cast<int>(LayerColumn::Visible);
+constexpr int LockedColumn = static_cast<int>(LayerColumn::Locked);
+constexpr int NameColumn = static_cast<int>(LayerColumn::Name);
+constexpr int CountColumn = static_cast<int>(LayerColumn::Count);
+constexpr int OpacityColumn = static_cast<int>(LayerColumn::Opacity);
 
 constexpr int kLayerIdRole = Qt::UserRole + 1;
 
@@ -105,11 +102,26 @@ LayersPanel::LayersPanel(QWidget* parent)
     setWidget(contents);
 
     // The row the user picks is the active layer: where the next shape goes.
+    // A press on the eye or padlock makes the row current too, but only
+    // selects it for the buttons -- see columnActivatesLayer.
     connect(m_impl->tree, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem* current) {
         if (m_impl->rebuilding || m_impl->model == nullptr || current == nullptr) {
             return;
         }
-        m_impl->model->setActiveLayer(current->data(NameColumn, kLayerIdRole).toString().toStdString());
+        const int column = m_impl->tree->currentColumn();
+        if (column < 0 || columnActivatesLayer(static_cast<LayerColumn>(column))) {
+            m_impl->model->setActiveLayer(current->data(NameColumn, kLayerIdRole).toString().toStdString());
+        }
+        updateButtons();
+    });
+    // The current row changes no item when its own name is clicked after its
+    // eye was: that press still has to make it active.
+    connect(m_impl->tree, &QTreeWidget::itemPressed, this, [this](QTreeWidgetItem* item, int column) {
+        if (m_impl->rebuilding || m_impl->model == nullptr || item == nullptr
+            || !columnActivatesLayer(static_cast<LayerColumn>(column))) {
+            return;
+        }
+        m_impl->model->setActiveLayer(item->data(NameColumn, kLayerIdRole).toString().toStdString());
         updateButtons();
     });
 

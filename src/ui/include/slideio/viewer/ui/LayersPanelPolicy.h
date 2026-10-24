@@ -53,4 +53,20 @@ struct LayerRow
 /// "Layer <name> is locked", or empty when it is open.
 [[nodiscard]] std::string layerRefusal(const core::AnnotationLayer& layer);
 
+/// The Layers tab's columns, left to right.
+enum class LayerColumn
+{
+    Visible,
+    Locked,
+    Name,
+    Count,
+    Opacity,
+};
+
+/// Whether making a row current from this column makes its layer the active
+/// one. Not from the eye or the padlock: Qt makes a row current on any press,
+/// and hiding Teaching to keep drawing on Diagnostic must not move the drawing
+/// onto the layer just hidden.
+[[nodiscard]] bool columnActivatesLayer(LayerColumn column);
+
 } // namespace slideio::viewer::ui

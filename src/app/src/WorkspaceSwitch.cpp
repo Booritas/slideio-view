@@ -100,6 +100,9 @@ WorkspaceSwitchResult WorkspaceSwitch::run(const std::string& newRoot,
 
     // 2. Capture what is on screen.
     const std::vector<core::Annotation> current = m_model.annotations();
+    // The layers travel with the annotations: a write without them falls back
+    // to the defaults, which reveals a hidden layer and drops a custom one.
+    const std::vector<core::AnnotationLayer> currentLayers = m_model.layers();
     facts.currentCount = static_cast<int>(current.size());
 
     // 3. Re-point, then probe. Everything written from here lands in the new
@@ -146,13 +149,14 @@ WorkspaceSwitchResult WorkspaceSwitch::run(const std::string& newRoot,
             // Step 1 could not write, so the file beginSlide has just reloaded
             // is older than what the user is looking at. Cancelling a dialog
             // must not cost them the difference.
-            m_model.replaceAll(current);
+            m_model.replaceAll(current, currentLayers);
             m_persistence.markDirty();
         }
         return result;
     }
 
     std::vector<core::Annotation> toWrite;
+    std::vector<core::AnnotationLayer> layersToWrite = currentLayers;
     bool write = false;
     if (wasOffered(options, result.choice)) {
         switch (result.choice) {
@@ -164,6 +168,7 @@ WorkspaceSwitchResult WorkspaceSwitch::run(const std::string& newRoot,
         case WorkspaceChoice::Merge:
             result.merge = core::mergeAnnotations(current, probe.document.annotations);
             toWrite = result.merge.annotations;
+            layersToWrite = core::mergeLayerLists(currentLayers, probe.document.layers);
             write = true;
             break;
         case WorkspaceChoice::LoadNew:
@@ -183,6 +188,7 @@ WorkspaceSwitchResult WorkspaceSwitch::run(const std::string& newRoot,
         // Copied, not moved: when the save fails, this set is the only
         // remaining copy of what the user is looking at.
         document.annotations = toWrite;
+        document.layers = layersToWrite;
 
         const core::SaveResult saved = m_repository.save(document);
         result.write = saved.status;
@@ -201,7 +207,7 @@ WorkspaceSwitchResult WorkspaceSwitch::run(const std::string& newRoot,
         // and when step 1 also failed, that set exists nowhere else. Putting it
         // back and dirtying it hands the retry to the ordinary autosave
         // machinery, which does have the resolver and does report abandonment.
-        m_model.replaceAll(toWrite);
+        m_model.replaceAll(toWrite, layersToWrite);
         m_persistence.markDirty();
     }
     return result;

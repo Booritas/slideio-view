@@ -94,3 +94,30 @@ TEST_CASE("paint order is bottom layer first, model order within a layer", "[cor
     const std::vector<Annotation> annotations = {on("t0", "t"), on("d1", "d"), on("t2", "t"), on("d3", "d")};
     CHECK(paintOrder(annotations, layers) == std::vector<std::size_t>{1, 3, 0, 2});
 }
+
+TEST_CASE("merging layer lists keeps ours and adds theirs on top", "[core][AnnotationLayer]")
+{
+    std::vector<AnnotationLayer> ours = defaultLayers();
+    ours[1].visible = false;
+    std::vector<AnnotationLayer> theirs = defaultLayers();
+    theirs[1].visible = true;
+    theirs[2].name = "Renamed there";
+    theirs.push_back(AnnotationLayer{"students", "Students"});
+
+    const std::vector<AnnotationLayer> merged = mergeLayerLists(ours, theirs);
+
+    REQUIRE(merged.size() == 4);
+    // Ours win on a shared id: what the user was looking at is what they keep.
+    CHECK_FALSE(merged[1].visible);
+    CHECK(merged[2].name == "Research");
+    CHECK(merged[3] == AnnotationLayer{"students", "Students"});
+}
+
+TEST_CASE("merging with a file that said nothing about layers keeps ours", "[core][AnnotationLayer]")
+{
+    std::vector<AnnotationLayer> ours = {AnnotationLayer{"only", "Only"}};
+    // An empty list is a version-1 file: the defaults, which then add their three.
+    CHECK(mergeLayerLists(ours, {}).size() == 4);
+    CHECK(mergeLayerLists(ours, {}).front() == ours.front());
+    CHECK(mergeLayerLists(defaultLayers(), {}) == defaultLayers());
+}

@@ -2422,6 +2422,9 @@ void MainWindow::Impl::exportAnnotations()
     context.pixelSizeMicronsX = currentCalibration.micronsPerPixel.x;
     context.pixelSizeMicronsY = currentCalibration.micronsPerPixel.y;
     context.calibrationSource = currentCalibration.source;
+    // Without them every feature is named against the default layers: a
+    // custom layer's annotations would export as Diagnostic.
+    context.layers = annotations->layers();
 
     // Every annotation in the scene -- the model's, never the list's filtered
     // view. Built before the dialog, so a scene that cannot be written is
@@ -2990,12 +2993,9 @@ MainWindow::MainWindow(QWidget* parent)
                         tr("These annotations are open read-only and cannot be changed."));
                     return;
                 }
-                const core::Annotation* annotation = m_impl->annotations->find(id);
-                if (annotation == nullptr || m_impl->undoStack == nullptr) {
-                    return;
-                }
-                const QString what = tr("Delete %1").arg(shapeName(*annotation));
-                app::deleteWithUndo(*m_impl->annotations, *m_impl->undoStack, id, what.toStdString());
+                // The viewport's delete, not a second copy of it: that is where
+                // the layer lock is refused, and a copy here once skipped it.
+                m_impl->viewportWidget->deleteAnnotation(id);
             });
 
     // Load the configured default ICC profile (if any) now that the viewport

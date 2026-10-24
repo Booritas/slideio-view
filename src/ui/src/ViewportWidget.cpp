@@ -4347,6 +4347,15 @@ void ViewportWidget::commitPendingShape()
     if (!pendingShapeCommits(m_impl->pending.vertices.size(), m_impl->pending.closed)) {
         return;
     }
+    // The press that started the trace was checked, but the active layer can
+    // be hidden or locked from the dock while the trace survives the focus
+    // loss. Refused, and kept alive: showing or unlocking the layer and
+    // closing again is the user's way back to the outline they traced.
+    if (const QString refusal = activeLayerRefusal(); !refusal.isEmpty()) {
+        emit annotationEditBlocked(refusal);
+        update();
+        return;
+    }
     const bool closed = m_impl->pending.closed;
     std::vector<core::PointF> vertices = std::move(m_impl->pending.vertices);
     discardPendingShape();

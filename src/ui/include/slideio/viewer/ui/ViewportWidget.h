@@ -210,6 +210,13 @@ public:
     // when no slide is open.
     core::ColorProfileInfo activeColorProfileInfo() const;
 
+    /// Removes `id` and records the removal -- the one delete, for the Delete
+    /// key and the annotation list alike, so the layer lock is refused on
+    /// both. It performs the mutation as well, which is why it must not be
+    /// gated on the undo stack: with no stack the annotation still goes, just
+    /// unrecorded. Gating it would make the Delete key a silent no-op.
+    void deleteAnnotation(const std::string& id);
+
 signals:
     void viewportChanged();
     void cursorMoved(double slideX, double slideY);
@@ -349,11 +356,6 @@ private:
     /// set or the annotation is not in the model. Called after the mutation has
     /// already gone through AnnotationModel's own API.
     void pushCreateCommand(const std::string& id);
-    /// Removes `id` and records the removal. Unlike the push* functions around
-    /// it, this one performs the mutation as well, which is why it must not be
-    /// gated on the undo stack: with no stack the annotation still goes, just
-    /// unrecorded. Gating it would make the Delete key a silent no-op.
-    void deleteAnnotation(const std::string& id);
     /// Records one completed move drag as a single step. Called on release, not
     /// from the per-frame setGeometry that drives the live preview.
     void pushMoveCommand(const std::string& id, const std::optional<core::Annotation>& original);

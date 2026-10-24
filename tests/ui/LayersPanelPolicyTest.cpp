@@ -74,3 +74,14 @@ TEST_CASE("a hidden or locked layer refuses with its reason", "[ui][LayersPanelP
     layer.visible = false;
     CHECK(layerRefusal(layer) == "Layer Teaching is hidden");
 }
+
+TEST_CASE("a click on a row's eye or padlock does not make it the active layer", "[ui][LayersPanelPolicy]")
+{
+    // Hiding Teaching to keep drawing on Diagnostic must not move the drawing
+    // onto Teaching -- where it would then be refused as hidden.
+    CHECK_FALSE(columnActivatesLayer(LayerColumn::Visible));
+    CHECK_FALSE(columnActivatesLayer(LayerColumn::Locked));
+    CHECK(columnActivatesLayer(LayerColumn::Name));
+    CHECK(columnActivatesLayer(LayerColumn::Count));
+    CHECK(columnActivatesLayer(LayerColumn::Opacity));
+}

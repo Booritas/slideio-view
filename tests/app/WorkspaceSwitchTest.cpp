@@ -448,3 +448,96 @@ TEST_CASE("result.asked is false when there is no resolver to ask with",
     REQUIRE_FALSE(result.asked);
     REQUIRE(result.choice == app::WorkspaceChoice::LoadNew);
 }
+
+namespace
+{
+
+/// Teaching hidden and a custom layer on top: a list a write without layers
+/// would silently reset to the defaults, revealing the hidden layer.
+std::vector<core::AnnotationLayer> customLayers()
+{
+    std::vector<core::AnnotationLayer> layers = core::defaultLayers();
+    layers[1].visible = false;
+    layers.push_back(core::AnnotationLayer{"students", "Students"});
+    return layers;
+}
+
+core::Annotation onLayer(const std::string& id, const std::string& layerId)
+{
+    core::Annotation a = annotation(id, 100);
+    a.setLayerId(layerId);
+    return a;
+}
+
+} // namespace
+
+TEST_CASE("copy writes the scene's layers with its annotations", "[app][WorkspaceSwitch]")
+{
+    Harness h;
+    h.openWith({onLayer("a", "students")});
+    REQUIRE(h.model.setLayers(customLayers()));
+    h.sut.setResolver([](const core::WorkspaceSwitchFacts&, const core::WorkspaceSwitchOptions&) {
+        return app::WorkspaceChoice::Copy;
+    });
+
+    h.sut.run("/new", kKey, provenance());
+
+    CHECK(h.repository.stored[{"/new", FakeRootRepository::keyText(kKey)}].layers == customLayers());
+    CHECK(h.model.layers() == customLayers());
+}
+
+TEST_CASE("merge keeps both folders' layers", "[app][WorkspaceSwitch]")
+{
+    Harness h;
+    h.openWith({annotation("a", 100)});
+    REQUIRE(h.model.setLayers(customLayers()));
+
+    core::AnnotationDocument inNew;
+    inNew.slideId = kKey.slideId;
+    inNew.layers = core::defaultLayers();
+    inNew.layers.push_back(core::AnnotationLayer{"theirs", "Theirs"});
+    inNew.annotations = {onLayer("c", "theirs")};
+    h.repository.stored[{"/new", FakeRootRepository::keyText(kKey)}] = inNew;
+    h.sut.setResolver([](const core::WorkspaceSwitchFacts&, const core::WorkspaceSwitchOptions&) {
+        return app::WorkspaceChoice::Merge;
+    });
+
+    h.sut.run("/new", kKey, provenance());
+
+    const std::vector<core::AnnotationLayer> expected = core::mergeLayerLists(customLayers(), inNew.layers);
+    CHECK(h.repository.stored[{"/new", FakeRootRepository::keyText(kKey)}].layers == expected);
+    CHECK(h.model.layers() == expected);
+    CHECK(core::findLayer(h.model.layers(), "theirs") != nullptr);
+}
+
+TEST_CASE("a write that fails keeps the layers in the model too", "[app][WorkspaceSwitch]")
+{
+    Harness h;
+    h.openWith({onLayer("a", "students")});
+    REQUIRE(h.model.setLayers(customLayers()));
+    h.repository.nextSave = core::SaveStatus::NotWritable;
+    h.sut.setResolver([](const core::WorkspaceSwitchFacts&, const core::WorkspaceSwitchOptions&) {
+        return app::WorkspaceChoice::Copy;
+    });
+
+    h.sut.run("/new", kKey, provenance());
+
+    CHECK(h.model.layers() == customLayers());
+    CHECK(h.persistence.isDirty());
+}
+
+TEST_CASE("cancel after a failed flush keeps the layers on screen", "[app][WorkspaceSwitch]")
+{
+    Harness h;
+    h.openWith({annotation("a", 100)});
+    h.repository.nextSave = core::SaveStatus::NotWritable;
+    REQUIRE(h.model.setLayers(customLayers()));
+    h.sut.setResolver([](const core::WorkspaceSwitchFacts&, const core::WorkspaceSwitchOptions&) {
+        return app::WorkspaceChoice::Cancel;
+    });
+
+    h.sut.run("/new", kKey, provenance());
+
+    CHECK(h.model.layers() == customLayers());
+    CHECK(h.persistence.isDirty());
+}

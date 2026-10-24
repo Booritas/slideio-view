@@ -101,4 +101,9 @@ std::string layerRefusal(const core::AnnotationLayer& layer)
     return {};
 }
 
+bool columnActivatesLayer(LayerColumn column)
+{
+    return column != LayerColumn::Visible && column != LayerColumn::Locked;
+}
+
 } // namespace slideio::viewer::ui
