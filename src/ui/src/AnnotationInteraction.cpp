@@ -154,6 +154,11 @@ bool isNPointTool(AnnotationTool tool)
     return tool == AnnotationTool::Polygon || tool == AnnotationTool::Freehand;
 }
 
+bool overlayNeedsPainting(bool hasAnnotations, bool drawing, bool tracePending, bool anglePending)
+{
+    return hasAnnotations || drawing || tracePending || anglePending;
+}
+
 bool shouldAppendTrailPoint(core::PointF lastSlide, core::PointF cursorSlide,
                             double viewportScale)
 {

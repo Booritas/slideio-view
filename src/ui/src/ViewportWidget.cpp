@@ -4952,8 +4952,8 @@ void ViewportWidget::paintGL()
 
     // Painted last, after the snapshot capture, so annotations stay out of the
     // zoom-snapshot texture and do not smear with the blurry backdrop.
-    if (!m_impl->annotations->annotations().empty() || m_impl->drawing
-        || m_impl->pending.active) {
+    if (overlayNeedsPainting(!m_impl->annotations->annotations().empty(), m_impl->drawing,
+                             m_impl->pending.active, m_impl->anglePending)) {
         QPainter painter(this);
         paintAnnotations(painter);
     }

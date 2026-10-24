@@ -122,6 +122,12 @@ constexpr double kTrailMinScreenPixels = 2.0;
 /// Rectangle tool does not.
 [[nodiscard]] bool isNPointTool(AnnotationTool tool);
 
+/// Whether paintGL runs the annotation overlay at all: when the scene has
+/// annotations, or something is being built -- a drag, a pending trace, a
+/// pending angle. Each of those has nothing in the model yet, so a scene with
+/// no annotations would otherwise never show the shape under construction.
+[[nodiscard]] bool overlayNeedsPainting(bool hasAnnotations, bool drawing, bool tracePending, bool anglePending);
+
 /// True when the cursor has moved far enough from the last placed vertex to
 /// deserve another one. False for a non-positive scale: with no usable
 /// transform, appending on every event would bury the shape in duplicates.

@@ -849,3 +849,14 @@ TEST_CASE("releaseSelectsAnnotation still accepts a pan the user did not ask for
     // its properties is the only way a reader has to select one.
     REQUIRE(releaseSelectsAnnotation(true, false, false, 1.0, 6.0));
 }
+
+TEST_CASE("the overlay paints whenever anything is being built", "[ui][AnnotationInteraction]")
+{
+    CHECK_FALSE(overlayNeedsPainting(false, false, false, false));
+    CHECK(overlayNeedsPainting(true, false, false, false));
+    CHECK(overlayNeedsPainting(false, true, false, false));
+    CHECK(overlayNeedsPainting(false, false, true, false));
+    // A pending angle on a scene with nothing else on it: its rays and live
+    // angle must still be drawn, or the user commits an angle they never saw.
+    CHECK(overlayNeedsPainting(false, false, false, true));
+}
