@@ -1,6 +1,8 @@
 #pragma once
 
 #include "slideio/viewer/core/Annotation.h"
+#include "slideio/viewer/core/AnnotationCategories.h"
+#include "slideio/viewer/core/AnnotationLayer.h"
 
 #include <QObject>
 
@@ -67,6 +69,38 @@ public:
     /// Entries with an empty id, or an id already seen earlier in the vector,
     /// are dropped silently (the first occurrence wins), as in insert().
     void replaceAll(std::vector<core::Annotation> annotations);
+
+    /// As replaceAll(), with the scene's layers -- the load path. An empty
+    /// `layers` means the file said nothing about layers: defaultLayers(). An
+    /// invalid list is replaced by the defaults too (the serializer refuses
+    /// one on read, so this is defence in depth). The active layer becomes the
+    /// bottom one.
+    void replaceAll(std::vector<core::Annotation> annotations, std::vector<core::AnnotationLayer> layers);
+
+    /// The scene's layers, bottom first. Never empty.
+    [[nodiscard]] const std::vector<core::AnnotationLayer>& layers() const;
+
+    /// Replaces the layer list -- create, rename, delete, reorder, visibility,
+    /// lock, opacity are all this. Refuses (false, nothing emitted) a list
+    /// core::isValidLayerList rejects. Keeps the active layer when it is still
+    /// there, otherwise the bottom one becomes active. Emits layersChanged.
+    /// Annotations naming a layer that is gone are NOT rewritten: they resolve
+    /// to the bottom layer through core::effectiveLayerId.
+    bool setLayers(std::vector<core::AnnotationLayer> layers);
+
+    /// The layer add() puts new annotations on. Unknown ids are ignored.
+    /// Session state, not saved: emits activeLayerChanged, not layersChanged,
+    /// so choosing where to draw does not mark the scene dirty.
+    /// Emits activeLayerChanged on a change.
+    void setActiveLayer(const std::string& layerId);
+    [[nodiscard]] const std::string& activeLayerId() const;
+
+    /// Puts every annotation in `ids` on `layerId`, through restoreMany -- one
+    /// annotationsBulkChanged -- and returns the before/after pairs for an
+    /// AnnotationRetagCommand, which records it as one undo step. Ids the
+    /// model lacks, and annotations already on that layer, are skipped; an
+    /// unknown `layerId` moves nothing. The caller checks locks.
+    std::vector<core::RetagChange> moveToLayer(const std::vector<std::string>& ids, const std::string& layerId);
 
     /// Stamped into the metadata of annotations created through add().
     /// Self-asserted and unverified: it identifies, it does not authenticate.
@@ -186,12 +220,22 @@ signals:
     /// reason to clear the undo stack and AnnotationPersistenceService cannot
     /// connect because replaceAll() emits it during the service's own load.
     void annotationsBulkChanged();
+    /// The layer list or the active layer changed. NOT emitted by clear() or
+    /// replaceAll(), which reset the layers with everything else and emit
+    /// cleared() / modelReset(): a listener rebuilds on those too, and the
+    /// persistence service must not see its own load as an edit.
+    void layersChanged();
+    /// The active layer changed -- by setActiveLayer, or because setLayers
+    /// removed the one that was active.
+    void activeLayerChanged(const std::string& layerId);
 
 private:
     std::vector<core::Annotation> m_annotations;
     std::string m_selectedId;
     std::string m_defaultAuthor;
     std::string m_currentCategory;
+    std::vector<core::AnnotationLayer> m_layers = core::defaultLayers();
+    std::string m_activeLayerId = m_layers.front().id;
 };
 
 } // namespace slideio::viewer::app

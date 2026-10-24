@@ -969,3 +969,24 @@ TEST_CASE("annotations do not count as loaded when the model is empty for anothe
         REQUIRE_FALSE(service.annotationsLoaded());
     }
 }
+
+TEST_CASE("a scene's layers are loaded and saved with its annotations", "[app][AnnotationPersistenceService][Layers]")
+{
+    FakeRepository repository;
+    std::vector<core::AnnotationLayer> layers = core::defaultLayers();
+    layers[1].visible = false;
+    repository.nextLoad = loadedWith("slide-1", 0, {rectangle("a1")});
+    repository.nextLoad.document.layers = layers;
+
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+    service.beginSlide({"slide-1", 0}, provenance());
+    REQUIRE(model.layers() == layers);
+    REQUIRE_FALSE(service.isDirty());
+
+    layers[2].locked = true;
+    REQUIRE(model.setLayers(layers));
+    REQUIRE(service.isDirty());
+    service.flush();
+    CHECK(repository.lastSaved.layers == layers);
+}

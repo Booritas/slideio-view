@@ -43,6 +43,9 @@ AnnotationPersistenceService::AnnotationPersistenceService(core::IAnnotationRepo
     // Safe where modelReset() is not: the service never emits this itself, whereas
     // it calls replaceAll() (which emits modelReset) during a load.
     connect(&m_model, &AnnotationModel::annotationsBulkChanged, this, [this]() { markDirty(); });
+    // The layers are saved with the annotations. The ACTIVE layer is not, and
+    // has its own signal so choosing where to draw writes nothing.
+    connect(&m_model, &AnnotationModel::layersChanged, this, [this]() { markDirty(); });
 
     // Not modelReset(): replaceAll() emits that, and this service calls
     // replaceAll() itself during a load, so connecting it would make the
@@ -87,7 +90,7 @@ void AnnotationPersistenceService::beginSlide(const core::AnnotationKey& key,
         // Every unidentifiable file produces the same id, so looking one up
         // would hand this slide another slide's annotations.
         m_loading = true;
-        m_model.replaceAll({});
+        m_model.replaceAll({}, {});
         m_loading = false;
         setActive(false);
         return;
@@ -110,7 +113,7 @@ void AnnotationPersistenceService::beginSlide(const core::AnnotationKey& key,
     switch (loaded.status) {
     case core::LoadStatus::NotFound:
         m_loading = true;
-        m_model.replaceAll({});
+        m_model.replaceAll({}, {});
         m_loading = false;
         // Nothing was ever saved, so the empty model IS the scene.
         m_annotationsLoaded = true;
@@ -124,7 +127,7 @@ void AnnotationPersistenceService::beginSlide(const core::AnnotationKey& key,
     case core::LoadStatus::Malformed:
     case core::LoadStatus::UnsupportedVersion:
         m_loading = true;
-        m_model.replaceAll({});
+        m_model.replaceAll({}, {});
         m_loading = false;
         setActive(false);
         emit loadFailed(QString::fromStdString(loaded.path),
@@ -171,7 +174,11 @@ void AnnotationPersistenceService::beginSlide(const core::AnnotationKey& key,
     // Ignore leaves the model empty over a file that is not; the other two
     // choices show what the file holds.
     m_annotationsLoaded = !annotations.empty() || loaded.document.annotations.empty();
-    m_model.replaceAll(std::move(annotations));
+    // The layers come with the annotations, or not at all: Ignore shows
+    // neither, and a scene showing none of its annotations must not show
+    // their layers either.
+    m_model.replaceAll(std::move(annotations),
+                       m_annotationsLoaded ? loaded.document.layers : std::vector<core::AnnotationLayer>{});
     m_loading = false;
     m_dirty = false;
     // Re-association is a change to the document -- it adopts this slide's id --
@@ -204,6 +211,7 @@ core::SaveResult AnnotationPersistenceService::flush()
     document.createdAt = m_createdAt;
     document.modifiedAt = std::chrono::system_clock::now();
     document.annotations = m_model.annotations();
+    document.layers = m_model.layers();
 
     const core::SaveResult result = m_repository.save(document);
     m_lastSave = std::chrono::steady_clock::now();

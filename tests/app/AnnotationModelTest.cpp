@@ -1,6 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "slideio/viewer/app/AnnotationModel.h"
+#include "slideio/viewer/app/AnnotationRetagCommand.h"
+#include "slideio/viewer/app/UndoRedoStack.h"
+#include "slideio/viewer/core/AnnotationLayer.h"
 
 #include <QObject>
 
@@ -834,4 +837,113 @@ TEST_CASE("removeMany of nothing known emits nothing", "[app][AnnotationModel]")
 
     REQUIRE(model.removeMany({"zz"}) == 0);
     REQUIRE(bulk == 0);
+}
+
+TEST_CASE("a new annotation goes to the active layer", "[app][AnnotationModel][Layers]")
+{
+    app::AnnotationModel model;
+    REQUIRE(model.layers() == core::defaultLayers());
+    CHECK(model.activeLayerId() == "diagnostic");
+    CHECK(model.find(addRect(model, 0, 0, 1, 1))->layerId() == "diagnostic");
+    model.setActiveLayer("teaching");
+    CHECK(model.activeLayerId() == "teaching");
+    CHECK(model.find(addRect(model, 2, 2, 3, 3))->layerId() == "teaching");
+    model.setActiveLayer("gone");
+    CHECK(model.activeLayerId() == "teaching");
+}
+
+TEST_CASE("setLayers refuses an invalid list and keeps a valid active layer", "[app][AnnotationModel][Layers]")
+{
+    app::AnnotationModel model;
+    int changes = 0;
+    QObject::connect(&model, &app::AnnotationModel::layersChanged, [&changes]() { ++changes; });
+
+    CHECK_FALSE(model.setLayers({core::AnnotationLayer{"a", "A"}, core::AnnotationLayer{"a", "B"}}));
+    CHECK(changes == 0);
+    CHECK(model.layers() == core::defaultLayers());
+
+    model.setActiveLayer("research");
+    std::vector<core::AnnotationLayer> layers = core::defaultLayers();
+    layers.pop_back();
+    REQUIRE(model.setLayers(layers));
+    CHECK(changes == 1);
+    // The active layer is gone: the bottom one takes over.
+    CHECK(model.activeLayerId() == "diagnostic");
+}
+
+TEST_CASE("moving to a layer is one bulk change and one undo step", "[app][AnnotationModel][Layers]")
+{
+    app::AnnotationModel model;
+    const std::string a = addRect(model, 0, 0, 1, 1);
+    const std::string b = addRect(model, 2, 2, 3, 3);
+    int bulk = 0;
+    QObject::connect(&model, &app::AnnotationModel::annotationsBulkChanged, [&bulk]() { ++bulk; });
+
+    const std::vector<core::RetagChange> changes = model.moveToLayer({a, b, "missing"}, "teaching");
+    REQUIRE(changes.size() == 2);
+    CHECK(bulk == 1);
+    CHECK(model.find(a)->layerId() == "teaching");
+    CHECK(model.find(b)->layerId() == "teaching");
+
+    app::UndoRedoStack stack;
+    stack.push(app::AnnotationRetagCommand::create(model, changes, "Move to Teaching"));
+    stack.undo();
+    CHECK(model.find(a)->layerId() == "diagnostic");
+    stack.redo();
+    CHECK(model.find(a)->layerId() == "teaching");
+
+    // Moving to where it already is, or to a layer the scene lacks, changes nothing.
+    CHECK(model.moveToLayer({a}, "teaching").empty());
+    CHECK(model.moveToLayer({a}, "gone").empty());
+}
+
+TEST_CASE("an annotation whose layer was deleted resolves to the bottom layer", "[app][AnnotationModel][Layers]")
+{
+    app::AnnotationModel model;
+    const std::string a = addRect(model, 0, 0, 1, 1);
+    const std::vector<core::RetagChange> moved = model.moveToLayer({a}, "research");
+    app::UndoRedoStack stack;
+    stack.push(app::AnnotationRetagCommand::create(model, moved, "Move to Research"));
+    // Move it back by hand, delete Research, then undo the move back.
+    stack.push(app::AnnotationRetagCommand::create(model, model.moveToLayer({a}, "diagnostic"), "Move back"));
+    std::vector<core::AnnotationLayer> layers = core::defaultLayers();
+    layers.pop_back();
+    REQUIRE(model.setLayers(layers));
+    stack.undo();
+    CHECK(model.find(a)->layerId() == "research");
+    CHECK(core::effectiveLayerId(*model.find(a), model.layers()) == "diagnostic");
+}
+
+TEST_CASE("the hit test skips hidden layers and respects layer order", "[app][AnnotationModel][Layers]")
+{
+    app::AnnotationModel model;
+    model.setActiveLayer("research");
+    const std::string top = addRect(model, 0, 0, 10, 10);
+    model.setActiveLayer("diagnostic");
+    const std::string bottom = addRect(model, 0, 0, 10, 10);
+    // Drawn later, but on a lower layer: the Research one is on top.
+    CHECK(model.hitTest(core::PointF{5, 5}, 0.5) == top);
+
+    std::vector<core::AnnotationLayer> layers = model.layers();
+    layers[2].visible = false;
+    REQUIRE(model.setLayers(layers));
+    CHECK(model.hitTest(core::PointF{5, 5}, 0.5) == bottom);
+}
+
+TEST_CASE("clear and replaceAll restore the default layers", "[app][AnnotationModel][Layers]")
+{
+    app::AnnotationModel model;
+    std::vector<core::AnnotationLayer> layers = core::defaultLayers();
+    layers[1].name = "Students";
+    REQUIRE(model.setLayers(layers));
+    model.setActiveLayer("teaching");
+    model.clear();
+    CHECK(model.layers() == core::defaultLayers());
+    CHECK(model.activeLayerId() == "diagnostic");
+
+    REQUIRE(model.setLayers(layers));
+    model.replaceAll({}, layers);
+    CHECK(model.layers() == layers);
+    model.replaceAll({}, {});
+    CHECK(model.layers() == core::defaultLayers());
 }

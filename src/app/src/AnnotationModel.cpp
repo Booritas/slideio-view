@@ -51,6 +51,9 @@ std::string AnnotationModel::add(core::AnnotationGeometry geometry, std::string 
     }
 
     m_annotations.emplace_back(id, std::move(geometry), std::move(properties), metadata);
+    // On the active layer, keyed on the model's state as the counting category
+    // is, so every path that creates an annotation lands where the user chose.
+    m_annotations.back().setLayerId(m_activeLayerId);
     emit annotationAdded(id);
     return id;
 }
@@ -86,6 +89,83 @@ void AnnotationModel::insertAt(std::size_t index, core::Annotation annotation)
     emit annotationAdded(id);
 }
 
+void AnnotationModel::replaceAll(std::vector<core::Annotation> annotations,
+                                 std::vector<core::AnnotationLayer> layers)
+{
+    std::string problem;
+    m_layers = (layers.empty() || !core::isValidLayerList(layers, problem)) ? core::defaultLayers()
+                                                                              : std::move(layers);
+    m_activeLayerId = m_layers.front().id;
+    replaceAll(std::move(annotations));
+}
+
+const std::vector<core::AnnotationLayer>& AnnotationModel::layers() const
+{
+    return m_layers;
+}
+
+bool AnnotationModel::setLayers(std::vector<core::AnnotationLayer> layers)
+{
+    std::string problem;
+    if (!core::isValidLayerList(layers, problem)) {
+        return false;
+    }
+    m_layers = std::move(layers);
+    const bool activeGone = core::findLayer(m_layers, m_activeLayerId) == nullptr;
+    if (activeGone) {
+        m_activeLayerId = m_layers.front().id;
+    }
+    emit layersChanged();
+    if (activeGone) {
+        emit activeLayerChanged(m_activeLayerId);
+    }
+    return true;
+}
+
+void AnnotationModel::setActiveLayer(const std::string& layerId)
+{
+    if (layerId == m_activeLayerId || core::findLayer(m_layers, layerId) == nullptr) {
+        return;
+    }
+    m_activeLayerId = layerId;
+    emit activeLayerChanged(m_activeLayerId);
+}
+
+const std::string& AnnotationModel::activeLayerId() const
+{
+    return m_activeLayerId;
+}
+
+std::vector<core::RetagChange> AnnotationModel::moveToLayer(const std::vector<std::string>& ids,
+                                                            const std::string& layerId)
+{
+    std::vector<core::RetagChange> changes;
+    if (core::findLayer(m_layers, layerId) == nullptr) {
+        return changes;
+    }
+    std::vector<core::Annotation> after;
+    for (const std::string& id : ids) {
+        const core::Annotation* current = find(id);
+        if (current == nullptr || core::effectiveLayerId(*current, m_layers) == layerId) {
+            continue;
+        }
+        core::Annotation moved = *current;
+        moved.setLayerId(layerId);
+        // A move is an edit: re-setting the unchanged properties stamps
+        // modifiedAt, as every other user edit does.
+        moved.setProperties(moved.properties());
+        changes.push_back(core::RetagChange{id, *current, moved});
+        after.push_back(std::move(moved));
+    }
+    if (!after.empty()) {
+        restoreMany(after);
+    }
+    return changes;
+}
+
+// Keeps the layers: a workspace switch replaces the annotations of the SAME
+// scene, and resetting its layers there would drop them. A new scene goes
+// through the two-argument overload above, which sets them.
 void AnnotationModel::replaceAll(std::vector<core::Annotation> annotations)
 {
     // Entries the model cannot resolve -- an empty id, or an id already kept --
@@ -259,9 +339,17 @@ const core::Annotation* AnnotationModel::find(const std::string& id) const
 
 std::string AnnotationModel::hitTest(core::PointF point, double toleranceSlideUnits) const
 {
-    for (auto it = m_annotations.rbegin(); it != m_annotations.rend(); ++it) {
-        if (it->containsPoint(point, toleranceSlideUnits)) {
-            return it->id();
+    // Reverse paint order, so the shape painted on top is the one found, and
+    // nothing on a hidden layer -- what is not shown cannot be clicked.
+    const std::vector<std::size_t> order = core::paintOrder(m_annotations, m_layers);
+    for (auto it = order.rbegin(); it != order.rend(); ++it) {
+        const core::Annotation& annotation = m_annotations[*it];
+        const core::AnnotationLayer* layer = core::findLayer(m_layers, core::effectiveLayerId(annotation, m_layers));
+        if (layer != nullptr && !layer->visible) {
+            continue;
+        }
+        if (annotation.containsPoint(point, toleranceSlideUnits)) {
+            return annotation.id();
         }
     }
     return {};
@@ -297,6 +385,9 @@ const std::string& AnnotationModel::selectedId() const
 void AnnotationModel::clear()
 {
     m_annotations.clear();
+    // A different scene has its own layers; until it loads, the defaults.
+    m_layers = core::defaultLayers();
+    m_activeLayerId = m_layers.front().id;
     if (!m_selectedId.empty()) {
         m_selectedId.clear();
         emit selectionChanged(m_selectedId);
