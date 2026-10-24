@@ -3712,10 +3712,11 @@ void ViewportWidget::paintAnnotations(QPainter& painter)
             if (m_impl->textEditorOpen && m_impl->textEditingId == annotation.id()) {
                 continue;
             }
-            // White behind the words at the fill opacity, so they read on dark
-            // tissue and pale glass alike; the outline is the annotation's own.
+            // White behind the words, never fainter than the legibility floor,
+            // so they read on dark tissue and pale glass alike; the outline is
+            // the annotation's own.
             QColor plateFill(0xFF, 0xFF, 0xFF);
-            plateFill.setAlphaF(props.fillOpacity);
+            plateFill.setAlphaF(textPlateOpacity(props.fillOpacity));
             painter.setBrush(QBrush(plateFill));
             painter.setPen(props.lineWidth > 0.0 ? QPen(stroke, props.lineWidth) : QPen(Qt::NoPen));
             painter.drawRoundedRect(plate, 3.0, 3.0);
@@ -5148,9 +5149,20 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
         }
 
         if (m_impl->activeTool == AnnotationTool::Text) {
-            // At the PRESS point, as a marker is placed: the words go where the
-            // user clicked, not where a small slip of the hand let go.
-            openTextEditor(m_impl->drawAnchorSlide, std::string(), QString());
+            // A click on a text edits it; stacking an empty new text on top of
+            // it is never what was meant. Tested at the press point, as the
+            // new text is placed there: where the user aimed, not where a small
+            // slip of the hand let go.
+            const std::string target =
+                textToolEditTarget(annotationAt(m_impl->pressPos), m_impl->annotations->annotations());
+            const core::Annotation* existing = target.empty() ? nullptr : m_impl->annotations->find(target);
+            if (existing != nullptr) {
+                m_impl->annotations->setSelected(target);
+                openTextEditor(std::get<core::TextGeometry>(existing->geometry()).anchor, target,
+                               QString::fromStdString(existing->properties().label));
+            } else {
+                openTextEditor(m_impl->drawAnchorSlide, std::string(), QString());
+            }
         } else {
             commitDrawDrag();
         }

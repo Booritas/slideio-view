@@ -40,6 +40,21 @@ inline constexpr double kTextPlatePaddingScreenPixels = 3.0;
 [[nodiscard]] std::string topmostOf(const std::string& geometricHit, const std::string& textHit,
                                     const std::vector<core::Annotation>& annotations);
 
+/// The faintest a text's white plate is ever drawn. At the default fill
+/// opacity alone (0.3) words were unreadable on dark tissue -- the owner could
+/// not read them, 2026-10-24 -- and the plate exists to make them readable.
+inline constexpr double kTextPlateMinimumOpacity = 0.85;
+
+/// The opacity of a text's white plate for an annotation's `fillOpacity`: never
+/// below kTextPlateMinimumOpacity, so a higher fill still makes it more solid.
+[[nodiscard]] double textPlateOpacity(double fillOpacity);
+
+/// The text a Text-tool click edits rather than placing a new one on top of:
+/// `hitId` when it names a text in `annotations`, otherwise empty. A shape is
+/// never a target -- a text placed on a region is how a region gets a label.
+[[nodiscard]] std::string textToolEditTarget(const std::string& hitId,
+                                             const std::vector<core::Annotation>& annotations);
+
 /// Whether the text editor losing focus for `reason` commits its words.
 ///
 /// Every reason but a popup: a menu or the editor's own context menu opening

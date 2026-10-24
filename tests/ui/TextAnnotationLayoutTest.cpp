@@ -61,3 +61,25 @@ TEST_CASE("every focus loss but a popup commits the words", "[ui][TextAnnotation
     // A menu or the editor's own context menu: the user is still typing.
     CHECK_FALSE(textEditorCommitsOnFocusOut(Qt::PopupFocusReason));
 }
+
+TEST_CASE("the plate is never fainter than the legibility floor", "[ui][TextAnnotationLayout]")
+{
+    // The fill opacity alone left words unreadable on dark tissue at its default.
+    CHECK(textPlateOpacity(0.0) == kTextPlateMinimumOpacity);
+    CHECK(textPlateOpacity(0.3) == kTextPlateMinimumOpacity);
+    CHECK(textPlateOpacity(1.0) == 1.0);
+    CHECK(kTextPlateMinimumOpacity >= 0.85);
+}
+
+TEST_CASE("a Text-tool click on a text edits it; anywhere else places a new one", "[ui][TextAnnotationLayout]")
+{
+    const std::vector<core::Annotation> annotations = {
+        core::Annotation("region", core::PolygonGeometry{{{0, 0}, {10, 0}, {5, 9}}, true}),
+        core::Annotation("note", core::TextGeometry{core::PointF{2, 2}}),
+    };
+    CHECK(textToolEditTarget("note", annotations) == "note");
+    // A text on a shape is how a region gets a label, so a shape is not a target.
+    CHECK(textToolEditTarget("region", annotations).empty());
+    CHECK(textToolEditTarget("", annotations).empty());
+    CHECK(textToolEditTarget("gone", annotations).empty());
+}

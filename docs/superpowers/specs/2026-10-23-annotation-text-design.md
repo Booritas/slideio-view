@@ -92,8 +92,9 @@ what it is today, unpainted.
   anchor, and the words to its right, vertically centred on it, 6 screen pixels
   away.
 - **Legibility over tissue**: the words in the annotation's colour, on a
-  rounded **plate** of white at the annotation's **fill opacity** (default
-  30%) with a 1-pixel outline in the annotation's colour at the line width.
+  rounded **plate** of white at the annotation's **fill opacity, never below
+  85%** (`ui::kTextPlateMinimumOpacity`; amended 2026-10-24 -- at the 30%
+  default fill alone the owner could not read the words on dark tissue) with a 1-pixel outline in the annotation's colour at the line width.
   H&E is pink and purple; colour alone on it is often unreadable.
 - **Empty words** — only reachable by clearing the label in the properties
   panel — paint the anchor dot and an italic grey "(empty)" in the plate, so
@@ -121,7 +122,11 @@ over it still wins there. The anchor dot is covered by core's tolerance test.
   a read-only slide by `applyAnnotationAvailability`, the same three layers as
   the others (CLAUDE.md, "Every path that creates an annotation asks
   `annotationsEditable()` first").
-- **Click** places an inline **`QLineEdit`** at the click, styled like the
+- **Click on an existing text** opens it for editing, as a double-click does
+  under the Navigate tool (amended 2026-10-24: placing an empty new text on
+  top of it was never what was meant). A click on a shape still places a new
+  text — that is how a region gets a label.
+- **Click** anywhere else places an inline **`QLineEdit`** at the click, styled like the
   plate, with focus. Nothing is in the model yet — like a pending multi-click
   shape, it is not an annotation until committed.
 - **Enter** commits: if the trimmed words are non-empty, the annotation is

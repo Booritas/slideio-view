@@ -1,5 +1,8 @@
 #include "slideio/viewer/ui/TextAnnotationLayout.h"
 
+#include <algorithm>
+#include <variant>
+
 namespace slideio::viewer::ui
 {
 
@@ -23,6 +26,21 @@ std::string topmostOf(const std::string& geometricHit, const std::string& textHi
         }
     }
     return geometricHit;
+}
+
+double textPlateOpacity(double fillOpacity)
+{
+    return std::max(fillOpacity, kTextPlateMinimumOpacity);
+}
+
+std::string textToolEditTarget(const std::string& hitId, const std::vector<core::Annotation>& annotations)
+{
+    for (const core::Annotation& annotation : annotations) {
+        if (annotation.id() == hitId && std::holds_alternative<core::TextGeometry>(annotation.geometry())) {
+            return hitId;
+        }
+    }
+    return {};
 }
 
 bool textEditorCommitsOnFocusOut(Qt::FocusReason reason)
