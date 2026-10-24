@@ -2,6 +2,7 @@
 
 #include "slideio/viewer/core/Annotation.h"
 #include "slideio/viewer/core/AnnotationImport.h"
+#include "slideio/viewer/core/Calibration.h"
 
 #include <atomic>
 #include <chrono>
@@ -28,6 +29,10 @@ struct GeoJsonExportContext
     /// says nothing about it rather than claiming zero.
     double pixelSizeMicronsX = 0.0;
     double pixelSizeMicronsY = 0.0;
+    /// Where the pixel size came from, written as `calibrationSource` in the
+    /// collection's `slideio` block. When it is Manual the two sizes above are
+    /// the user's override, not the metadata.
+    CalibrationSource calibrationSource = CalibrationSource::None;
 };
 
 struct GeoJsonExportResult

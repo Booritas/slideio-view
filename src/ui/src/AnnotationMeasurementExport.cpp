@@ -3,6 +3,7 @@
 #include "slideio/viewer/core/AnnotationCategories.h"
 #include "slideio/viewer/core/AnnotationMeasurement.h"
 #include "slideio/viewer/core/AnnotationSerialization.h"
+#include "slideio/viewer/core/Calibration.h"
 #include "slideio/viewer/core/Iso8601.h"
 #include "slideio/viewer/ui/AnnotationCountExport.h"
 #include "slideio/viewer/ui/CsvFormat.h"
@@ -22,7 +23,7 @@ namespace
 
 constexpr const char* kHeader =
     "id,type,label,classification,center_x_px,center_y_px,area_px2,perimeter_px,length_px,"
-    "area_um2,perimeter_um,length_um,area_note,pixel_width_um,pixel_height_um,"
+    "area_um2,perimeter_um,length_um,area_note,pixel_width_um,pixel_height_um,calibration_source,"
     "slide,scene,slide_id,exported_at";
 
 /// Appends one number cell, or nothing for an absent value. Fixed notation at
@@ -143,6 +144,10 @@ MeasurementExportResult annotationMeasurementCsv(const std::vector<core::Annotat
         if (!finite) {
             return failure(annotation);
         }
+        // Beside the pixel size it qualifies: a manual value is a value the
+        // user typed, and a reader of the file has to be able to tell.
+        row += ',';
+        row += csvField(core::calibrationSourceName(context.calibrationSource));
         row += ',';
         row += provenance;
         row += kCsvLineEnding;

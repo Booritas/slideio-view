@@ -18,7 +18,7 @@ namespace
 
 const std::string kHeader =
     "id,type,label,classification,center_x_px,center_y_px,area_px2,perimeter_px,length_px,"
-    "area_um2,perimeter_um,length_um,area_note,pixel_width_um,pixel_height_um,"
+    "area_um2,perimeter_um,length_um,area_note,pixel_width_um,pixel_height_um,calibration_source,"
     "slide,scene,slide_id,exported_at";
 
 const auto kExportedAt = std::chrono::system_clock::from_time_t(static_cast<std::time_t>(1792576800LL));
@@ -358,4 +358,27 @@ TEST_CASE("a text is a row with its words and no measurement", "[ui][AnnotationM
         INFO(column);
         CHECK(cell(rows, 0, column).empty());
     }
+}
+
+TEST_CASE("each row says where its calibration came from", "[ui][AnnotationMeasurementExport]")
+{
+    const std::vector<core::Annotation> annotations = {rectangle("r", 0, 0, 10, 10)};
+
+    MeasurementExportContext manual = calibrated(0.5, 0.5);
+    manual.calibrationSource = core::CalibrationSource::Manual;
+    const std::vector<Row> manualRows = exportRows(annotations, manual);
+    CHECK(cell(manualRows, 0, "calibration_source") == "manual");
+    CHECK(cell(manualRows, 0, "pixel_width_um") == "0.5");
+    CHECK(cell(manualRows, 0, "area_um2") == "25");
+
+    MeasurementExportContext metadata = calibrated();
+    metadata.calibrationSource = core::CalibrationSource::Metadata;
+    CHECK(cell(exportRows(annotations, metadata), 0, "calibration_source") == "metadata");
+
+    MeasurementExportContext none = calibrated(0.0, 0.0);
+    none.calibrationSource = core::CalibrationSource::None;
+    const std::vector<Row> noneRows = exportRows(annotations, none);
+    CHECK(cell(noneRows, 0, "calibration_source") == "none");
+    CHECK(cell(noneRows, 0, "area_um2").empty());
+    CHECK(cell(noneRows, 0, "pixel_width_um").empty());
 }

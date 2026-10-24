@@ -1,6 +1,7 @@
 #pragma once
 
 #include "slideio/viewer/core/Annotation.h"
+#include "slideio/viewer/core/Calibration.h"
 
 #include <chrono>
 #include <string>
@@ -23,6 +24,9 @@ struct MeasurementExportContext
     /// column is left empty rather than half-filled.
     double pixelWidthMicrons = 0.0;
     double pixelHeightMicrons = 0.0;
+    /// Where those two came from, written as `calibration_source` beside them.
+    /// When it is Manual they are the user's override, not the metadata.
+    core::CalibrationSource calibrationSource = core::CalibrationSource::None;
 };
 
 struct MeasurementExportResult

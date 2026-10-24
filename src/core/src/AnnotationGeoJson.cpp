@@ -165,6 +165,9 @@ json provenance(const GeoJsonExportContext& context, const std::string& exported
     if (known(context.pixelSizeMicronsX) && known(context.pixelSizeMicronsY)) {
         block["pixelSizeMicrons"] = json::array({context.pixelSizeMicronsX, context.pixelSizeMicronsY});
     }
+    // Always written, "none" included: a reader must be able to tell a manual
+    // calibration from the scanner's, and an absent key would say neither.
+    block["calibrationSource"] = calibrationSourceName(context.calibrationSource);
     return block;
 }
 

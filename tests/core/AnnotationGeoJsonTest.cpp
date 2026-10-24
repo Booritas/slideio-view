@@ -383,3 +383,20 @@ TEST_CASE("a classification is written trimmed, as the tally counts it", "[core]
     const json file = exportAndParse({Annotation("c1", PointGeometry{PointF{1, 1}}, padded, AnnotationMetadata{})});
     REQUIRE(file.at("features").at(0).at("properties").at("classification").at("name") == "Tumor");
 }
+
+TEST_CASE("the collection names its calibration source", "[core][GeoJson]")
+{
+    GeoJsonExportContext manual = context();
+    manual.pixelSizeMicronsX = 0.5;
+    manual.pixelSizeMicronsY = 0.5;
+    manual.calibrationSource = CalibrationSource::Manual;
+    const json withManual = json::parse(annotationsToGeoJson({}, manual, at(1792576800LL)).text);
+    REQUIRE(withManual.at("slideio").at("calibrationSource") == "manual");
+    REQUIRE(withManual.at("slideio").at("pixelSizeMicrons") == json::array({0.5, 0.5}));
+
+    GeoJsonExportContext none = context();
+    none.calibrationSource = CalibrationSource::None;
+    const json withNone = json::parse(annotationsToGeoJson({}, none, at(1792576800LL)).text);
+    REQUIRE(withNone.at("slideio").at("calibrationSource") == "none");
+    REQUIRE_FALSE(withNone.at("slideio").contains("pixelSizeMicrons"));
+}
