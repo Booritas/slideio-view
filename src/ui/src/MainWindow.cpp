@@ -40,6 +40,7 @@
 #include "slideio/viewer/ui/CalibrationDialog.h"
 #include "slideio/viewer/ui/SlideProfilesDialog.h"
 #include "slideio/viewer/ui/WorkspaceChangeDialog.h"
+#include "slideio/viewer/ui/FullScreenBorder.h"
 #include "slideio/viewer/ui/LayersPanel.h"
 #include "slideio/viewer/ui/LayersPanelPolicy.h"
 #include "slideio/viewer/ui/MetadataPanel.h"
@@ -67,6 +68,7 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QInputDialog>
+#include <QKeyEvent>
 #include <QKeySequence>
 #include <QLineEdit>
 #include <QMenuBar>
@@ -862,6 +864,7 @@ struct MainWindow::Impl
 
         QObject::connect(fullScreenAction, &QAction::toggled, owner, [this](bool checked) {
             if (checked) {
+                keepPopupsAboveFullScreen(owner);
                 owner->showFullScreen();
             } else {
                 owner->showNormal();
@@ -3018,6 +3021,14 @@ MainWindow::MainWindow(QWidget* parent)
     QSettings settings;
     const QByteArray savedGeometry = settings.value("mainWindow/geometry").toByteArray();
     bool useDefault = savedGeometry.isEmpty() || !restoreGeometry(savedGeometry);
+    // Full screen is not carried across launches. restoreGeometry() brings it
+    // back from a window closed in full screen, with the action unchecked, and
+    // a full-screen frame covers the taskbar, so the fit test below fails and
+    // resizes a full-screen window -- which left it stuck there. Stripping the
+    // flag returns the normal geometry Qt saved beside it.
+    if (!useDefault && (windowState() & Qt::WindowFullScreen)) {
+        setWindowState(windowState() & ~Qt::WindowFullScreen);
+    }
     if (!useDefault) {
         QRegion availableArea;
         const auto screens = QGuiApplication::screens();
@@ -3342,7 +3353,28 @@ void MainWindow::changeEvent(QEvent* event)
         && m_impl->viewportWidget->isSlideOpen()) {
         m_impl->refreshCalibration(Impl::CalibrationRefresh::IfChanged);
     }
+    // The action follows the window, not the other way round: a window can
+    // enter or leave full screen without it, and Escape and F11 both act on it.
+    if (event->type() == QEvent::WindowStateChange && m_impl->fullScreenAction != nullptr
+        && m_impl->fullScreenAction->isChecked() != isFullScreen()) {
+        QSignalBlocker blocker(m_impl->fullScreenAction);
+        m_impl->fullScreenAction->setChecked(isFullScreen());
+    }
     QMainWindow::changeEvent(event);
+}
+
+void MainWindow::keyPressEvent(QKeyEvent* event)
+{
+    // Reached only by an Escape nobody below wanted: the viewport consumes it
+    // while it has a drawing, an edit or a non-Navigate tool to cancel, and
+    // passes it up otherwise. Not a QShortcut -- Qt matches those before the
+    // focus widget, so one would leave full screen instead of cancelling a trace.
+    if (event->key() == Qt::Key_Escape && isFullScreen()) {
+        m_impl->fullScreenAction->setChecked(false);
+        event->accept();
+        return;
+    }
+    QMainWindow::keyPressEvent(event);
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)

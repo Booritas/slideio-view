@@ -31,6 +31,8 @@ protected:
     // else does: ~ViewportWidget does not close the slide, so a quit with a
     // slide open would lose up to a full autosave debounce of work.
     void closeEvent(QCloseEvent* event) override;
+    // Escape leaves full screen once nothing below the window wants it.
+    void keyPressEvent(QKeyEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
     void changeEvent(QEvent* event) override;
 

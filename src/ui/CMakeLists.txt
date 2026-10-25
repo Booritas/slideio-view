@@ -30,6 +30,7 @@ add_library(slideio-viewer-ui STATIC
     src/AssociatedImageWindow.cpp
     src/ColorProfilePolicy.cpp
     src/DriverFilters.cpp
+    src/FullScreenBorder.cpp
     src/PathDisplay.cpp
     src/RecentFiles.cpp
     src/ShortcutPolicy.cpp
@@ -66,6 +67,22 @@ target_link_libraries(slideio-viewer-ui
 )
 
 target_compile_features(slideio-viewer-ui PUBLIC cxx_std_17)
+
+# FullScreenBorder.cpp calls Qt's documented fix for menus hidden behind a
+# full-screen OpenGL window, which in Qt 6 is a private Windows API. Conan's Qt
+# package ships the private headers but no Qt6::GuiPrivate target, so they are
+# found here and given to that one file alone -- nothing else may reach Qt's
+# internals by accident.
+if(WIN32)
+    find_path(SLIDEIO_VIEWER_QTGUI_PRIVATE_DIR qpa/qplatformwindow_p.h
+        PATH_SUFFIXES "${Qt6_VERSION}/QtGui" "${Qt6_VERSION_STRING}/QtGui"
+        REQUIRED)
+    get_filename_component(_qtgui_versioned "${SLIDEIO_VIEWER_QTGUI_PRIVATE_DIR}" DIRECTORY)
+    get_filename_component(_qt_include "${_qtgui_versioned}/../.." ABSOLUTE)
+    get_filename_component(_qt_version "${_qtgui_versioned}" NAME)
+    set_source_files_properties(src/FullScreenBorder.cpp PROPERTIES INCLUDE_DIRECTORIES
+        "${_qt_include}/QtCore/${_qt_version};${_qt_include}/QtCore/${_qt_version}/QtCore;${_qtgui_versioned};${SLIDEIO_VIEWER_QTGUI_PRIVATE_DIR}")
+endif()
 
 set_target_properties(slideio-viewer-ui PROPERTIES
     AUTOMOC ON

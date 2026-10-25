@@ -113,7 +113,12 @@ Sources: `MainWindow.cpp`, `main.cpp`, CLAUDE.md. None of these areas had a chec
 - [ ] **NAV-5 Zoom slider.** Drag the zoom indicator. **Expect:** zoom changes around the view centre
   and the label follows.
 - [ ] **NAV-6 Full screen.** Press F11 twice. **Expect:** full screen with the menu item checked, then
-  back.
+  back. Enter full screen again, arm the Rectangle tool, click the slide and press Esc twice. **Expect:**
+  the first Esc returns to Navigate and stays full screen; the second leaves full screen and unchecks the
+  menu item (issue #6). In full screen, open the File and View menus and File > Open... **Expect:** each
+  menu and the dialog appear above the slide. Enter full screen and close the window with Alt+F4, then start the viewer again.
+  **Expect:** it opens in a normal window at its previous size, with the menu item unchecked and the
+  menus working.
 - [ ] **NAV-7 Cursor read-out.** **Expect:** the status bar shows slide coordinates that update live.
 - [ ] **NAV-8 Z/T controls.** Use a Z-stack or time series. **Expect:** the plane or frame changes. On a
   2-D slide the controls are absent or inert.
