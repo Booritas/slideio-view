@@ -157,6 +157,9 @@ Sources: `MainWindow.cpp`, `main.cpp`, CLAUDE.md. None of these areas had a chec
 - [ ] **MD-2 Null metadata.** **Expect:** Slide shows `(no metadata)` with no children.
 - [ ] **MD-3 Rich metadata (CZI).** **Expect:** `{N keys}`, `[N items]` with `[0]`, `[1]`... children,
   and `(null)`. Nothing is truncated and the UI stays responsive.
+- [ ] **MD-3a Channel numbering** (issue #12). Expand Channels on a multi-channel CZI. **Expect:** they
+  read `Channel 1: <name>`, `Channel 2: <name>`..., in the same order and with the same names as the
+  Channels pane. On a slide with unnamed channels both panes read `Channel 1`, `Channel 2`...
 - [ ] **MD-4 Scene switch.** **Expect:** the Scene subtree updates. An associated-image preview does not
   change it.
 - [ ] **MD-5 Copy as text.** **Expect:** the whole tree, including collapsed nodes, as `Property: Value`

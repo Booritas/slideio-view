@@ -488,11 +488,9 @@ slideio::viewer::core::MetadataNode buildChannelMetadataNode(
         const size_t n = attrs.size();
         root.children.reserve(n);
         for (size_t i = 0; i < n; ++i) {
-            std::string label;
+            std::string label = slideio::viewer::core::channelNumberLabel(i);
             if (i < channels.size() && !channels[i].name.empty()) {
-                label = "Channel " + std::to_string(i) + ": " + channels[i].name;
-            } else {
-                label = "Channel " + std::to_string(i);
+                label += ": " + channels[i].name;
             }
             root.children.push_back(convertMetadata(attrs[i], label));
         }
@@ -653,7 +651,10 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
         try {
             info.name = m_scene->getChannelName(ch);
         } catch (...) {
-            info.name = "Channel " + std::to_string(ch);
+            // Left empty, not numbered here: each pane labels an unnamed
+            // channel with channelNumberLabel, and a name made up at this
+            // point once put a 0-based "Channel 0" in the Channels pane.
+            info.name.clear();
         }
         info.dataType = convertSlideIODataType(m_scene->getChannelDataType(ch));
         info.visible = true;
@@ -878,7 +879,10 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
         try {
             info.name = m_scene->getChannelName(ch);
         } catch (...) {
-            info.name = "Channel " + std::to_string(ch);
+            // Left empty, not numbered here: each pane labels an unnamed
+            // channel with channelNumberLabel, and a name made up at this
+            // point once put a 0-based "Channel 0" in the Channels pane.
+            info.name.clear();
         }
         info.dataType = convertSlideIODataType(m_scene->getChannelDataType(ch));
         info.visible = true;

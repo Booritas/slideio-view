@@ -84,6 +84,14 @@ struct ChannelInfo
     bool userOverrideRange = false;  // true when user has edited min/max or clicked Reset
 };
 
+/// "Channel N" for the channel at a 0-based index, counted from 1. The one
+/// numbering the Metadata and Channels panes share, so a user matching a
+/// channel's metadata to its display controls is never one channel off.
+inline std::string channelNumberLabel(std::size_t index)
+{
+    return "Channel " + std::to_string(index + 1);
+}
+
 /// Map a visible-spectrum wavelength (nm) to an sRGB color via Bruton's
 /// piecewise-linear approximation. Returns false (and leaves outputs untouched)
 /// for wavelengths outside 380–780 nm. Outputs saturated colors — no

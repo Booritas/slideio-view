@@ -21,6 +21,7 @@ add_executable(slideio-viewer-core-tests
     core/AnnotationCategoriesTest.cpp
     core/CalibrationTest.cpp
     core/DisplayRangePolicyTest.cpp
+    core/ChannelLabelTest.cpp
     core/AnnotationLayerTest.cpp
     core/WorkspaceSwitchPolicyTest.cpp
     core/LevelRasterTest.cpp

@@ -177,7 +177,7 @@ struct ChannelMixerPanel::Impl
 
             // Channel name label
             QString name = ch.name.empty()
-                ? QString("Channel %1").arg(static_cast<int>(i) + 1)
+                ? QString::fromStdString(core::channelNumberLabel(i))
                 : QString::fromStdString(ch.name);
             row.nameLabel = new QLabel(name, contentWidget);
             row.nameLabel->setStyleSheet("color: #CCCCCC;");
