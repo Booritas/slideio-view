@@ -150,6 +150,8 @@ Sources: `MainWindow.cpp`, `main.cpp`, CLAUDE.md. None of these areas had a chec
 - [ ] **PREF-4 Open Log File.** **Expect:** the log opens, or an info box says it does not exist yet.
 - [ ] **PREF-5 About.** **Expect:** version, system and licence information. The version matches the
   release tag.
+- [ ] **PREF-6 Online help.** Choose Help > SlideIO Viewer Help, then press F1. **Expect:** each opens
+  `https://slideio-doc.readthedocs.io/en/latest/viewer/index.html` in the default browser.
 
 ## 2. Panels and display
 

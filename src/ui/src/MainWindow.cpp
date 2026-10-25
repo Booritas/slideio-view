@@ -104,6 +104,7 @@ namespace
 {
 constexpr int kMaxRecentFiles = 10;
 const QString kRecentFilesKey = "recentFiles";
+constexpr const char* kOnlineHelpUrl = "https://slideio-doc.readthedocs.io/en/latest/viewer/index.html";
 
 // The window title names the slide that is open; with none open it names the
 // application alone. Held in one place because three sites say it.
@@ -287,6 +288,7 @@ struct MainWindow::Impl
     QAction* exportCountsAction = nullptr;
     QAction* exportMeasurementsAction = nullptr;
     QAction* exportAnnotationsAction = nullptr;
+    QAction* onlineHelpAction = nullptr;
     QAction* aboutAction = nullptr;
 
     // Why the configured default ICC profile cannot be used, if it cannot.
@@ -649,6 +651,10 @@ struct MainWindow::Impl
         preferencesAction->setMenuRole(QAction::PreferencesRole);
         preferencesAction->setStatusTip("Choose where annotations are saved and who they name");
 
+        onlineHelpAction = new QAction("SlideIO Viewer &Help", owner);
+        onlineHelpAction->setShortcut(QKeySequence::HelpContents);
+        onlineHelpAction->setStatusTip("Open the online help in the web browser");
+
         aboutAction = new QAction("&About SlideIO Viewer...", owner);
         // On macOS this moves the entry into the application menu, where the
         // platform expects it, instead of leaving it under Help.
@@ -772,6 +778,8 @@ struct MainWindow::Impl
         toolsMenu->addAction(preferencesAction);
 
         QMenu* helpMenu = owner->menuBar()->addMenu("&Help");
+        helpMenu->addAction(onlineHelpAction);
+        helpMenu->addSeparator();
         helpMenu->addAction(aboutAction);
     }
 
@@ -1052,7 +1060,16 @@ struct MainWindow::Impl
             dialog.exec();
         });
 
-        // Help actions. The dialog is built per invocation so that it picks up
+        // Help actions.
+        QObject::connect(onlineHelpAction, &QAction::triggered, owner, [this]() {
+            if (!QDesktopServices::openUrl(QUrl(QString::fromLatin1(kOnlineHelpUrl)))) {
+                QMessageBox::warning(owner, "SlideIO Viewer Help",
+                    QString("Could not open a web browser. The help is at:\n%1")
+                        .arg(QString::fromLatin1(kOnlineHelpUrl)));
+            }
+        });
+
+        // The About dialog is built per invocation so that it picks up
         // the OpenGL strings once the viewport's context has come up, rather
         // than caching an empty set from before the first show.
         QObject::connect(aboutAction, &QAction::triggered, owner, [this]() {
