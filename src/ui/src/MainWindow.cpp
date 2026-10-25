@@ -1329,6 +1329,10 @@ struct MainWindow::Impl
             channelMixerPanel->clearChannels();
             propertiesPanel->clear();
             metadataPanel->clear();
+            // One slice and one frame hides the overlay. A scene switch or a
+            // colour-profile reopen comes back through slideOpened, which sets
+            // the counts and the current values again.
+            ztNavigationWidget->setSliceFrameCounts(1, 1);
 
             colorManagementAction->setEnabled(false);
             setSlideProfileAction->setEnabled(false);

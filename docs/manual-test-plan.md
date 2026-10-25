@@ -95,7 +95,8 @@ Sources: `MainWindow.cpp`, `main.cpp`, CLAUDE.md. None of these areas had a chec
 
 - [ ] **CLOSE-1 Ctrl+W.** **Expect:** the viewport is empty and the title is `SlideIO Viewer` with no
   path. Close and the exports are disabled. Navigate is the active tool. The Scenes and Associated Images
-  panels are empty. Dock visibility is unchanged.
+  panels are empty. Dock visibility is unchanged. On a Z-stack or time series the Z/T sliders are gone
+  too (issue #7).
 - [ ] **CLOSE-2 Close, then reopen the same file.** Reopen it from Recent Files. **Expect:** the Scenes
   and Associated Images panels fill again.
 - [ ] **CLOSE-3 Window and dock state.** Move or resize the window, rearrange or float the docks, then
