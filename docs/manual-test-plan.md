@@ -81,7 +81,8 @@ Sources: `MainWindow.cpp`, `main.cpp`, CLAUDE.md. None of these areas had a chec
 - [ ] **OPEN-4 Drag and drop.** Drop a slide on the window, then a `.txt`. **Expect:** the slide opens.
   The `.txt` shows a no-drop cursor and nothing happens.
 - [ ] **OPEN-5 Failed open.** Open a corrupt or unsupported file. **Expect:** an error box appears and
-  the title goes back to plain `SlideIO Viewer`.
+  the title goes back to plain `SlideIO Viewer`. Recent Files does not list the file, and the entry that
+  was at the top is still there (issue #5).
 - [ ] **OPEN-6 Recent Files list.** Open 11 different slides. **Expect:** at most 10 entries, newest
   first, labelled `&N  <name>`, with the full path in the status tip. Clicking an entry reopens it.
 - [ ] **OPEN-7 One entry per file (Windows).** Open the same slide from the command line (backslashes)

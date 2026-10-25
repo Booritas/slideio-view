@@ -1081,6 +1081,10 @@ struct MainWindow::Impl
             [this](const std::string& filePath) {
                 const bool sameFile = (filePath == lastOpenedFilePath);
                 lastOpenedFilePath = filePath;
+                // Here and not in openSlide(): the open is asynchronous, and a
+                // path added before it ran stayed listed when it failed. A scene
+                // switch arrives here too and only re-promotes the open slide.
+                addToRecentFiles(filePath);
                 closeAction->setEnabled(true);
                 exportCountsAction->setEnabled(true);
                 exportMeasurementsAction->setEnabled(true);
@@ -3089,7 +3093,6 @@ void MainWindow::openSlide(const std::string& path, const std::string& driverId)
     // rebuild them when (and only when) the file actually changes. Clearing
     // eagerly would flash empty panels for the duration of the load.
     setWindowTitle(QStringLiteral("%1 - %2").arg(kApplicationTitle, QString::fromStdString(path)));
-    m_impl->addToRecentFiles(path);
 
     // openSlide is async: it kicks off background work and returns immediately.
     // The scene panel is populated, the loading overlay is hidden, and other
