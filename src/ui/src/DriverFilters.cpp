@@ -21,6 +21,8 @@ struct KnownDriver
     const char* extensions;  // space-separated, no dots
 };
 
+// resources/Info.plist.in lists these extensions for macOS Finder; keep the two
+// in step.
 constexpr KnownDriver kKnownDrivers[] = {
     {"AFI",     "Aperio FluoroImage",  "afi"},
     {"CZI",     "Carl Zeiss CZI",      "czi"},

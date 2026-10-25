@@ -2,8 +2,12 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QFileOpenEvent>
 #include <QIcon>
+#include <QStringList>
 #include <QSurfaceFormat>
+
+#include <utility>
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/rotating_file_sink.h>
@@ -12,6 +16,64 @@
 #include "slideio/viewer/ui/AppPaths.h"
 #include "slideio/viewer/ui/DriverFilters.h"
 #include "slideio/viewer/ui/MainWindow.h"
+
+namespace
+{
+
+void openInWindow(slideio::viewer::ui::MainWindow& window, const QString& path)
+{
+    // A DICOM study folder is passed through here too (shell "open with",
+    // a path on the command line, a folder dropped on the Dock icon), so name
+    // its driver explicitly rather than leaning on auto-detection, which only
+    // recognises a directory by its lack of an extension.
+    window.openSlide(path.toStdString(), slideio::viewer::ui::driverIdForPath(path).toStdString());
+}
+
+// macOS hands a file opened from Finder -- Open With, a double-click, a drop on
+// the Dock icon -- to the application as a QFileOpenEvent, never in argv, and
+// whether or not the application was already running. Qt sends it to the
+// application object, so it is handled here rather than by an event filter,
+// which would see every event in the application. Other platforms never send it.
+class ViewerApplication : public QApplication
+{
+public:
+    using QApplication::QApplication;
+
+    // Opens anything that arrived before the window existed.
+    void setMainWindow(slideio::viewer::ui::MainWindow* window)
+    {
+        m_window = window;
+        const QStringList pending = std::exchange(m_pending, {});
+        for (const QString& path : pending) {
+            openInWindow(*m_window, path);
+        }
+    }
+
+protected:
+    bool event(QEvent* event) override
+    {
+        if (event->type() == QEvent::FileOpen) {
+            // file() is empty for a URL that is not a local file.
+            const QString path = static_cast<QFileOpenEvent*>(event)->file();
+            if (!path.isEmpty()) {
+                spdlog::info("File open request: {}", path.toStdString());
+                if (m_window != nullptr) {
+                    openInWindow(*m_window, path);
+                } else {
+                    m_pending << path;
+                }
+            }
+            return true;
+        }
+        return QApplication::event(event);
+    }
+
+private:
+    slideio::viewer::ui::MainWindow* m_window = nullptr;
+    QStringList m_pending;
+};
+
+} // namespace
 
 int main(int argc, char* argv[])
 {
@@ -44,7 +106,7 @@ int main(int argc, char* argv[])
     fmt.setDepthBufferSize(24);
     QSurfaceFormat::setDefaultFormat(fmt);
 
-    QApplication app(argc, argv);
+    ViewerApplication app(argc, argv);
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/app.png")));
 
     // Without this a disabled menu item is pixel-identical to an enabled one.
@@ -64,14 +126,9 @@ int main(int argc, char* argv[])
     mainWindow.show();
 
     if (argc > 1) {
-        // A DICOM study folder is passed through here too (shell "open with",
-        // or a path on the command line), so name its driver explicitly rather
-        // than leaning on auto-detection, which only recognises a directory by
-        // its lack of an extension.
-        const QString path = QString::fromLocal8Bit(argv[1]);
-        mainWindow.openSlide(path.toStdString(),
-                             slideio::viewer::ui::driverIdForPath(path).toStdString());
+        openInWindow(mainWindow, QString::fromLocal8Bit(argv[1]));
     }
+    app.setMainWindow(&mainWindow);
 
     spdlog::info("Entering event loop");
     int result = app.exec();

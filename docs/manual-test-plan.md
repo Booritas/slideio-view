@@ -828,6 +828,10 @@ Most of this spec is deferred: there is no help window, and F1 and Ctrl+/ do not
   cleanly.
 - [ ] **PKG-3 macOS dmg (unsigned), x86_64 and arm64.** **Expect:** it launches through the Gatekeeper
   workaround and opens a slide.
+- [ ] **PKG-3a macOS Finder opens** (issue #13). With the viewer closed, then again with it running:
+  use Open With on an `.svs`, and drop a `.ndpi` on the Dock icon. **Expect:** Open With lists SlideIO
+  Viewer and the slide opens each time. A `.tif` lists the viewer under Open With but still opens in
+  Preview on a double-click.
 - [ ] **PKG-4 Debian `.deb` on clean Ubuntu 22.04.** **Expect:** `ldd` shows no "not found". It installs
   to `/opt/slideio-viewer` and starts from the CLI and the launcher.
 

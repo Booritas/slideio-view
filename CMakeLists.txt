@@ -93,7 +93,10 @@ if(APPLE)
     # @executable_path/../Frameworks. macdeployqt handles Qt + plugins;
     # BundleUtilities::fixup_bundle handles SlideIO and transitive deps.
     set_target_properties(slideio-viewer PROPERTIES
-        INSTALL_RPATH "@executable_path/../Frameworks")
+        INSTALL_RPATH "@executable_path/../Frameworks"
+        # The default template with the slide types added, so Finder offers the
+        # viewer under Open With and accepts a drop on its Dock icon.
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/resources/Info.plist.in")
 endif()
 
 if(UNIX AND NOT APPLE)
