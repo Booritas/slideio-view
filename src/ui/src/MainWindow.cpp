@@ -65,6 +65,7 @@
 #include <QEvent>
 #include <QFile>
 #include <QFileDialog>
+#include <QDockWidget>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QInputDialog>
@@ -93,6 +94,7 @@
 #include <chrono>
 #include <cstdint>
 #include <future>
+#include <initializer_list>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -2776,6 +2778,21 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->layersToggleAction->setText("La&yers");
     m_impl->layersToggleAction->setShortcut(QKeySequence("Ctrl+Shift+Y"));
     m_impl->layersToggleAction->setStatusTip("Toggle the annotation layers panel");
+    // A toggleViewAction only shows its dock, and a dock shown inside a tab
+    // group only gains a tab -- the pane the user asked for stays behind the
+    // one in front. raise() is what brings a tabbed dock forward. Connected to
+    // triggered, which only the user fires, so restoreState() still brings back
+    // whichever tab was in front.
+    for (QDockWidget* dock : std::initializer_list<QDockWidget*>{
+             m_impl->channelMixerPanel, m_impl->sceneThumbnailPanel, m_impl->associatedImagesPanel,
+             m_impl->propertiesPanel, m_impl->metadataPanel, m_impl->annotationListPanel,
+             m_impl->annotationPropertiesPanel, m_impl->layersPanel}) {
+        connect(dock->toggleViewAction(), &QAction::triggered, dock, [dock](bool checked) {
+            if (checked) {
+                dock->raise();
+            }
+        });
+    }
     m_impl->createMenus();
     m_impl->connectSignals();
 

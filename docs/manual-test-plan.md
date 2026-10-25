@@ -101,6 +101,9 @@ Sources: `MainWindow.cpp`, `main.cpp`, CLAUDE.md. None of these areas had a chec
   and Associated Images panels fill again.
 - [ ] **CLOSE-3 Window and dock state.** Move or resize the window, rearrange or float the docks, then
   restart. **Expect:** the same geometry and layout.
+- [ ] **CLOSE-4 A pane turned on comes to the front.** With several panes tabbed together, turn another
+  one on from the View menu or its shortcut (e.g. Ctrl+Shift+D). **Expect:** its tab is added and
+  selected, so its contents are what shows. After a restart, the tab that was in front is in front again.
 
 ### Navigation
 
