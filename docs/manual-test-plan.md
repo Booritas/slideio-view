@@ -174,6 +174,10 @@ Sources: `MainWindow.cpp`, `main.cpp`, CLAUDE.md. None of these areas had a chec
   every channel, and the colours match another viewer's. Auto stretches each channel to what was
   detected; Reset puts it back to 0..255. The Scenes thumbnail and the minimap show the native colours
   too.
+- [ ] **CH-2b One-channel slides** (issue #8). Open a Gray8 and a Gray16 TIFF, and a one-channel
+  fluorescence slide. **Expect:** on open, Min/Max and the histogram handles show the range the image is
+  drawn at, not 0..255, and Auto is enabled. Typing Min = 100 / Max = 150, dragging a handle, Reset and
+  Auto each change the image. CH-2a still opens at 0..255.
 - [ ] **CH-3 Master tri-state.** Use 4 channels. Untick one; click master; click master again.
   **Expect:** partial, then all off, then the previous partial set restored. The "N visible" count is
   right at each step.

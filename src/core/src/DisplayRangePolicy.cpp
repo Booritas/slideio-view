@@ -38,4 +38,20 @@ void applyNativeDisplayRange(SlideInfo& info)
     }
 }
 
+void adoptSlideRangeForSingleChannel(SlideInfo& info)
+{
+    if (info.numChannels != 1 || info.channels.size() != 1 || info.channels.front().userOverrideRange) {
+        return;
+    }
+    info.channels.front().displayRange = info.displayRange;
+}
+
+std::pair<double, double> channelDisplayRange(const ChannelInfo& channel, const DisplayRange& slideRange)
+{
+    if (channel.userOverrideRange || channel.displayRange.autoDetected) {
+        return {channel.displayRange.displayMin, channel.displayRange.displayMax};
+    }
+    return {slideRange.displayMin, slideRange.displayMax};
+}
+
 } // namespace slideio::viewer::core

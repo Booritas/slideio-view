@@ -1087,6 +1087,11 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
         }
     }
 
+    // The passes above find per-channel ranges only for several channels; one
+    // channel's range is the slide-wide one. Ahead of the snapshot, so Auto
+    // has it to restore.
+    core::adoptSlideRangeForSingleChannel(slideInfo);
+
     // Freeze the autodetect result for the "Auto" button. Done after both the
     // coarse-tile and block-fallback passes so it captures the final values.
     for (auto& chInfo : slideInfo.channels) {
@@ -1350,6 +1355,7 @@ SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
             case DataType::Float32: r.slideInfo.displayRange = {0.0, 1.0, false}; break;
             default:                r.slideInfo.displayRange = {0.0, 255.0, false}; break;
             }
+            core::adoptSlideRangeForSingleChannel(r.slideInfo);
         }
         r.success = true;
     } catch (const std::exception& ex) {
@@ -1399,6 +1405,7 @@ SceneOpenResult openAuxImageSync(const std::string& filePath, const std::string&
             case DataType::UInt16:  r.slideInfo.displayRange = {0.0, 65535.0, false}; break;
             default:                r.slideInfo.displayRange = {0.0, 255.0, false}; break;
             }
+            core::adoptSlideRangeForSingleChannel(r.slideInfo);
         }
         r.success = true;
     } catch (const std::exception& ex) {
@@ -4774,10 +4781,12 @@ void ViewportWidget::paintGL()
         m_impl->gl->glActiveTexture(GL_TEXTURE0);
         m_impl->tileShader->setUniformValue("uTileTexture", 0);
 
-        auto [samplerMin, samplerMax] = toSamplerRange(
-            m_impl->slideInfo.displayRange.displayMin,
-            m_impl->slideInfo.displayRange.displayMax,
-            m_impl->slideInfo.channelDataType);
+        // The channel's own range once set or detected, as in the channel-mix
+        // path: reading the slide-wide range alone ignored the Channels pane.
+        const auto [dispMin, dispMax] = m_impl->slideInfo.channels.empty()
+            ? std::pair{m_impl->slideInfo.displayRange.displayMin, m_impl->slideInfo.displayRange.displayMax}
+            : core::channelDisplayRange(m_impl->slideInfo.channels.front(), m_impl->slideInfo.displayRange);
+        auto [samplerMin, samplerMax] = toSamplerRange(dispMin, dispMax, m_impl->slideInfo.channelDataType);
         m_impl->tileShader->setUniformValue("uDisplayMin", samplerMin);
         m_impl->tileShader->setUniformValue("uDisplayMax", samplerMax);
 
@@ -4913,13 +4922,7 @@ void ViewportWidget::paintGL()
                 // which historically took the brightfield path). Without this the
                 // default {0,255} clamps Gray16 data into saturation and the
                 // entire image renders as a flat color.
-                const bool useChannelRange = chInfo.userOverrideRange || chInfo.displayRange.autoDetected;
-                const double dispMin = useChannelRange
-                    ? chInfo.displayRange.displayMin
-                    : m_impl->slideInfo.displayRange.displayMin;
-                const double dispMax = useChannelRange
-                    ? chInfo.displayRange.displayMax
-                    : m_impl->slideInfo.displayRange.displayMax;
+                const auto [dispMin, dispMax] = core::channelDisplayRange(chInfo, m_impl->slideInfo.displayRange);
                 auto [chSamplerMin, chSamplerMax] = toSamplerRange(dispMin, dispMax, chInfo.dataType);
                 m_impl->channelShader->setUniformValue("uDisplayMin", chSamplerMin);
                 m_impl->channelShader->setUniformValue("uDisplayMax", chSamplerMax);

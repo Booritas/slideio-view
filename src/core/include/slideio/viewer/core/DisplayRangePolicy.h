@@ -27,4 +27,17 @@ bool rendersNativeRange(bool isBrightfield, int numChannels, DataType dt);
 /// stretch stays one click away. Does nothing unless `rendersNativeRange`.
 void applyNativeDisplayRange(SlideInfo& info);
 
+/// Gives a one-channel slide's channel the slide-wide range, with its detected
+/// flag. Detection computes per-channel ranges only for several channels, and
+/// for one channel the two are the same range -- without this the channel
+/// keeps the default 0..255, so the Channels pane shows numbers the image is
+/// not drawn at and Auto stays disabled. Leaves a range the user set alone.
+void adoptSlideRangeForSingleChannel(SlideInfo& info);
+
+/// The range a channel is drawn at: its own once the user set it or detection
+/// found it, otherwise the slide-wide range. The one rule for every render
+/// path, so a Min/Max typed in the Channels pane cannot reach one and not
+/// another.
+std::pair<double, double> channelDisplayRange(const ChannelInfo& channel, const DisplayRange& slideRange);
+
 } // namespace slideio::viewer::core

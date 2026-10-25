@@ -87,3 +87,68 @@ TEST_CASE("full ranges follow the data type", "[core][DisplayRangePolicy]")
     CHECK(dataTypeFullRange(DataType::Int8) == std::pair<double, double>{-128.0, 127.0});
     CHECK(dataTypeFullRange(DataType::Float32) == std::pair<double, double>{0.0, 1.0});
 }
+
+TEST_CASE("a one-channel slide's channel takes the slide-wide range", "[core][DisplayRangePolicy]")
+{
+    // As detection leaves a one-channel slide: only the slide-wide range found.
+    SlideInfo info;
+    info.isBrightfield = true;
+    info.numChannels = 1;
+    info.channelDataType = DataType::UInt16;
+    info.displayRange = DisplayRange{312.0, 4100.0, true};
+    info.channels.emplace_back();
+
+    adoptSlideRangeForSingleChannel(info);
+
+    // Detected, so the panel shows the range the image is drawn at and Auto
+    // has something to restore once the snapshot is taken.
+    CHECK(info.channels[0].displayRange.displayMin == 312.0);
+    CHECK(info.channels[0].displayRange.displayMax == 4100.0);
+    CHECK(info.channels[0].displayRange.autoDetected);
+    CHECK_FALSE(info.channels[0].userOverrideRange);
+}
+
+TEST_CASE("a fallback range is adopted but not marked detected", "[core][DisplayRangePolicy]")
+{
+    SlideInfo info;
+    info.numChannels = 1;
+    info.channelDataType = DataType::UInt16;
+    info.displayRange = DisplayRange{0.0, 65535.0, false};
+    info.channels.emplace_back();
+
+    adoptSlideRangeForSingleChannel(info);
+
+    CHECK(info.channels[0].displayRange.displayMax == 65535.0);
+    CHECK_FALSE(info.channels[0].displayRange.autoDetected);
+}
+
+TEST_CASE("multi-channel slides and user ranges are left alone", "[core][DisplayRangePolicy]")
+{
+    SlideInfo multi = detectedSlide(false, 3, DataType::UInt16);
+    multi.displayRange = DisplayRange{1.0, 2.0, true};
+    adoptSlideRangeForSingleChannel(multi);
+    CHECK(multi.channels[1].displayRange.displayMin == 49.0);
+
+    SlideInfo edited = detectedSlide(true, 1, DataType::UInt16);
+    edited.channels[0].displayRange = DisplayRange{100.0, 150.0, false};
+    edited.channels[0].userOverrideRange = true;
+    adoptSlideRangeForSingleChannel(edited);
+    CHECK(edited.channels[0].displayRange.displayMin == 100.0);
+}
+
+TEST_CASE("a channel is drawn at its own range once set or detected", "[core][DisplayRangePolicy]")
+{
+    const DisplayRange slide{10.0, 20.0, true};
+    ChannelInfo channel;
+    channel.displayRange = DisplayRange{100.0, 150.0, false};
+
+    // Neither set nor detected: the default 0..255 must not reach the shader.
+    CHECK(channelDisplayRange(channel, slide) == std::pair<double, double>{10.0, 20.0});
+
+    channel.userOverrideRange = true;
+    CHECK(channelDisplayRange(channel, slide) == std::pair<double, double>{100.0, 150.0});
+
+    channel.userOverrideRange = false;
+    channel.displayRange.autoDetected = true;
+    CHECK(channelDisplayRange(channel, slide) == std::pair<double, double>{100.0, 150.0});
+}
