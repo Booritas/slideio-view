@@ -2,6 +2,8 @@
 
 #include "slideio/viewer/ui/AboutInfo.h"
 
+#include <algorithm>
+
 using namespace slideio::viewer::ui;
 
 namespace
@@ -124,6 +126,80 @@ TEST_CASE("every component has a licence and a URL to follow", "[ui][AboutInfo]"
         REQUIRE_FALSE(component.license.isEmpty());
         REQUIRE(component.url.startsWith(QStringLiteral("https://")));
     }
+}
+
+TEST_CASE("thirdPartyComponents names the libraries SlideIO links", "[ui][AboutInfo]")
+{
+    const QList<ThirdPartyComponent> components = thirdPartyComponents(sampleInfo());
+
+    for (const QString& name : {QStringLiteral("OpenCV"), QStringLiteral("DCMTK"), QStringLiteral("LibTIFF"),
+                                QStringLiteral("OpenJPEG"), QStringLiteral("zlib")}) {
+        INFO(name.toStdString());
+        const auto found = std::find_if(components.begin(), components.end(),
+                                        [&name](const ThirdPartyComponent& c) { return c.name == name; });
+        REQUIRE(found != components.end());
+        REQUIRE(found->viaSlideio);
+    }
+}
+
+TEST_CASE("an untracked version shows the name alone", "[ui][AboutInfo]")
+{
+    const QList<ThirdPartyComponent> components{
+        {QStringLiteral("OpenCV"), QString(), QStringLiteral("Apache 2.0"), QStringLiteral("https://opencv.org"), true}};
+
+    REQUIRE(formatThirdPartyNotices(components).startsWith(QStringLiteral("\nLinked into the SlideIO library:\n"
+                                                                          "OpenCV — Apache 2.0")));
+    REQUIRE(formatThirdPartyHtml(components).contains(QStringLiteral("<b>OpenCV</b> &mdash; Apache 2.0")));
+}
+
+TEST_CASE("formatThirdPartyHtml lists every component as a link", "[ui][AboutInfo]")
+{
+    const QList<ThirdPartyComponent> components = thirdPartyComponents(sampleInfo());
+    const QString html = formatThirdPartyHtml(components);
+
+    for (const ThirdPartyComponent& component : components) {
+        INFO(component.name.toStdString());
+        REQUIRE(html.contains(QStringLiteral("href='%1'").arg(component.url.toHtmlEscaped())));
+    }
+    REQUIRE(html.contains(QStringLiteral("<b>Qt 6.7.3</b> &mdash; LGPL v3")));
+}
+
+TEST_CASE("every copyleft component says where its source is", "[ui][AboutInfo]")
+{
+    const QList<ThirdPartyComponent> components = thirdPartyComponents(sampleInfo());
+    const QString html = formatThirdPartyHtml(components);
+    const QString text = formatThirdPartyNotices(components);
+
+    for (const ThirdPartyComponent& component : components) {
+        INFO(component.name.toStdString());
+        const bool copyleft = component.license.contains(QStringLiteral("GPL"))
+                              && component.name != QStringLiteral("FreeImage");  // FIPL is the licence taken
+        REQUIRE(component.sourceUrl.isEmpty() == !copyleft);
+        if (copyleft) {
+            REQUIRE(component.sourceUrl.startsWith(QStringLiteral("https://")));
+            REQUIRE(html.contains(QStringLiteral("href='%1'").arg(component.sourceUrl)));
+            REQUIRE(text.contains(component.sourceUrl));
+        }
+    }
+}
+
+TEST_CASE("the Qt source link names the exact release", "[ui][AboutInfo]")
+{
+    AboutInfo info = sampleInfo();
+    const auto qtSource = [](const AboutInfo& i) {
+        return thirdPartyComponents(i).front().sourceUrl;
+    };
+
+    REQUIRE(qtSource(info) == QStringLiteral("https://download.qt.io/archive/qt/6.7/6.7.3/single/"));
+
+    info.qtRuntimeVersion.clear();
+    REQUIRE(qtSource(info) == QStringLiteral("https://download.qt.io/archive/qt/"));
+}
+
+TEST_CASE("the clinical-use notice says what it must", "[ui][AboutInfo]")
+{
+    REQUIRE(QString::fromLatin1(kNotForClinicalUseNotice)
+            == QStringLiteral("This software is not intended for clinical diagnostic or therapeutic purposes."));
 }
 
 TEST_CASE("formatAboutReport gathers every section under a heading", "[ui][AboutInfo]")

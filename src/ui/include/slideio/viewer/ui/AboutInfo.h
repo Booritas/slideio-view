@@ -12,15 +12,26 @@ namespace slideio::viewer::ui
 // URL the clipboard report carries cannot drift apart.
 inline constexpr const char* kProjectHomePage = "https://www.slideio.com";
 
+// Shown on every tab of the License dialog. One definition, so the wording
+// cannot drift between the places that carry it.
+inline constexpr const char* kNotForClinicalUseNotice =
+    "This software is not intended for clinical diagnostic or therapeutic purposes.";
+
 // One component shipped with the viewer, listed in the About dialog's
 // third-party tab so the licences of the libraries we redistribute are
 // attributed. Qt is the reason this exists: the LGPL expects the notice.
 struct ThirdPartyComponent
 {
     QString name;
-    QString version;  // "unknown" when the build does not expose one
+    QString version;  // "unknown" when the build does not expose one; empty when not tracked
     QString license;
     QString url;
+    // Linked into the SlideIO library rather than into the viewer itself. Their
+    // versions are SlideIO's choice and are not visible from here.
+    bool viaSlideio = false;
+    // Where to get the source code. Set only for the copyleft components, whose
+    // licences require that the source be made available with the binary.
+    QString sourceUrl;
 };
 
 // Everything the About dialog shows. Gathering it into one struct keeps the
@@ -58,6 +69,9 @@ QList<ThirdPartyComponent> thirdPartyComponents(const AboutInfo& info);
 QString formatVersionInfo(const AboutInfo& info);
 QString formatSystemInfo(const AboutInfo& info);
 QString formatThirdPartyNotices(const QList<ThirdPartyComponent>& components);
+
+// The same list as HTML with followable links, for the dialogs' third-party tab.
+QString formatThirdPartyHtml(const QList<ThirdPartyComponent>& components);
 
 // The plain-text blob the Copy button puts on the clipboard: the version,
 // system and third-party sections under headings. The licence body is left

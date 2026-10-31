@@ -17,6 +17,7 @@
 #include "slideio/viewer/infra/QSettingsCalibrationOverrideStore.h"
 #include "slideio/viewer/infra/QSettingsColorProfileOverrideStore.h"
 #include "slideio/viewer/ui/AboutDialog.h"
+#include "slideio/viewer/ui/LicenseDialog.h"
 #include "slideio/viewer/ui/AnnotationCountExport.h"
 #include "slideio/viewer/ui/AnnotationImportSummary.h"
 #include "slideio/viewer/ui/AnnotationInteraction.h"
@@ -289,6 +290,7 @@ struct MainWindow::Impl
     QAction* exportMeasurementsAction = nullptr;
     QAction* exportAnnotationsAction = nullptr;
     QAction* onlineHelpAction = nullptr;
+    QAction* licenseAction = nullptr;
     QAction* aboutAction = nullptr;
 
     // Why the configured default ICC profile cannot be used, if it cannot.
@@ -655,6 +657,9 @@ struct MainWindow::Impl
         onlineHelpAction->setShortcut(QKeySequence::HelpContents);
         onlineHelpAction->setStatusTip("Open the online help in the web browser");
 
+        licenseAction = new QAction("&License...", owner);
+        licenseAction->setStatusTip("Show the licence and the third-party software it ships with");
+
         aboutAction = new QAction("&About SlideIO Viewer...", owner);
         // On macOS this moves the entry into the application menu, where the
         // platform expects it, instead of leaving it under Help.
@@ -780,6 +785,7 @@ struct MainWindow::Impl
         QMenu* helpMenu = owner->menuBar()->addMenu("&Help");
         helpMenu->addAction(onlineHelpAction);
         helpMenu->addSeparator();
+        helpMenu->addAction(licenseAction);
         helpMenu->addAction(aboutAction);
     }
 
@@ -1067,6 +1073,11 @@ struct MainWindow::Impl
                     QString("Could not open a web browser. The help is at:\n%1")
                         .arg(QString::fromLatin1(kOnlineHelpUrl)));
             }
+        });
+
+        QObject::connect(licenseAction, &QAction::triggered, owner, [this]() {
+            LicenseDialog dialog(owner);
+            dialog.exec();
         });
 
         // The About dialog is built per invocation so that it picks up

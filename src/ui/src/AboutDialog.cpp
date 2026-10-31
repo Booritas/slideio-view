@@ -60,22 +60,6 @@ QPlainTextEdit* makeTextTab(const QString& text, const QFont& font)
     return view;
 }
 
-QString thirdPartyHtml(const QList<ThirdPartyComponent>& components)
-{
-    QString html = QStringLiteral("<body style='color:#CCCCCC;'>");
-    html += QStringLiteral("<p>SlideIO Viewer is distributed with the following components:</p><ul>");
-    for (const ThirdPartyComponent& component : components) {
-        html += QStringLiteral("<li><b>%1</b> %2 &mdash; %3<br/>"
-                               "<a style='color:#6FA8E0;' href='%4'>%4</a></li>")
-                    .arg(component.name.toHtmlEscaped(), component.version.toHtmlEscaped(),
-                         component.license.toHtmlEscaped(), component.url.toHtmlEscaped());
-    }
-    html += QStringLiteral("</ul><p>SlideIO statically links further third-party libraries "
-                           "(OpenCV, DCMTK, libtiff, GDAL and others), each under its own "
-                           "licence.</p></body>");
-    return html;
-}
-
 } // namespace
 
 struct AboutDialog::Impl
@@ -149,7 +133,7 @@ AboutDialog::AboutDialog(const GpuInfo& gpu, QWidget* parent)
 
     auto* notices = new QTextBrowser;
     notices->setOpenExternalLinks(true);
-    notices->setHtml(thirdPartyHtml(thirdPartyComponents(m_impl->info)));
+    notices->setHtml(formatThirdPartyHtml(thirdPartyComponents(m_impl->info)));
     tabs->addTab(notices, QStringLiteral("&Third-Party"));
 
     tabs->addTab(makeTextTab(license, fixedFont), QStringLiteral("&License"));
