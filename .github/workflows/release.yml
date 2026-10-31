@@ -254,6 +254,16 @@ jobs:
       contents: write
 
     steps:
+      # Only the changelog and the script that reads it; the job builds nothing.
+      # It must come first: checkout empties the workspace before it clones, and
+      # run 41198625863 lost every downloaded package to it.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            CHANGELOG.md
+            scripts/release-notes.sh
+          sparse-checkout-cone-mode: false
+
       - name: Download every platform's packages
         uses: actions/download-artifact@v4
         with:
@@ -262,14 +272,6 @@ jobs:
 
       - name: List what will be published
         run: ls -la dist
-
-      # Only the changelog and the script that reads it; the job builds nothing.
-      - uses: actions/checkout@v4
-        with:
-          sparse-checkout: |
-            CHANGELOG.md
-            scripts/release-notes.sh
-          sparse-checkout-cone-mode: false
 
       # A random delimiter, so no line of the notes can end the value early.
       - name: Read this version's notes from CHANGELOG.md
