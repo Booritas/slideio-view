@@ -59,6 +59,14 @@ jobs:
           echo "version: ${version}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
+      # Here rather than in publish, so a tag with no notes fails in seconds
+      # instead of after an hour of builds. Only a tag push is held to it: a
+      # manual run packages work in progress, whose notes are still Unreleased.
+      - name: Check the release notes
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: bash scripts/release-notes.sh "${{ steps.version.outputs.version }}"
+
       # Assembled here rather than inline below so a manual run can ask for one
       # platform. A tag push carries no inputs, so a release always builds all four;
       # "macos" means both Mac architectures.
@@ -255,6 +263,27 @@ jobs:
       - name: List what will be published
         run: ls -la dist
 
+      # Only the changelog and the script that reads it; the job builds nothing.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            CHANGELOG.md
+            scripts/release-notes.sh
+          sparse-checkout-cone-mode: false
+
+      # A random delimiter, so no line of the notes can end the value early.
+      - name: Read this version's notes from CHANGELOG.md
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          delimiter="notes_$(openssl rand -hex 8)"
+          {
+            echo "notes<<${delimiter}"
+            bash scripts/release-notes.sh "${{ needs.check-version.outputs.version }}"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create the GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -263,7 +292,13 @@ jobs:
           draft: true
           generate_release_notes: true
           fail_on_unmatched_files: true
+          # The changelog section first, then how to install. generate_release_notes
+          # appends GitHub's compare link after both.
           body: |
+            ${{ steps.notes.outputs.notes }}
+
+            ## Downloads
+
             Binary distributions of SlideIO Viewer ${{ needs.check-version.outputs.version }}.
 
             | Platform | File | Notes |
