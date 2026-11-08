@@ -11,6 +11,12 @@ Release and refuses to publish a version that has none.
 
 ## [Unreleased]
 
+### Added
+
+- **3DHISTECH MIRAX (`.mrxs`) slides.** The Open dialog has a filter for them,
+  and macOS offers the viewer for `.mrxs` files in Finder. Open the `.mrxs`
+  entry file; its data directory has to sit beside it.
+
 ## [0.2.0] - 2026-10-31
 
 ### Added

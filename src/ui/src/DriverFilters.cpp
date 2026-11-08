@@ -28,6 +28,7 @@ constexpr KnownDriver kKnownDrivers[] = {
     {"CZI",     "Carl Zeiss CZI",      "czi"},
     {"DCM",     "DICOM",               "dcm"},
     {"GDAL",    "Generic (GDAL)",      "tif tiff png jpg jpeg gif bmp"},
+    {"MRXS",    "3DHISTECH MIRAX",     "mrxs"},
     {"NDPI",    "Hamamatsu NDPI",      "ndpi"},
     {"OMETIFF", "OME-TIFF",            "ome.tif ome.tiff"},
     {"QPTIFF",  "PerkinElmer QPTIFF",  "qptiff"},

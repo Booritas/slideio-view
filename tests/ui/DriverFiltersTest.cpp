@@ -2,6 +2,8 @@
 
 #include "slideio/viewer/ui/DriverFilters.h"
 
+#include <algorithm>
+
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
@@ -84,6 +86,18 @@ TEST_CASE("driverIdForFilter returns no driver for an unknown filter line", "[ui
 {
     const QList<DriverFilter> filters = availableDriverFilters();
     REQUIRE(driverIdForFilter(QStringLiteral("Nonsense (*.zzz)"), filters).isEmpty());
+}
+
+TEST_CASE("availableDriverFilters offers MRXS bundles by their .mrxs entry file", "[ui][DriverFilters]")
+{
+    // A MIRAX slide is a .mrxs file beside a data directory; the entry file is
+    // what the user picks in the Open dialog.
+    const QList<DriverFilter> filters = availableDriverFilters();
+    const auto mrxs = std::find_if(filters.begin(), filters.end(), [](const DriverFilter& f) {
+        return f.driverId == QStringLiteral("MRXS");
+    });
+    REQUIRE(mrxs != filters.end());
+    REQUIRE(mrxs->extensions == QStringList{QStringLiteral("mrxs")});
 }
 
 TEST_CASE("isDicomDriverAvailable agrees with the driver list", "[ui][DriverFilters]")
