@@ -79,7 +79,7 @@ jobs:
           set -euo pipefail
           windows='{"name":"Windows x86_64","os":"windows-2022","artifact":"windows-x86_64","test_dir":"build/build","ctest_config":"-C Release"}'
           debian='{"name":"Debian x86_64","os":"ubuntu-22.04","artifact":"debian-x86_64","test_dir":"build/build/Release","ctest_config":""}'
-          macos='{"name":"macOS arm64","os":"macos-14","artifact":"macos-arm64","test_dir":"build/build/Release","ctest_config":""}'
+          macos='{"name":"macOS arm64","os":"macos-15","artifact":"macos-arm64","test_dir":"build/build/Release","ctest_config":""}'
           macos_intel='{"name":"macOS x86_64","os":"macos-15-intel","artifact":"macos-x86_64","test_dir":"build/build/Release","ctest_config":""}'
           case "$PLATFORMS" in
             all)     include="${windows},${debian},${macos},${macos_intel}" ;;

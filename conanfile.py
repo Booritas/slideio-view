@@ -24,6 +24,10 @@ class SlideioViewerConan(ConanFile):
         self.options["qt/*"].shared = True
         self.options["qt/*"].qtshadertools = True
         self.options["qt/*"].opengl = "desktop"
+        # Qt's recipe pins brotli/1.1.0 for QtNetwork, which we do not use, and
+        # freetype/2.13.2's 2026-10-26 recipe revision requires brotli>=1.1.1,
+        # so a resolve without a warm Conan cache fails with a version conflict.
+        self.options["qt/*"].with_brotli = False
 
     def layout(self):
         cmake_layout(self)

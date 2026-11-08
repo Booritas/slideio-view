@@ -43,9 +43,10 @@ jobs:
       matrix:
         include:
           # Pinned, never -latest. ubuntu-22.04 fixes the glibc floor at 2.35 so
-          # the .deb installs on Ubuntu 22.04+ and Debian 12+; macos-14 is the
-          # first arm64 image and naming it keeps the artifact's architecture
-          # from changing under us; macos-15-intel is the last Intel image GitHub
+          # the .deb installs on Ubuntu 22.04+ and Debian 12+; macos-15 is named
+          # so the artifact's architecture cannot change under us (macos-14 was
+          # retired in 2026-11; the minimum macOS comes from
+          # conan/macos-deployment-target, not the image); macos-15-intel is the last Intel image GitHub
           # offers (the plain macos-* labels are all arm64 now); windows-2022
           # matches compiler.version=194 in conan/profiles/Windows/release.
           #
@@ -61,7 +62,7 @@ jobs:
             test_dir: build/build/Release
             ctest_config: ''
           - name: macOS arm64
-            os: macos-14
+            os: macos-15
             test_dir: build/build/Release
             ctest_config: ''
           - name: macOS x86_64
