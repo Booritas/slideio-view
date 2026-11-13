@@ -8,7 +8,7 @@ SlideIO Viewer renders gigapixel-scale slide images with smooth pan and zoom usi
 
 ## Supported Formats
 
-SVS, AFI, NDPI, SCN, CZI, ZVI, VSI, MRXS, QPTIFF, OME-TIFF, Philips TIFF, DICOM WSI, and TIFF/BigTIFF, PNG and JPEG — every format the SlideIO library supports.
+SVS, AFI, NDPI, SCN, CZI, ZVI, VSI, MRXS, BIF, LIF, ND2, QPTIFF, OME-TIFF, Philips TIFF, DICOM WSI, and TIFF/BigTIFF, PNG and JPEG — every format the SlideIO library supports.
 
 ## Features
 

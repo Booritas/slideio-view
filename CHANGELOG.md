@@ -16,6 +16,10 @@ Release and refuses to publish a version that has none.
 - **3DHISTECH MIRAX (`.mrxs`) slides.** The Open dialog has a filter for them,
   and macOS offers the viewer for `.mrxs` files in Finder. Open the `.mrxs`
   entry file; its data directory has to sit beside it.
+- **Roche Ventana BIF (`.bif`), Leica LIF (`.lif`) and Nikon ND2 (`.nd2`)
+  images.** Each has its own filter in the Open dialog and joins "All
+  Supported Slides" and drag-and-drop, and macOS offers the viewer for these
+  files in Finder.
 
 ## [0.2.0] - 2026-10-31
 

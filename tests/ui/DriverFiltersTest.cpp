@@ -100,6 +100,20 @@ TEST_CASE("availableDriverFilters offers MRXS bundles by their .mrxs entry file"
     REQUIRE(mrxs->extensions == QStringList{QStringLiteral("mrxs")});
 }
 
+TEST_CASE("availableDriverFilters offers BIF, LIF and ND2 files", "[ui][DriverFilters]")
+{
+    const QList<DriverFilter> filters = availableDriverFilters();
+    const auto extensionsOf = [&filters](const char* driverId) {
+        const auto it = std::find_if(filters.begin(), filters.end(), [driverId](const DriverFilter& f) {
+            return f.driverId == QLatin1String(driverId);
+        });
+        return it == filters.end() ? QStringList{} : it->extensions;
+    };
+    REQUIRE(extensionsOf("BIF") == QStringList{QStringLiteral("bif")});
+    REQUIRE(extensionsOf("LIF") == QStringList{QStringLiteral("lif")});
+    REQUIRE(extensionsOf("ND2") == QStringList{QStringLiteral("nd2")});
+}
+
 TEST_CASE("isDicomDriverAvailable agrees with the driver list", "[ui][DriverFilters]")
 {
     bool inFilterList = false;

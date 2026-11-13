@@ -53,8 +53,11 @@
 			<key>CFBundleTypeExtensions</key>
 			<array>
 				<string>afi</string>
+				<string>bif</string>
 				<string>czi</string>
+				<string>lif</string>
 				<string>mrxs</string>
+				<string>nd2</string>
 				<string>ndpi</string>
 				<string>qptiff</string>
 				<string>scn</string>

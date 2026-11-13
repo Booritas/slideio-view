@@ -25,10 +25,13 @@ struct KnownDriver
 // in step.
 constexpr KnownDriver kKnownDrivers[] = {
     {"AFI",     "Aperio FluoroImage",  "afi"},
+    {"BIF",     "Roche Ventana BIF",   "bif"},
     {"CZI",     "Carl Zeiss CZI",      "czi"},
     {"DCM",     "DICOM",               "dcm"},
     {"GDAL",    "Generic (GDAL)",      "tif tiff png jpg jpeg gif bmp"},
+    {"LIF",     "Leica LIF",           "lif"},
     {"MRXS",    "3DHISTECH MIRAX",     "mrxs"},
+    {"ND2",     "Nikon ND2",           "nd2"},
     {"NDPI",    "Hamamatsu NDPI",      "ndpi"},
     {"OMETIFF", "OME-TIFF",            "ome.tif ome.tiff"},
     {"QPTIFF",  "PerkinElmer QPTIFF",  "qptiff"},
