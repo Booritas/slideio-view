@@ -22,9 +22,24 @@ INSTALL_LAYOUT=flat "$REPO_ROOT/build-template.sh"
 rm -rf "$REPO_ROOT/build/packages"
 mkdir -p "$REPO_ROOT/build/packages"
 
-cpack --config "$REPO_ROOT/$BUILD_DIR/CPackConfig.cmake" \
-      -B "$REPO_ROOT/build/packages" \
-      -C "$BUILD_TYPE"
+# On macOS, hdiutil intermittently fails with "create failed - Resource busy"
+# while something on the runner still holds the staging folder; it is not
+# reproducible and a second attempt succeeds. Retry there, and only there, so a
+# real packaging error elsewhere still fails on the first run.
+attempts=1
+[ "$(uname -s)" = "Darwin" ] && attempts=3
+for attempt in $(seq 1 "$attempts"); do
+    if cpack --config "$REPO_ROOT/$BUILD_DIR/CPackConfig.cmake" \
+             -B "$REPO_ROOT/build/packages" \
+             -C "$BUILD_TYPE"; then
+        break
+    fi
+    if [ "$attempt" -eq "$attempts" ]; then
+        exit 1
+    fi
+    echo "cpack failed (attempt $attempt of $attempts); retrying in 10 seconds" >&2
+    sleep 10
+done
 
 # cpack -B leaves its staging directory here: a full second copy of the installed
 # tree. Left in place it triples every artifact upload and collides across
