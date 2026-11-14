@@ -15,7 +15,15 @@ SVS, AFI, NDPI, SCN, CZI, ZVI, VSI, MRXS, BIF, LIF, ND2, QPTIFF, OME-TIFF, Phili
 - GPU-accelerated tile rendering (OpenGL 3.3+)
 - Multi-resolution pyramid navigation with async tile loading
 - LRU tile cache with configurable memory budget
-- Minimap overview and zoom indicator
+- Minimap overview, zoom indicator and scale bar
+- Colour management through embedded, default or per-slide ICC profiles
+- Channel mixer with per-channel histograms, and Z-stack and time-series navigation
+- Annotations: rectangle, ellipse, polygon, freehand line, point marker, arrow,
+  text, ruler and angle, saved automatically per slide and scene, with undo and redo
+- Annotation layers, categorized counting and measurements in microns, with a
+  per-scene calibration override
+- Export of counts and measurements as CSV and of annotations as GeoJSON;
+  import from GeoJSON (including QuPath) and ASAP XML
 - Drag-and-drop file opening
 - Recent files menu
 - Dark theme UI
@@ -149,14 +157,16 @@ slideio-viewer path/to/slide.svs        # Open a slide directly
 
 ```
 src/
-  core/     Pure C++17 domain layer (no external dependencies)
-  app/      Application services
-  infra/    SlideIO adapter, tile cache, tile scheduler
+  core/     Pure C++17 domain layer (no Qt)
+  app/      Application services: annotation model, persistence, undo/redo
+  infra/    SlideIO adapter, tile cache, tile scheduler, annotation repository
   ui/       Qt widgets, OpenGL rendering, main window
   main.cpp  Entry point
 tests/
-  core/     Unit tests for domain types and coordinate math
-  infra/    Unit tests for tile cache
+  core/     Unit tests for the domain layer
+  app/      Unit tests for the application services
+  infra/    Unit tests for the infrastructure layer
+  ui/       Unit tests for the UI layer's pure logic
 extern/
   slideio/  SlideIO library (git submodule)
 ```

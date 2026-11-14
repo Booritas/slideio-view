@@ -11,6 +11,8 @@ Release and refuses to publish a version that has none.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-14
+
 ### Added
 
 - **3DHISTECH MIRAX (`.mrxs`) slides.** The Open dialog has a filter for them,
@@ -20,6 +22,11 @@ Release and refuses to publish a version that has none.
   images.** Each has its own filter in the Open dialog and joins "All
   Supported Slides" and drag-and-drop, and macOS offers the viewer for these
   files in Finder.
+
+### Changed
+
+- Leica LIF channels whose lookup table is red, green, blue, cyan, magenta or
+  yellow open in that colour instead of a default one.
 
 ## [0.2.0] - 2026-10-31
 
@@ -112,7 +119,8 @@ First release.
 - DICOM studies opened from a directory.
 - Windows installer, macOS disk images and a Debian package.
 
-[Unreleased]: https://github.com/Booritas/slideio-view/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Booritas/slideio-view/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Booritas/slideio-view/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Booritas/slideio-view/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/Booritas/slideio-view/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Booritas/slideio-view/compare/v0.1.0...v0.1.1
