@@ -118,19 +118,29 @@ The processor's top-level `CMakeLists.txt` requires SlideIO unconditionally
   libraries (core, config, storage, reporting), does not look for SlideIO or
   OpenCV, and skips the engine, the tools and the engine's tests (the data
   library's own tests still build and run).
-- An installed CMake package for it (`find_package(slideio-processor-data)`
-  giving an imported target), with its public headers and the shared library.
-- Its Conan dependencies in data-only mode: sqlite3 (with `enable_rtree`),
-  rapidjson, libtiff, zlib.
+- Usable through `add_subdirectory`, as the Python bindings already use the
+  whole library: the consumer sets the option, turns test seams off and links
+  the `slideio-processor-data` target. No install rules or package
+  configuration are needed **(corrected while planning: the earlier
+  "installed CMake package" would have added install rules the library has
+  never had, for no gain over the pattern the bindings already prove)**.
+- The data library reads OpenCV for its version only
+  (`BackendCapabilities`). In data-only mode the version is the conanfile's
+  `opencv/<x.y.z>` pin, read at configure time, so the library reports what an
+  engine built from the same commit would.
+- Its dependencies in data-only mode: sqlite3 (with `enable_rtree`),
+  rapidjson, libtiff, zlib, and Threads.
 - A CI job building and testing the data-only configuration, so it cannot rot.
 
 This lands in slideio-processor first, as its own small change, before any
 viewer work that links it.
 
-**In the viewer**, following the SlideIO pattern (`SLIDEIO_ROOT`): a
-`slideio-processor` submodule under `extern/`, built data-only by `build.sh`
-into an install directory, with `SLIDEIO_PROCESSOR_DATA_ROOT` to point at an
-install maintained elsewhere **(author's call)**. The infra layer links it
+**In the viewer**: a `slideio-processor` submodule under
+`extern/slideio-processor`, added with `add_subdirectory` in data-only mode
+with test seams off; its dependencies (sqlite3 with R-tree, rapidjson,
+libtiff, zlib) join the viewer's `conanfile.py` **(author's call)**. Its own
+nested SlideIO submodule is never needed and is not initialised. The infra
+layer links it
 PRIVATE, so no processor type appears in a core or app public header; the
 packaging scripts bundle the shared library. On Linux the data library already
 hides its static dependencies' symbols (`--exclude-libs,ALL`); on Windows and
@@ -223,11 +233,14 @@ or a half-built Results tab.
   "classification" **(author's call)**.
 - An object is hidden only when **every** class it carries is hidden
   **(author's call)**.
-- A class whose name matches a viewer annotation category, compared with
-  `core::caseFoldKey` as the viewer compares category names everywhere, takes
-  that category's colour. Any other class takes a colour from a fixed palette
-  chosen by a stable hash of its name, so it is the same across sessions and
-  slides **(author's call)**.
+- Colours come from the viewer's colourblind-safe palette (FR-ANN-15: blue,
+  orange, yellow, purple, cyan, …), handed out in legend order and cycling.
+  The user can change any class's colour in the legend; the choice is
+  remembered **per class name** (compared with `core::caseFoldKey`), for every
+  slide, so "tumour" keeps its colour everywhere once chosen **(corrected while
+  planning: the viewer's categories carry no colour — each annotation has its
+  own — so the earlier "take the matching category's colour" had nothing to
+  match)**.
 - The **legend** (in the Results tab, under each layer) lists the layer's
   classes with their colours, their object counts in the whole layer
   (`ObjectStore::count` with a label filter, which matches the effective set)
@@ -341,7 +354,7 @@ would be asked again on every reopen **(author's call)**.
     the object's measurements as (name, value, unit text). A later GeoJSON
     detection source implements the same interface.
   - `resultHitTest(object, point)` — even-odd over all rings.
-  - `classColour(name, categories)` and the palette hash.
+  - `ResultsPalette`: palette colours in legend order, with per-class-name overrides.
   - `thinForDrawing(ring, toleranceSlideUnits)`.
   - `OverviewGrid` — the §5.3a grid: built from (centre, classes) pairs,
     answers the colour and opacity of each square for a set of visible
@@ -411,8 +424,8 @@ hundreds of holes) and a nuclei workspace of at least 50 000 objects:
    stays smooth during and after the scan. Repeat with a 1 000 000-object
    workspace (a synthetic one is fine) and record the scan time.
 3. Click a nucleus: details show; click inside a tissue hole: nothing selected.
-4. Classes coloured, a category-named class takes the category colour; hiding
-   a class hides it.
+4. Classes coloured from the palette; changing a class colour sticks on
+   another slide with the same class; hiding a class hides it.
 5. Attach while a processor run is writing the workspace: the run is not
    blocked; after a stage completes, Reload shows the new layer.
 6. Wrong scene refused; moved slide warns and attaches on *Attach anyway*.
@@ -422,7 +435,7 @@ hundreds of holes) and a nuclei workspace of at least 50 000 objects:
 
 ## 10. Left to the builder
 
-- The exact palette, the stable hash, and the Results tab's widgets.
+- The exact palette entries beyond FR-ANN-15's five, and the Results tab's widgets.
 - How the worker's posted results reach the widget (signal or callback), and
   whether the grown query rectangle is half a view or a tuned figure.
 - The draw budget's exact value if 20 000 proves too slow or too timid on the
