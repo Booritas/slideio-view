@@ -1,3 +1,6 @@
 [submodule "extern/slideio"]
 	path = extern/slideio
 	url = https://github.com/Booritas/slideio.git
+[submodule "extern/slideio-processor"]
+	path = extern/slideio-processor
+	url = https://github.com/Booritas/slideio-processor.git

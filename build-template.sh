@@ -80,14 +80,14 @@ else
     # extern/slideio out from under whoever is doing it, and build sources other
     # than the ones they are looking at. Report the drift instead.
     if [ ! -f "$SLIDEIO_DIR/CMakeLists.txt" ]; then
-        git -C "$REPO_ROOT" submodule update --init --recursive
+        git -C "$REPO_ROOT" submodule update --init --recursive extern/slideio
     else
         _pinned=$(git -C "$REPO_ROOT" ls-tree HEAD -- extern/slideio | awk '{print $3}')
         _actual=$(git -C "$SLIDEIO_DIR" rev-parse HEAD 2>/dev/null || true)
         if [ -n "$_pinned" ] && [ -n "$_actual" ] && [ "$_pinned" != "$_actual" ]; then
             echo "WARNING: extern/slideio is checked out at $_actual," >&2
             echo "         but this commit pins $_pinned." >&2
-            echo "         Run 'git submodule update --init --recursive' and rebuild with" >&2
+            echo "         Run 'git submodule update --init --recursive extern/slideio' and rebuild with" >&2
             echo "         SLIDEIO_REBUILD=1 to build the pinned revision." >&2
         fi
     fi
@@ -114,6 +114,14 @@ else
         (cd "$SLIDEIO_DIR" && "$PYTHON" install.py -a install -c "$_config" \
             -bd build/build -pr build/install)
     done
+fi
+
+# slideio-processor (extern/slideio-processor) is built by CMake through
+# add_subdirectory, as its data library alone, so it needs no SlideIO of its own:
+# initialise it non-recursively, which leaves its nested extern/slideio
+# uninitialised. Initialised only when never checked out, for the reason above.
+if [ ! -f "$REPO_ROOT/extern/slideio-processor/CMakeLists.txt" ]; then
+    git -C "$REPO_ROOT" submodule update --init extern/slideio-processor
 fi
 
 conan install . --output-folder=build --build=missing \

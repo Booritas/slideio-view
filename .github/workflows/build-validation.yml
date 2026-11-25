@@ -17,7 +17,7 @@ name: Build Validation
 # documentation-only change.
 on:
   push:
-    branches: [main]
+    branches: [main, feat/processing-results]
     paths-ignore:
       - 'docs/**'
       - 'documents/**'
@@ -71,9 +71,19 @@ jobs:
             ctest_config: ''
 
     steps:
+      # Not recursive: extern/slideio-processor carries its own extern/slideio,
+      # which the viewer never builds (it takes the processor's data library
+      # alone). The two commands are the ones build-template.sh runs.
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Initialise submodules
+        shell: bash
+        run: |
+          set -euo pipefail
+          git submodule update --init --recursive extern/slideio
+          git submodule update --init extern/slideio-processor
 
       - uses: actions/setup-python@v5
         with:

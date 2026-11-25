@@ -71,10 +71,13 @@ add_executable(slideio-viewer-infra-tests
     infra/QSettingsCalibrationOverrideStoreTest.cpp
     infra/QSettingsAnnotationCategoryStoreTest.cpp
     infra/JsonAnnotationRepositoryTest.cpp
+    infra/ProcessorDataLinkTest.cpp
 )
 
 target_link_libraries(slideio-viewer-infra-tests
-    PRIVATE slideio-viewer-infra Catch2::Catch2WithMain Qt6::Core
+    # slideio-processor-data for ProcessorDataLinkTest, which calls it directly;
+    # infra links it PRIVATE and never exposes it.
+    PRIVATE slideio-viewer-infra Catch2::Catch2WithMain Qt6::Core slideio-processor-data
 )
 
 add_test(NAME infra-tests COMMAND slideio-viewer-infra-tests)
@@ -125,16 +128,20 @@ if(WIN32)
         # already the right one for the configuration being built -- unlike the
         # pair of per-config directories this used to select between.
         set(_slideio_bin_dir "$<IF:$<CONFIG:Debug>,${SLIDEIO_ROOT}/debug/bin,${SLIDEIO_ROOT}/release/bin>")
+        # slideio-processor-data is built into its own directory, not beside
+        # the test executables; infra links it, and ui through infra.
+        set(_processor_bin_dir "$<TARGET_FILE_DIR:slideio-processor-data>")
         set_tests_properties(ui-tests PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:${_slideio_bin_dir};PATH=path_list_prepend:${_qt_bin_dir}")
+            "PATH=path_list_prepend:${_processor_bin_dir};PATH=path_list_prepend:${_slideio_bin_dir};PATH=path_list_prepend:${_qt_bin_dir}")
         set_tests_properties(infra-tests PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:${_slideio_bin_dir};PATH=path_list_prepend:${_qt_bin_dir}")
-        # app-tests links only Qt (no SlideIO), so it needs just the Qt bin directory.
+            "PATH=path_list_prepend:${_processor_bin_dir};PATH=path_list_prepend:${_slideio_bin_dir};PATH=path_list_prepend:${_qt_bin_dir}")
+        # app-tests links no SlideIO, so it needs the Qt bin directory; the
+        # processor's is there for when the app layer reaches infra.
         set_tests_properties(app-tests PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:${_qt_bin_dir}")
+            "PATH=path_list_prepend:${_processor_bin_dir};PATH=path_list_prepend:${_qt_bin_dir}")
     else()
         message(WARNING
             "CMake < 3.22: the app-tests, ui-tests and infra-tests targets cannot have their PATH set up "
-            "automatically. Run them with the Qt and SlideIO bin directories on PATH.")
+            "automatically. Run them with the Qt, SlideIO and slideio-processor-data bin directories on PATH.")
     endif()
 endif()

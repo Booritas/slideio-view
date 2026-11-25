@@ -31,7 +31,7 @@ if(NOT EXISTS "${SLIDEIO_ROOT}/release")
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/slideio/CMakeLists.txt")
         message(FATAL_ERROR
             "The extern/slideio submodule is not initialised. Run:\n"
-            "  git submodule update --init --recursive")
+            "  git submodule update --init --recursive extern/slideio")
     endif()
     message(FATAL_ERROR
         "No SlideIO install found at '${SLIDEIO_ROOT}'.\n"
@@ -45,6 +45,19 @@ find_package(SlideIO REQUIRED)
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets OpenGLWidgets)
 find_package(nlohmann_json REQUIRED)
 find_package(spdlog REQUIRED)
+
+# slideio-processor's data library (store, objects, reports), read by infra to
+# show processing results. Built from the extern/slideio-processor submodule as
+# the data library alone: no SlideIO and no OpenCV of its own, and no test
+# seams. It finds sqlite3, rapidjson, libtiff, zlib and Threads itself; Conan
+# provides the first four (see conanfile.py).
+set(SLIDEIO_PROCESSOR_DATA_ONLY ON CACHE BOOL "" FORCE)
+set(SLIDEIO_PROCESSOR_TEST_SEAMS OFF CACHE BOOL "" FORCE)
+add_subdirectory(extern/slideio-processor EXCLUDE_FROM_ALL)
+# The library itself ships with the application, so it is part of "all"; the
+# rest of the subproject stays excluded. install(TARGETS) on a target excluded
+# from "all" is undefined behaviour.
+set_target_properties(slideio-processor-data PROPERTIES EXCLUDE_FROM_ALL FALSE)
 
 # slideio_viewer_qt_bin_dir(), used by both the macOS and Windows deployment
 # steps below to find Qt's own deployment tools.
@@ -148,6 +161,28 @@ if(WIN32)
     )
 endif()
 
+# slideio-processor-data is built into ${CMAKE_BINARY_DIR}/bin[/<Config>], not
+# beside the executable. Windows finds a DLL only beside the exe or on PATH, and
+# Linux and macOS are given the same layout the install produces: the library
+# next to the executable, or in the bundle's Frameworks.
+if(APPLE)
+    add_custom_command(TARGET slideio-viewer POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_BUNDLE_CONTENT_DIR:slideio-viewer>/Frameworks"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:slideio-processor-data>"
+            "$<TARGET_BUNDLE_CONTENT_DIR:slideio-viewer>/Frameworks"
+        COMMENT "Copying slideio-processor-data into the bundle..."
+    )
+else()
+    add_custom_command(TARGET slideio-viewer POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:slideio-processor-data>"
+            "$<TARGET_FILE_DIR:slideio-viewer>"
+        COMMENT "Copying slideio-processor-data beside slideio-viewer..."
+    )
+endif()
+
 # ── Install rules ──────────────────────────────────────────────────────────────
 
 include(GNUInstallDirs)
@@ -200,6 +235,21 @@ install(TARGETS slideio-viewer
     RUNTIME DESTINATION ${_install_bin}
     BUNDLE DESTINATION ${_install_app}
 )
+
+# slideio-processor-data: the DLL beside the executable, the .so in lib/ (the
+# INSTALL_RPATH above), the dylib in the bundle's Frameworks, ahead of
+# DeployMacOSBundle.cmake below. The import library is development-only, so it
+# goes to a component that a plain install skips.
+if(APPLE)
+    install(TARGETS slideio-processor-data
+        LIBRARY DESTINATION "${_install_app}/slideio-viewer.app/Contents/Frameworks")
+else()
+    install(TARGETS slideio-processor-data
+        RUNTIME DESTINATION ${_install_bin}
+        LIBRARY DESTINATION ${_install_lib}
+        ARCHIVE DESTINATION ${_install_lib}
+            COMPONENT slideio-processor-development EXCLUDE_FROM_ALL)
+endif()
 
 # SlideIO DLLs
 if(WIN32)

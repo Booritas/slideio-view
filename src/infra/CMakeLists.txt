@@ -16,6 +16,8 @@ target_include_directories(slideio-viewer-infra PUBLIC
 target_link_libraries(slideio-viewer-infra
     PUBLIC slideio-viewer-core
     PRIVATE SlideIO::slideio SlideIO::core SlideIO::transformer spdlog::spdlog Qt6::Core
+            # Private: no processor type reaches an infra header.
+            slideio-processor-data
 )
 
 target_compile_features(slideio-viewer-infra PUBLIC cxx_std_17)
