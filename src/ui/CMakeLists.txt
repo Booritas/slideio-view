@@ -19,6 +19,8 @@ add_library(slideio-viewer-ui STATIC
     src/MeasurementLabel.cpp
     src/LayersPanelPolicy.cpp
     src/ResultsPaintPolicy.cpp
+    src/ResultsPanelText.cpp
+    src/ResultsPanel.cpp
     src/LayersPanel.cpp
     src/AnnotationImportSummary.cpp
     src/AnnotationInteraction.cpp

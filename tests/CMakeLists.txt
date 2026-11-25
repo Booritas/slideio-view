@@ -102,6 +102,7 @@ add_executable(slideio-viewer-ui-tests
     ui/MeasurementLabelTest.cpp
     ui/LayersPanelPolicyTest.cpp
     ui/ResultsPaintPolicyTest.cpp
+    ui/ResultsPanelTextTest.cpp
     ui/AnnotationImportSummaryTest.cpp
     ui/AnnotationInteractionTest.cpp
     ui/AnnotationListPolicyTest.cpp

@@ -2341,6 +2341,7 @@ ViewportWidget::ViewportWidget(app::AnnotationModel& model, QWidget* parent)
                 if (!id.empty() && m_impl->results != nullptr && m_impl->results->selectedId()) {
                     m_impl->results->clearSelection();
                     update();
+                    emit resultsSelectionChanged();
                 }
             });
     // The results overlay follows the view: every pan, zoom and resize goes
@@ -5730,6 +5731,7 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
                 double slideY = 0.0;
                 m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
                 (void)m_impl->results->selectAt(core::PointF{slideX, slideY});
+                emit resultsSelectionChanged();
             }
         } else {
             m_impl->annotations->setSelected(hit);
@@ -6163,6 +6165,7 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
         if (m_impl->results != nullptr && m_impl->results->selectedId()) {
             m_impl->results->clearSelection();
             update();
+            emit resultsSelectionChanged();
             cancelled = true;
         }
 

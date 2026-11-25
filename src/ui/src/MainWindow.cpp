@@ -6,16 +6,20 @@
 #include "slideio/viewer/app/AsapXmlImport.h"
 #include "slideio/viewer/app/AnnotationPersistenceService.h"
 #include "slideio/viewer/app/AnnotationRetagCommand.h"
+#include "slideio/viewer/app/ResultsOverlayService.h"
 #include "slideio/viewer/app/UndoRedoStack.h"
 #include "slideio/viewer/app/WorkspaceSwitch.h"
 #include "slideio/viewer/core/AnnotationCategories.h"
 #include "slideio/viewer/core/AnnotationGeoJson.h"
 #include "slideio/viewer/core/ColorManagement.h"
+#include "slideio/viewer/core/ResultsAttachment.h"
 #include "slideio/viewer/core/SlideId.h"
 #include "slideio/viewer/infra/JsonAnnotationRepository.h"
+#include "slideio/viewer/infra/ProcessorWorkspaceSource.h"
 #include "slideio/viewer/infra/QSettingsAnnotationCategoryStore.h"
 #include "slideio/viewer/infra/QSettingsCalibrationOverrideStore.h"
 #include "slideio/viewer/infra/QSettingsColorProfileOverrideStore.h"
+#include "slideio/viewer/infra/QSettingsResultsSettingsStore.h"
 #include "slideio/viewer/ui/AboutDialog.h"
 #include "slideio/viewer/ui/LicenseDialog.h"
 #include "slideio/viewer/ui/AnnotationCountExport.h"
@@ -35,6 +39,7 @@
 #include "slideio/viewer/ui/LoadingOverlay.h"
 #include "slideio/viewer/ui/PathDisplay.h"
 #include "slideio/viewer/ui/RecentFiles.h"
+#include "slideio/viewer/ui/ResultsPanel.h"
 #include "slideio/viewer/ui/SceneThumbnailPanel.h"
 #include "slideio/viewer/ui/ShortcutPolicy.h"
 #include "slideio/viewer/ui/SlidePropertiesPanel.h"
@@ -72,6 +77,7 @@
 #include <QInputDialog>
 #include <QKeyEvent>
 #include <QKeySequence>
+#include <QMetaObject>
 #include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -94,6 +100,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <future>
 #include <initializer_list>
 #include <limits>
@@ -235,6 +242,7 @@ struct MainWindow::Impl
     AnnotationListPanel* annotationListPanel = nullptr;
     AnnotationPropertiesPanel* annotationPropertiesPanel = nullptr;
     LayersPanel* layersPanel = nullptr;
+    ResultsPanel* resultsPanel = nullptr;
     LoadingOverlay* loadingOverlay = nullptr;
 
     // File path of the most recently opened slide. Used to detect intra-slide
@@ -266,6 +274,7 @@ struct MainWindow::Impl
     QAction* annotationListToggleAction = nullptr;
     QAction* annotationPropertiesToggleAction = nullptr;
     QAction* layersToggleAction = nullptr;
+    QAction* resultsToggleAction = nullptr;
     QAction* colorManagementAction = nullptr;
     QAction* setDefaultProfileAction = nullptr;
     QAction* clearDefaultProfileAction = nullptr;
@@ -286,6 +295,8 @@ struct MainWindow::Impl
     QAction* preferencesAction = nullptr;
     QAction* openAnnotationsFolderAction = nullptr;
     QAction* importAnnotationsAction = nullptr;
+    QAction* openResultsAction = nullptr;
+    QAction* closeResultsAction = nullptr;
     QAction* exportCountsAction = nullptr;
     QAction* exportMeasurementsAction = nullptr;
     QAction* exportAnnotationsAction = nullptr;
@@ -406,6 +417,39 @@ struct MainWindow::Impl
     /// confirmation adds it as one undoable step. See the GeoJSON and ASAP
     /// import design specs.
     void importAnnotations();
+
+    // ---- Processing results (overlay design 5.1, 5.5, 5.6) ----
+    //
+    // The overlay reads a slideio-processor workspace ReadOnly and draws it
+    // under the annotations. Nothing of it ever enters AnnotationModel, so it
+    // is in no annotation list, count, export or annotation file.
+    std::unique_ptr<infra::QSettingsResultsSettingsStore> resultsSettings;
+    /// Built once in the constructor and reset in the destructor, after the
+    /// viewport has been told to let go of it. Its poster queues onto the
+    /// window; tasks of a destroyed or detached service do nothing.
+    std::unique_ptr<app::ResultsOverlayService> results;
+    /// The attached workspace folder; empty when detached.
+    std::string resultsWorkspacePath;
+    /// The slide path the user said "Attach anyway" for, or empty.
+    std::string resultsAttachAnywayPath;
+
+    /// File > Open Processing Results...: folder, slide check, attach.
+    void openProcessingResults();
+    /// Opens `dir`, attaches it to the open scene and restores `savedViews`
+    /// by layer name. Throws core::ResultsError (left detached).
+    void attachResults(const std::string& dir, const std::vector<core::ResultsLayerView>& savedViews);
+    /// Detaches and forgets nothing: closing a slide keeps its attachment.
+    void detachResults();
+    /// File > Close Processing Results and the tab's Close: detaches and
+    /// forgets the scene's attachment, so the next open does not reattach.
+    void closeProcessingResults();
+    void reloadProcessingResults();
+    /// On every slide open: reattach the remembered workspace silently when
+    /// the slide check passes outright, else say why in the status bar.
+    void reattachResultsForOpenScene();
+    /// Writes the attachment and every layer's view for the open scene.
+    void saveResultsSettings();
+    void updateResultsActions();
 
     void createActions()
     {
@@ -617,6 +661,17 @@ struct MainWindow::Impl
         // tools, and nowhere else. The exports below are the opposite.
         importAnnotationsAction->setEnabled(false);
 
+        // Enabled by a scene being open (not an associated image), not by
+        // annotations being editable: results are read-only and never become
+        // annotations. Close only while attached. updateResultsActions().
+        openResultsAction = new QAction("Open &Processing Results...", owner);
+        openResultsAction->setStatusTip(
+            "Show a slideio-processor workspace's results over this scene, read-only");
+        openResultsAction->setEnabled(false);
+        closeResultsAction = new QAction("Close Processing Res&ults", owner);
+        closeResultsAction->setStatusTip("Stop showing the processing results on this scene");
+        closeResultsAction->setEnabled(false);
+
         exportCountsAction = new QAction("&Export Counts...", owner);
         exportCountsAction->setStatusTip(
             "Write this scene's category counts to a CSV file");
@@ -681,6 +736,8 @@ struct MainWindow::Impl
         fileMenu->addAction(closeAction);
         fileMenu->addSeparator();
         fileMenu->addAction(importAnnotationsAction);
+        fileMenu->addAction(openResultsAction);
+        fileMenu->addAction(closeResultsAction);
         fileMenu->addAction(exportCountsAction);
         fileMenu->addAction(exportMeasurementsAction);
         fileMenu->addAction(exportAnnotationsAction);
@@ -753,6 +810,7 @@ struct MainWindow::Impl
         viewMenu->addAction(annotationListToggleAction);
         viewMenu->addAction(annotationPropertiesToggleAction);
         viewMenu->addAction(layersToggleAction);
+        viewMenu->addAction(resultsToggleAction);
         viewMenu->addSeparator();
         viewMenu->addAction(colorManagementAction);
         viewMenu->addSeparator();
@@ -975,6 +1033,8 @@ struct MainWindow::Impl
         QObject::connect(importAnnotationsAction, &QAction::triggered, owner, [this]() {
             importAnnotations();
         });
+        QObject::connect(openResultsAction, &QAction::triggered, owner, [this]() { openProcessingResults(); });
+        QObject::connect(closeResultsAction, &QAction::triggered, owner, [this]() { closeProcessingResults(); });
 
         QObject::connect(exportCountsAction, &QAction::triggered, owner, [this]() {
             exportCounts();
@@ -1315,6 +1375,9 @@ struct MainWindow::Impl
                 // level, so tell the minimap to explain the empty panel
                 // rather than leaving a blank grey rectangle.
                 minimapWidget->setOverviewAvailable(info.overviewAvailable);
+
+                // Last: everything the slide check reads is set by now.
+                reattachResultsForOpenScene();
             });
 
         QObject::connect(viewportWidget, &ViewportWidget::thumbnailReady, owner,
@@ -1363,6 +1426,10 @@ struct MainWindow::Impl
             // colour-profile reopen comes back through slideOpened, which sets
             // the counts and the current values again.
             ztNavigationWidget->setSliceFrameCounts(1, 1);
+            // Closing the slide detaches its processing results; the attachment
+            // stays remembered, so reopening the slide reattaches. A scene
+            // switch and a colour-profile reopen come back through slideOpened.
+            detachResults();
 
             colorManagementAction->setEnabled(false);
             setSlideProfileAction->setEnabled(false);
@@ -2668,6 +2735,237 @@ void MainWindow::Impl::reportWorkspaceSwitch(const app::WorkspaceSwitchResult& r
     }
 }
 
+// ---------------------------------------------------------------- processing results
+
+void MainWindow::Impl::updateResultsActions()
+{
+    const bool sceneOpen = viewportWidget->isSlideOpen() && !viewportWidget->isAuxImageShown();
+    openResultsAction->setEnabled(sceneOpen);
+    closeResultsAction->setEnabled(results != nullptr && results->attached());
+}
+
+void MainWindow::Impl::attachResults(const std::string& dir, const std::vector<core::ResultsLayerView>& savedViews)
+{
+    const core::SlideInfo& info = viewportWidget->slideInfo();
+    const core::Rect<double> sceneRect{0.0, 0.0, static_cast<double>(info.width), static_cast<double>(info.height)};
+
+    viewportWidget->setResultsService(nullptr);
+    resultsWorkspacePath.clear();
+    results->setClassColourOverrides(resultsSettings->classColours());
+    try {
+        results->attach([dir]() { return infra::ProcessorWorkspaceSource::open(dir); }, sceneRect);
+    } catch (const core::ResultsError&) {
+        resultsPanel->scheduleRebuild();
+        updateResultsActions();
+        throw;
+    }
+    resultsWorkspacePath = dir;
+
+    const auto& layers = results->layers();
+    for (std::size_t i = 0; i < layers.size(); ++i) {
+        const auto saved = std::find_if(savedViews.begin(), savedViews.end(), [&](const core::ResultsLayerView& v) {
+            return v.layerName == layers[i].name;
+        });
+        if (saved != savedViews.end()) {
+            results->setLayerView(static_cast<int>(i), *saved);
+        }
+    }
+    // Set again after attach: it is what asks the service for the current view.
+    viewportWidget->setResultsService(results.get());
+    resultsPanel->setAttachment(QString::fromStdString(dir), QString::fromStdString(viewportWidget->currentFilePath()),
+                                viewportWidget->currentSceneIndex());
+    resultsPanel->scheduleRebuild();
+    updateResultsActions();
+}
+
+void MainWindow::Impl::detachResults()
+{
+    if (viewportWidget != nullptr) {
+        viewportWidget->setResultsService(nullptr);
+    }
+    if (results != nullptr) {
+        results->detach();
+    }
+    resultsWorkspacePath.clear();
+    resultsAttachAnywayPath.clear();
+    if (resultsPanel != nullptr) {
+        resultsPanel->scheduleRebuild();
+    }
+    if (openResultsAction != nullptr && viewportWidget != nullptr) {
+        updateResultsActions();
+    }
+}
+
+void MainWindow::Impl::closeProcessingResults()
+{
+    const std::string slideId = viewportWidget->currentSlideId();
+    if (!slideId.empty() && !viewportWidget->isAuxImageShown()) {
+        resultsSettings->remove(slideId, viewportWidget->currentSceneIndex());
+    }
+    detachResults();
+}
+
+void MainWindow::Impl::saveResultsSettings()
+{
+    const std::string slideId = viewportWidget->currentSlideId();
+    if (slideId.empty() || viewportWidget->isAuxImageShown() || !results->attached()) {
+        return;
+    }
+    core::ResultsAttachmentSettings entry;
+    entry.slideId = slideId;
+    entry.scene = viewportWidget->currentSceneIndex();
+    entry.workspacePath = resultsWorkspacePath;
+    entry.attachAnywaySlidePath = resultsAttachAnywayPath;
+    for (std::size_t i = 0; i < results->layers().size(); ++i) {
+        entry.layers.push_back(results->layerView(static_cast<int>(i)));
+    }
+    if (!resultsSettings->set(entry)) {
+        spdlog::warn("Could not save the processing results settings for {} scene {}", slideId, entry.scene);
+    }
+}
+
+void MainWindow::Impl::openProcessingResults()
+{
+    if (!viewportWidget->isSlideOpen() || viewportWidget->isAuxImageShown()) {
+        return;
+    }
+    const QString title = tr("Open Processing Results");
+    const QString chosen = QFileDialog::getExistingDirectory(
+        owner, title, resultsWorkspacePath.empty() ? QString() : QString::fromStdString(resultsWorkspacePath));
+    if (chosen.isEmpty()) {
+        return;
+    }
+    const std::string dir = QDir::toNativeSeparators(chosen).toStdString();
+    const std::string slidePath = viewportWidget->currentFilePath();
+    const int scene = viewportWidget->currentSceneIndex();
+    const std::string slideId = viewportWidget->currentSlideId();
+
+    std::optional<core::ResultsAttachmentSettings> remembered;
+    if (!slideId.empty()) {
+        remembered = resultsSettings->find(slideId, scene);
+    }
+    // A remembered "Attach anyway" and remembered views count only for the
+    // same workspace folder.
+    const bool sameWorkspace = remembered && core::sameSlidePath(remembered->workspacePath, dir);
+    std::string attachAnyway = sameWorkspace ? remembered->attachAnywaySlidePath : std::string();
+
+    try {
+        core::ResultsProvenance provenance;
+        {
+            // Opened once, read-only, to read where the run's slide was.
+            const auto source = infra::ProcessorWorkspaceSource::open(dir);
+            provenance = source->provenance();
+        }
+        switch (core::decideAttachment(provenance, slidePath, scene, attachAnyway)) {
+        case core::AttachmentDecision::RefuseScene:
+            QMessageBox::warning(owner, title,
+                                 tr("This workspace holds results for scene %1 of its slide, but scene %2 is "
+                                    "open.\n\nWorkspace: %3")
+                                     .arg(provenance.scene)
+                                     .arg(scene)
+                                     .arg(QString::fromStdString(dir)));
+            return;
+        case core::AttachmentDecision::WarnSlideMoved: {
+            QMessageBox box(QMessageBox::Warning, title,
+                            tr("This workspace was made from a slide at a different path. The slide may have "
+                               "moved since the run.\n\nWorkspace's slide: %1\nOpen slide: %2")
+                                .arg(QString::fromStdString(provenance.slidePath), QString::fromStdString(slidePath)),
+                            QMessageBox::NoButton, owner);
+            QPushButton* attachButton = box.addButton(tr("Attach anyway"), QMessageBox::AcceptRole);
+            box.addButton(QMessageBox::Cancel);
+            box.setDefaultButton(QMessageBox::Cancel);
+            box.exec();
+            if (box.clickedButton() != attachButton) {
+                return;
+            }
+            attachAnyway = slidePath;
+            break;
+        }
+        case core::AttachmentDecision::Attach:
+            break;
+        }
+        // A slide open can complete inside the box's event loop.
+        if (!viewportWidget->isSlideOpen() || viewportWidget->currentFilePath() != slidePath
+            || viewportWidget->currentSceneIndex() != scene) {
+            return;
+        }
+        attachResults(dir, sameWorkspace ? remembered->layers : std::vector<core::ResultsLayerView>{});
+    } catch (const core::ResultsError& e) {
+        QMessageBox::warning(owner, title, QString::fromUtf8(e.what()));
+        return;
+    }
+    resultsAttachAnywayPath = attachAnyway;
+    saveResultsSettings();
+    resultsPanel->show();
+    resultsPanel->raise();
+}
+
+void MainWindow::Impl::reloadProcessingResults()
+{
+    if (!results->attached()) {
+        return;
+    }
+    try {
+        results->reload();
+    } catch (const core::ResultsError& e) {
+        // reload() has detached; keep the attachment remembered.
+        detachResults();
+        QMessageBox::warning(owner, tr("Processing Results"),
+                             tr("The processing results could not be reloaded and were closed:\n\n%1")
+                                 .arg(QString::fromUtf8(e.what())));
+        return;
+    }
+    // Set again after reload: it is what asks the service for the current view.
+    viewportWidget->setResultsService(results.get());
+    resultsPanel->scheduleRebuild();
+    saveResultsSettings();
+}
+
+void MainWindow::Impl::reattachResultsForOpenScene()
+{
+    detachResults();
+    const std::string slideId = viewportWidget->currentSlideId();
+    if (slideId.empty() || viewportWidget->isAuxImageShown()) {
+        return;
+    }
+    const int scene = viewportWidget->currentSceneIndex();
+    const auto remembered = resultsSettings->find(slideId, scene);
+    if (!remembered || remembered->workspacePath.empty()) {
+        return;
+    }
+    const std::string slidePath = viewportWidget->currentFilePath();
+    const QString workspace = QString::fromStdString(remembered->workspacePath);
+    try {
+        core::ResultsProvenance provenance;
+        {
+            const auto source = infra::ProcessorWorkspaceSource::open(remembered->workspacePath);
+            provenance = source->provenance();
+        }
+        switch (core::decideAttachment(provenance, slidePath, scene, remembered->attachAnywaySlidePath)) {
+        case core::AttachmentDecision::Attach:
+            break;
+        case core::AttachmentDecision::WarnSlideMoved:
+            statusBarManager->showTransientMessage(
+                tr("Processing results not reattached: the run used the slide at %1. File > Open Processing "
+                   "Results\xE2\x80\xA6 can attach %2 anyway.")
+                    .arg(QString::fromStdString(provenance.slidePath), workspace));
+            return;
+        case core::AttachmentDecision::RefuseScene:
+            statusBarManager->showTransientMessage(
+                tr("Processing results not reattached: %1 holds results for scene %2.")
+                    .arg(workspace)
+                    .arg(provenance.scene));
+            return;
+        }
+        attachResults(remembered->workspacePath, remembered->layers);
+    } catch (const core::ResultsError& e) {
+        statusBarManager->showTransientMessage(
+            tr("Processing results not reattached: %1").arg(QString::fromUtf8(e.what())));
+        return;
+    }
+    resultsAttachAnywayPath = remembered->attachAnywaySlidePath;
+}
+
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
     , m_impl(std::make_unique<Impl>())
@@ -2763,6 +3061,17 @@ MainWindow::MainWindow(QWidget* parent)
     addDockWidget(Qt::RightDockWidgetArea, m_impl->layersPanel);
     m_impl->layersPanel->hide();
 
+    // Results dock: a tab beside Layers (hidden by default), not inside it --
+    // the Layers tab's active/lock/re-layer rules do not apply to results.
+    m_impl->resultsPanel = new ResultsPanel(this);
+    addDockWidget(Qt::RightDockWidgetArea, m_impl->resultsPanel);
+    tabifyDockWidget(m_impl->layersPanel, m_impl->resultsPanel);
+    m_impl->resultsPanel->hide();
+    m_impl->resultsSettings = std::make_unique<infra::QSettingsResultsSettingsStore>();
+    // The service calls the poster under a mutex: it must queue, never block.
+    m_impl->results = std::make_unique<app::ResultsOverlayService>(
+        [this](auto task) { QMetaObject::invokeMethod(this, std::move(task), Qt::QueuedConnection); });
+
     // Create actions and menus
     m_impl->createActions();
     m_impl->channelMixerToggleAction = m_impl->channelMixerPanel->toggleViewAction();
@@ -2806,6 +3115,9 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->layersToggleAction->setText("La&yers");
     m_impl->layersToggleAction->setShortcut(QKeySequence("Ctrl+Shift+Y"));
     m_impl->layersToggleAction->setStatusTip("Toggle the annotation layers panel");
+    m_impl->resultsToggleAction = m_impl->resultsPanel->toggleViewAction();
+    m_impl->resultsToggleAction->setText("Processing &Results");
+    m_impl->resultsToggleAction->setStatusTip("Toggle the processing results panel");
     // A toggleViewAction only shows its dock, and a dock shown inside a tab
     // group only gains a tab -- the pane the user asked for stays behind the
     // one in front. raise() is what brings a tabbed dock forward. Connected to
@@ -2814,7 +3126,7 @@ MainWindow::MainWindow(QWidget* parent)
     for (QDockWidget* dock : std::initializer_list<QDockWidget*>{
              m_impl->channelMixerPanel, m_impl->sceneThumbnailPanel, m_impl->associatedImagesPanel,
              m_impl->propertiesPanel, m_impl->metadataPanel, m_impl->annotationListPanel,
-             m_impl->annotationPropertiesPanel, m_impl->layersPanel}) {
+             m_impl->annotationPropertiesPanel, m_impl->layersPanel, m_impl->resultsPanel}) {
         connect(dock->toggleViewAction(), &QAction::triggered, dock, [dock](bool checked) {
             if (checked) {
                 dock->raise();
@@ -2834,6 +3146,42 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->annotationListPanel->setAnnotationModel(m_impl->annotations.get());
     m_impl->annotationPropertiesPanel->setAnnotationModel(m_impl->annotations.get());
     m_impl->layersPanel->setAnnotationModel(m_impl->annotations.get());
+
+    // Processing results. onChanged fires up to ~100 times per layer during an
+    // overview scan, so the panel coalesces; the viewport repaints each time.
+    m_impl->resultsPanel->setService(m_impl->results.get());
+    m_impl->results->setOnChanged([this]() {
+        m_impl->viewportWidget->update();
+        m_impl->resultsPanel->scheduleRefresh();
+    });
+    m_impl->results->setOnError([this](const std::string& message) {
+        // The service has already detached. The box is shown from a fresh
+        // event rather than inside the service's own callback.
+        m_impl->viewportWidget->setResultsService(nullptr);
+        m_impl->resultsWorkspacePath.clear();
+        m_impl->resultsPanel->scheduleRebuild();
+        m_impl->updateResultsActions();
+        QTimer::singleShot(0, this, [this, text = QString::fromStdString(message)]() {
+            QMessageBox::warning(this, tr("Processing Results"),
+                                 tr("The processing results were closed after an error:\n\n%1").arg(text));
+        });
+    });
+    connect(m_impl->viewportWidget, &ViewportWidget::resultsSelectionChanged, this,
+            [this]() { m_impl->resultsPanel->scheduleRefresh(); });
+    connect(m_impl->resultsPanel, &ResultsPanel::reloadRequested, this,
+            [this]() { m_impl->reloadProcessingResults(); });
+    connect(m_impl->resultsPanel, &ResultsPanel::closeRequested, this,
+            [this]() { m_impl->closeProcessingResults(); });
+    connect(m_impl->resultsPanel, &ResultsPanel::layerViewChanged, this, [this]() {
+        m_impl->saveResultsSettings();
+        m_impl->viewportWidget->update();
+    });
+    connect(m_impl->resultsPanel, &ResultsPanel::classColourChosen, this,
+            [this](const std::string& className, core::Color colour) {
+                m_impl->resultsSettings->setClassColour(className, colour);
+                m_impl->results->setClassColourOverrides(m_impl->resultsSettings->classColours());
+                m_impl->viewportWidget->update();
+            });
 
     // The status bar names the active layer while a slide is open.
     const auto showActiveLayer = [this]() { m_impl->refreshActiveLayerLabel(); };
@@ -3120,6 +3468,14 @@ MainWindow::~MainWindow()
     QSettings settings;
     settings.setValue("mainWindow/geometry", saveGeometry());
     settings.setValue("mainWindow/state", saveState());
+
+    // The viewport holds a raw pointer to the results service: let go of it
+    // first, then destroy the service, whose queued tasks are no-ops after.
+    m_impl->viewportWidget->setResultsService(nullptr);
+    if (m_impl->resultsPanel != nullptr) {
+        m_impl->resultsPanel->setService(nullptr);
+    }
+    m_impl->results.reset();
 
     delete m_impl->viewportWidget;
     m_impl->viewportWidget = nullptr;

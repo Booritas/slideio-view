@@ -256,6 +256,10 @@ signals:
     /// A move or delete was refused because the annotations are open read-only.
     /// Transient feedback only; `reason` is ready to show.
     void annotationEditBlocked(const QString& reason);
+    /// The selected processing result was set or cleared from the viewport --
+    /// a click, Escape, or an annotation taking the selection. The service's
+    /// onChanged covers what arrives from its workers, not these.
+    void resultsSelectionChanged();
 
 protected:
     void initializeGL() override;
