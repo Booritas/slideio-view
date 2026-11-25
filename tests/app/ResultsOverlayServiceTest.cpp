@@ -539,6 +539,8 @@ TEST_CASE("ReloadRestartsScan", "[ResultsOverlayService]")
     service.attach(factoryFor(store), kScene);
     service.requestView({0, 0, 100, 100});
     REQUIRE(store->scanGate.waitEntered(1));
+    // reload() discards a query job not yet taken; let the first one finish.
+    REQUIRE(store->waitFor([&] { return store->queriesReturned >= 1; }));
 
     service.reload();
     CHECK(service.attached());

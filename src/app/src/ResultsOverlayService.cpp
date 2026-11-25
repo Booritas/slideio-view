@@ -60,11 +60,13 @@ ResultsOverlayService::ResultsOverlayService(Poster post)
 
 ResultsOverlayService::~ResultsOverlayService()
 {
-    m_life.reset();   // tasks already queued on the UI thread become no-ops
     detach();
     {
+        // Workers copy m_life only under this mutex and only while current(),
+        // which is false from here on, so resetting it here races with nothing.
         std::lock_guard<std::mutex> lock(m_postMutex);
         m_stopping = true;
+        m_life.reset();   // tasks already queued on the UI thread become no-ops
     }
     // Taking each worker's mutex before notifying means a worker between its
     // predicate check and its wait cannot miss the stop.
@@ -472,17 +474,18 @@ bool ResultsOverlayService::current(uint64_t generation) const
 
 void ResultsOverlayService::post(uint64_t generation, std::function<void()> apply)
 {
+    // Under the mutex that generation bumps and the destructor's m_life reset
+    // take: once detach() returns, no task of an older generation is posted,
+    // and m_life is never copied while it is being reset.
+    std::lock_guard<std::mutex> lock(m_postMutex);
+    if (!current(generation))
+        return;
     std::weak_ptr<int> life = m_life;
-    auto task = [this, life, generation, apply = std::move(apply)] {
+    m_post([this, life, generation, apply = std::move(apply)] {
         if (life.expired() || m_generation != generation)
             return;
         apply();
-    };
-    // Under the mutex that generation bumps take: once detach() returns, no
-    // task of an older generation is posted.
-    std::lock_guard<std::mutex> lock(m_postMutex);
-    if (current(generation))
-        m_post(std::move(task));
+    });
 }
 
 void ResultsOverlayService::postError(uint64_t generation, const std::string& message)
