@@ -1616,19 +1616,22 @@ struct ViewportWidget::Impl
     /// Non-owning processing-results overlay; null when none is set.
     app::ResultsOverlayService* results = nullptr;
 
-    /// One layer's overview cells as last fetched. OverviewGrid::cells walks
-    /// every non-empty square and sorts the result, so it runs only when the
-    /// grid, the legend's visibility, or a view outside `fetched` asks for it;
-    /// `fetched` is the view grown by half its size each side, so small pans
-    /// reuse the cells.
-    struct ResultCells
+    /// One layer's overview rasterised: one pixel per grid square, drawn with
+    /// a single scaled drawImage per paint. OverviewGrid::cells walks every
+    /// non-empty square and sorts the result, so it runs -- over the whole
+    /// scene -- only when the grid or what the legend makes of it changes:
+    /// visibility, class colours, layer colour, colour-by-class. Pans and
+    /// zooms reuse the image (and the paint engine's texture for it).
+    struct ResultOverview
     {
         std::shared_ptr<const core::OverviewGrid> grid;
-        core::Rect<double> fetched;
         ClassVisibility visibility;
-        std::vector<core::OverviewGrid::Cell> cells;
+        std::vector<core::Color> classColours;
+        core::Color layerColour;
+        bool colourByClass = true;
+        QImage image;
     };
-    std::vector<ResultCells> resultCells;   ///< indexed by results layer
+    std::vector<ResultOverview> resultOverviews;   ///< indexed by results layer
 
     /// A shape being built across several press/release pairs.
     ///
@@ -3262,7 +3265,7 @@ void ViewportWidget::setUndoStack(app::UndoRedoStack* stack)
 void ViewportWidget::setResultsService(app::ResultsOverlayService* service)
 {
     m_impl->results = service;
-    m_impl->resultCells.clear();
+    m_impl->resultOverviews.clear();
     requestResultsView();
     update();
 }
@@ -3842,9 +3845,15 @@ void ViewportWidget::paintResults(QPainter& painter)
     };
 
     const std::vector<core::ResultLayerInfo>& layers = service->layers();
-    if (m_impl->resultCells.size() != layers.size()) {
-        m_impl->resultCells.assign(layers.size(), Impl::ResultCells{});
+    if (m_impl->resultOverviews.size() != layers.size()) {
+        m_impl->resultOverviews.assign(layers.size(), Impl::ResultOverview{});
     }
+    const auto sameColour = [](core::Color a, core::Color b) {
+        return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+    };
+    const auto sameColours = [&sameColour](const std::vector<core::Color>& a, const std::vector<core::Color>& b) {
+        return std::equal(a.begin(), a.end(), b.begin(), b.end(), sameColour);
+    };
 
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
@@ -3886,25 +3895,52 @@ void ViewportWidget::paintResults(QPainter& painter)
                 }
             }
         } else if (state.mode == app::ResultsOverlayService::LayerMode::Overview && state.grid) {
-            Impl::ResultCells& cache = m_impl->resultCells[index];
+            const core::OverviewGrid& grid = *state.grid;
+            Impl::ResultOverview& cache = m_impl->resultOverviews[index];
             ClassVisibility visibility = classVisibility(layers[index], view);
-            if (cache.grid != state.grid || cache.visibility != visibility || !rectContains(cache.fetched, visible)) {
-                cache.grid = state.grid;
-                cache.fetched = grownView(visible);
-                cache.cells = state.grid->cells(cache.fetched, visibility.classVisible, visibility.unclassifiedVisible);
-                cache.visibility = std::move(visibility);
-            }
-            painter.setPen(Qt::NoPen);
-            for (const core::OverviewGrid::Cell& cell : cache.cells) {
-                const core::Rect<double> square = overviewCellRect(*state.grid, cell);
-                if (!intersects(square)) {
-                    continue;
+            if (cache.image.isNull() || cache.grid != state.grid || cache.visibility != visibility
+                || !sameColours(cache.classColours, classColours) || !sameColour(cache.layerColour, layerColour)
+                || cache.colourByClass != view.colourByClass) {
+                const core::Rect<double> scene{grid.sceneRect().x, grid.sceneRect().y,
+                                               grid.columns() * grid.squareSize(), grid.rows() * grid.squareSize()};
+                const std::vector<core::OverviewGrid::Cell> cells =
+                    grid.cells(scene, visibility.classVisible, visibility.unclassifiedVisible);
+                const std::vector<uint32_t> pixels =
+                    overviewPixels(grid, cells, view.colourByClass, classColours, layerColour);
+                QImage image(grid.columns(), grid.rows(), QImage::Format_ARGB32_Premultiplied);
+                const auto columns = static_cast<std::size_t>(grid.columns());
+                if (pixels.size() == columns * static_cast<std::size_t>(grid.rows())) {
+                    for (int row = 0; row < grid.rows(); ++row) {
+                        std::memcpy(image.scanLine(row), pixels.data() + static_cast<std::size_t>(row) * columns,
+                                    columns * sizeof(uint32_t));
+                    }
+                } else {
+                    image.fill(Qt::transparent);
                 }
-                QColor colour = toQColor(overviewColour(cell.dominant, classColours, layerColour));
-                colour.setAlphaF(static_cast<float>(colour.alphaF() * std::clamp(cell.opacity, 0.0, 1.0)));
-                const QPointF topLeft = toScreen(core::PointF{square.x, square.y});
-                const QPointF bottomRight = toScreen(core::PointF{square.x + square.width, square.y + square.height});
-                painter.fillRect(QRectF(topLeft, bottomRight), colour);
+                cache.grid = state.grid;
+                cache.visibility = std::move(visibility);
+                cache.classColours = classColours;
+                cache.layerColour = layerColour;
+                cache.colourByClass = view.colourByClass;
+                cache.image = std::move(image);
+            }
+            // One scaled image per layer, clipped to the squares in view so the
+            // target stays near the screen at any zoom. Nearest-neighbour and
+            // no antialiasing: each square is a crisp block, and neighbours
+            // never blend a shared edge twice.
+            const CellSpan span = overviewSpan(grid, visible);
+            if (!span.empty()) {
+                const double size = grid.squareSize();
+                const double x0 = grid.sceneRect().x + span.column * size;
+                const double y0 = grid.sceneRect().y + span.row * size;
+                const QPointF topLeft = toScreen(core::PointF{x0, y0});
+                const QPointF bottomRight =
+                    toScreen(core::PointF{x0 + span.columns * size, y0 + span.rows * size});
+                painter.setRenderHint(QPainter::Antialiasing, false);
+                painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
+                painter.drawImage(QRectF(topLeft, bottomRight), cache.image,
+                                  QRectF(span.column, span.row, span.columns, span.rows));
+                painter.setRenderHint(QPainter::Antialiasing, true);
             }
         }
         // Hidden and BuildingOverview draw nothing.

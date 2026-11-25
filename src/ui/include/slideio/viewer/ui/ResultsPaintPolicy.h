@@ -5,6 +5,7 @@
 #include "slideio/viewer/core/ResultsSource.h"
 #include "slideio/viewer/core/Types.h"
 
+#include <cstdint>
 #include <vector>
 
 namespace slideio::viewer::ui
@@ -46,14 +47,34 @@ struct ClassVisibility
 [[nodiscard]] ClassVisibility classVisibility(const core::ResultLayerInfo& layer,
                                               const core::ResultsLayerView& view);
 
-/// `view` grown by half its width and height on each side: the rectangle the
-/// overview cells are fetched for, so small pans reuse them.
-[[nodiscard]] core::Rect<double> grownView(const core::Rect<double>& view);
-/// True when `inner` lies wholly inside `outer`.
-[[nodiscard]] bool rectContains(const core::Rect<double>& outer, const core::Rect<double>& inner);
-
 /// The level-0 rectangle an overview cell covers.
 [[nodiscard]] core::Rect<double> overviewCellRect(const core::OverviewGrid& grid,
                                                   const core::OverviewGrid::Cell& cell);
+
+/// A layer's overview as an image, one pixel per grid square: columns() wide,
+/// rows() high, row-major, each pixel a premultiplied 0xAARRGGBB value (what
+/// QImage::Format_ARGB32_Premultiplied holds). A cell's pixel is
+/// overviewColour(...) with its alpha scaled by the cell's opacity; with
+/// colour-by-class off every cell takes the layer colour. Squares without a
+/// cell stay transparent.
+[[nodiscard]] std::vector<uint32_t> overviewPixels(const core::OverviewGrid& grid,
+                                                   const std::vector<core::OverviewGrid::Cell>& cells,
+                                                   bool colourByClass,
+                                                   const std::vector<core::Color>& classColours,
+                                                   core::Color layerColour);
+
+/// Whole grid squares, in columns and rows.
+struct CellSpan
+{
+    int column = 0;
+    int row = 0;
+    int columns = 0;
+    int rows = 0;
+
+    [[nodiscard]] bool empty() const { return columns <= 0 || rows <= 0; }
+};
+/// The squares of `grid` that `view` touches, widened to whole squares and
+/// clipped to the grid; empty when the view misses the scene.
+[[nodiscard]] CellSpan overviewSpan(const core::OverviewGrid& grid, const core::Rect<double>& view);
 
 } // namespace slideio::viewer::ui
