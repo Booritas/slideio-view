@@ -58,6 +58,7 @@ add_executable(slideio-viewer-app-tests
     app/AsapXmlImportTest.cpp
     app/AnnotationEditingTest.cpp
     app/WorkspaceSwitchTest.cpp
+    app/ResultsOverlayServiceTest.cpp
 )
 
 target_link_libraries(slideio-viewer-app-tests

@@ -10,6 +10,7 @@ add_library(slideio-viewer-app STATIC
     src/AsapXmlImport.cpp
     src/AnnotationEditing.cpp
     src/WorkspaceSwitch.cpp
+    src/ResultsOverlayService.cpp
     # Listed so AUTOMOC runs moc on them: it does not scan headers that live in a
     # different directory from their .cpp.
     include/slideio/viewer/app/AnnotationModel.h
