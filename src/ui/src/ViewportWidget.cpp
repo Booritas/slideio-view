@@ -4,12 +4,14 @@
 #include "slideio/viewer/ui/AnnotationShapeName.h"
 #include "slideio/viewer/ui/LayersPanelPolicy.h"
 #include "slideio/viewer/ui/MeasurementLabel.h"
+#include "slideio/viewer/ui/ResultsPaintPolicy.h"
 #include "slideio/viewer/ui/TextAnnotationLayout.h"
 
 #include "slideio/viewer/app/AnnotationEditing.h"
 #include "slideio/viewer/app/AnnotationModel.h"
 #include "slideio/viewer/app/AnnotationEditCommand.h"
 #include "slideio/viewer/app/AnnotationPersistenceService.h"
+#include "slideio/viewer/app/ResultsOverlayService.h"
 #include "slideio/viewer/app/UndoRedoStack.h"
 #include "slideio/viewer/core/Annotation.h"
 #include "slideio/viewer/core/AnnotationDecoration.h"
@@ -22,6 +24,7 @@
 #include "slideio/viewer/core/ISlideSource.h"
 #include "slideio/viewer/core/ITileCache.h"
 #include "slideio/viewer/core/LevelRaster.h"
+#include "slideio/viewer/core/ResultGeometry.h"
 #include "slideio/viewer/core/TileData.h"
 #include "slideio/viewer/core/TileKey.h"
 #include "slideio/viewer/core/TilePyramid.h"
@@ -1610,6 +1613,23 @@ struct ViewportWidget::Impl
     app::AnnotationModel* annotations = nullptr;
     bool drawing = false;
 
+    /// Non-owning processing-results overlay; null when none is set.
+    app::ResultsOverlayService* results = nullptr;
+
+    /// One layer's overview cells as last fetched. OverviewGrid::cells walks
+    /// every non-empty square and sorts the result, so it runs only when the
+    /// grid, the legend's visibility, or a view outside `fetched` asks for it;
+    /// `fetched` is the view grown by half its size each side, so small pans
+    /// reuse the cells.
+    struct ResultCells
+    {
+        std::shared_ptr<const core::OverviewGrid> grid;
+        core::Rect<double> fetched;
+        ClassVisibility visibility;
+        std::vector<core::OverviewGrid::Cell> cells;
+    };
+    std::vector<ResultCells> resultCells;   ///< indexed by results layer
+
     /// A shape being built across several press/release pairs.
     ///
     /// Every other piece of in-flight drawing state is bounded by one press
@@ -2311,6 +2331,19 @@ ViewportWidget::ViewportWidget(app::AnnotationModel& model, QWidget* parent)
                     endVertexEditing();
                 }
             });
+    // One selection at a time: an annotation selected by any route -- a click,
+    // the list panel, a create -- drops the selected processing result.
+    connect(m_impl->annotations, &app::AnnotationModel::selectionChanged, this,
+            [this](const std::string& id) {
+                if (!id.empty() && m_impl->results != nullptr && m_impl->results->selectedId()) {
+                    m_impl->results->clearSelection();
+                    update();
+                }
+            });
+    // The results overlay follows the view: every pan, zoom and resize goes
+    // through viewportChanged, and the service ignores a view that lies inside
+    // the rectangle it last queried.
+    connect(this, &ViewportWidget::viewportChanged, this, [this]() { requestResultsView(); });
     // An editor whose annotation has gone -- deleted from the list panel, or
     // the model emptied -- has nothing left to commit to, and left open it
     // would show words over a spot where nothing is stored any more.
@@ -3226,6 +3259,22 @@ void ViewportWidget::setUndoStack(app::UndoRedoStack* stack)
     m_impl->undoStack = stack;
 }
 
+void ViewportWidget::setResultsService(app::ResultsOverlayService* service)
+{
+    m_impl->results = service;
+    m_impl->resultCells.clear();
+    requestResultsView();
+    update();
+}
+
+void ViewportWidget::requestResultsView()
+{
+    if (m_impl->results == nullptr || !m_impl->results->attached() || !m_impl->controller) {
+        return;
+    }
+    m_impl->results->requestView(m_impl->controller->viewport().visibleSlideRect());
+}
+
 bool ViewportWidget::commitDrawDrag()
 {
     // With no controller the scale is 0, which is what stops a focus loss
@@ -3746,6 +3795,136 @@ void ViewportWidget::pushMoveCommand(const std::string& id,
     const QString what = tr("Move %1").arg(shapeName(edit->after));
     m_impl->undoStack->push(app::AnnotationEditCommand::create(
         *m_impl->annotations, id, edit->before, edit->after, what.toStdString()));
+}
+
+void ViewportWidget::paintResults(QPainter& painter)
+{
+    app::ResultsOverlayService* service = m_impl->results;
+    if (service == nullptr || !service->attached() || !m_impl->controller) {
+        return;
+    }
+
+    const core::Viewport& vp = m_impl->controller->viewport();
+    const auto toScreen = [&vp](core::PointF slidePos) {
+        double sx = 0.0;
+        double sy = 0.0;
+        vp.slideToScreen(slidePos.x, slidePos.y, sx, sy);
+        return QPointF(sx, sy);
+    };
+    const auto toQColor = [](core::Color c) { return QColor(c.r, c.g, c.b, c.a); };
+
+    // Half a screen pixel: anything closer is invisible, and a dense
+    // segmentation outline has far more points than the screen can show.
+    const double thinning = screenToleranceToSlide(kResultThinningScreenPixels, vp.scale());
+    // Every ring a sub-path of one path with OddEvenFill, matching
+    // core::resultContains, so a hole ring paints as a hole and clicks as one.
+    const auto objectPath = [&toScreen, thinning](const core::ResultObject& object) {
+        QPainterPath path;
+        path.setFillRule(Qt::OddEvenFill);
+        for (const core::ResultRing& ring : object.rings) {
+            const std::vector<core::PointF> points = core::thinForDrawing(ring.points, thinning);
+            if (points.empty()) {
+                continue;
+            }
+            path.moveTo(toScreen(points.front()));
+            for (std::size_t i = 1; i < points.size(); ++i) {
+                path.lineTo(toScreen(points[i]));
+            }
+            path.closeSubpath();
+        }
+        return path;
+    };
+
+    const core::Rect<double> visible = vp.visibleSlideRect();
+    const auto intersects = [&visible](const core::Rect<double>& r) {
+        return r.x <= visible.x + visible.width && r.x + r.width >= visible.x && r.y <= visible.y + visible.height
+            && r.y + r.height >= visible.y;
+    };
+
+    const std::vector<core::ResultLayerInfo>& layers = service->layers();
+    if (m_impl->resultCells.size() != layers.size()) {
+        m_impl->resultCells.assign(layers.size(), Impl::ResultCells{});
+    }
+
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setOpacity(1.0);
+
+    const std::optional<std::string>& selectedId = service->selectedId();
+    std::optional<QPainterPath> selectedPath;
+
+    // Layer index order: a higher index paints on top, the order selectAt
+    // searches in reverse.
+    for (std::size_t index = 0; index < layers.size(); ++index) {
+        const int layer = static_cast<int>(index);
+        const core::ResultsLayerView& view = service->layerView(layer);
+        const app::ResultsOverlayService::LayerState& state = service->layerState(layer);
+        if (!view.visible) {
+            continue;
+        }
+        const std::vector<core::Color> classColours = service->classColours(layer);
+        const core::Color layerColour = service->layerColour(layer);
+
+        if (state.mode == app::ResultsOverlayService::LayerMode::Outlines) {
+            for (const core::ResultObject& object : state.objects) {
+                if (!service->objectVisible(object) || !intersects(object.bounds)) {
+                    continue;
+                }
+                const QPainterPath path = objectPath(object);
+                const QColor colour = toQColor(objectColour(object, view, classColours, layerColour));
+                if (view.fill) {
+                    QColor fill = colour;
+                    fill.setAlphaF(static_cast<float>(colour.alphaF() * std::clamp(view.fillOpacity, 0.0, 1.0)));
+                    painter.fillPath(path, fill);
+                }
+                QPen pen(colour, kResultOutlineScreenPixels);
+                pen.setJoinStyle(Qt::RoundJoin);
+                pen.setCapStyle(Qt::RoundCap);
+                painter.strokePath(path, pen);
+                if (selectedId && object.id == *selectedId) {
+                    selectedPath = path;
+                }
+            }
+        } else if (state.mode == app::ResultsOverlayService::LayerMode::Overview && state.grid) {
+            Impl::ResultCells& cache = m_impl->resultCells[index];
+            ClassVisibility visibility = classVisibility(layers[index], view);
+            if (cache.grid != state.grid || cache.visibility != visibility || !rectContains(cache.fetched, visible)) {
+                cache.grid = state.grid;
+                cache.fetched = grownView(visible);
+                cache.cells = state.grid->cells(cache.fetched, visibility.classVisible, visibility.unclassifiedVisible);
+                cache.visibility = std::move(visibility);
+            }
+            painter.setPen(Qt::NoPen);
+            for (const core::OverviewGrid::Cell& cell : cache.cells) {
+                const core::Rect<double> square = overviewCellRect(*state.grid, cell);
+                if (!intersects(square)) {
+                    continue;
+                }
+                QColor colour = toQColor(overviewColour(cell.dominant, classColours, layerColour));
+                colour.setAlphaF(static_cast<float>(colour.alphaF() * std::clamp(cell.opacity, 0.0, 1.0)));
+                const QPointF topLeft = toScreen(core::PointF{square.x, square.y});
+                const QPointF bottomRight = toScreen(core::PointF{square.x + square.width, square.y + square.height});
+                painter.fillRect(QRectF(topLeft, bottomRight), colour);
+            }
+        }
+        // Hidden and BuildingOverview draw nothing.
+    }
+
+    // The selection last, over every result, in the annotation selection's
+    // two tones: a black underlay at 2.5 px under a white dash, so it reads on
+    // a pale brightfield slide and on a dark fluorescence one.
+    if (selectedPath) {
+        QPen underlay(QColor(0x00, 0x00, 0x00), kResultSelectedOutlineScreenPixels, Qt::SolidLine);
+        underlay.setJoinStyle(Qt::RoundJoin);
+        underlay.setCapStyle(Qt::RoundCap);
+        painter.strokePath(*selectedPath, underlay);
+        QPen overlay(QColor(0xFF, 0xFF, 0xFF), 1.0, Qt::DashLine);
+        overlay.setJoinStyle(Qt::RoundJoin);
+        overlay.setCapStyle(Qt::RoundCap);
+        painter.strokePath(*selectedPath, overlay);
+    }
+
+    painter.restore();
 }
 
 void ViewportWidget::paintAnnotations(QPainter& painter)
@@ -5074,10 +5253,14 @@ void ViewportWidget::paintGL()
     }
 
     // Painted last, after the snapshot capture, so annotations stay out of the
-    // zoom-snapshot texture and do not smear with the blurry backdrop.
+    // zoom-snapshot texture and do not smear with the blurry backdrop. The
+    // processing results go first in the same pass: over the tiles, under the
+    // annotations, and out of the snapshot for the same reason.
     if (overlayNeedsPainting(!m_impl->annotations->annotations().empty(), m_impl->drawing,
-                             m_impl->pending.active, m_impl->anglePending)) {
+                             m_impl->pending.active, m_impl->anglePending,
+                             m_impl->results != nullptr && m_impl->results->attached())) {
         QPainter painter(this);
+        paintResults(painter);
         paintAnnotations(painter);
     }
 }
@@ -5502,7 +5685,16 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event)
                                     kHitToleranceScreenPixels)) {
         const std::string hit = annotationAt(event->pos());
         if (hit.empty()) {
+            // Annotations sit on top, so a result is only reached through a
+            // miss on every annotation. Either way the annotation selection
+            // goes: a result hit takes its place, a miss clears both.
             m_impl->annotations->clearSelection();
+            if (m_impl->results != nullptr && m_impl->results->attached()) {
+                double slideX = 0.0;
+                double slideY = 0.0;
+                m_impl->controller->screenToSlide(event->pos().x(), event->pos().y(), slideX, slideY);
+                (void)m_impl->results->selectAt(core::PointF{slideX, slideY});
+            }
         } else {
             m_impl->annotations->setSelected(hit);
         }
@@ -5926,6 +6118,15 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event)
             cancelled = true;
         } else if (m_impl->activeTool != AnnotationTool::Pan) {
             setActiveTool(AnnotationTool::Pan);
+            cancelled = true;
+        }
+
+        // A selected processing result is dropped by Escape whatever else it
+        // cancelled: it is never part of an edit in flight, so there is no
+        // ordering to respect.
+        if (m_impl->results != nullptr && m_impl->results->selectedId()) {
+            m_impl->results->clearSelection();
+            update();
             cancelled = true;
         }
 

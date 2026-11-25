@@ -29,6 +29,7 @@ namespace slideio::viewer::app
 {
 class AnnotationModel;
 class AnnotationPersistenceService;
+class ResultsOverlayService;
 class UndoRedoStack;
 }
 
@@ -169,6 +170,13 @@ public:
     /// Null until set, and the push sites check for that.
     void setUndoStack(app::UndoRedoStack* stack);
 
+    /// Non-owning; null detaches. The widget draws the service's in-memory
+    /// layer state under the annotations, asks it for the visible slide rect
+    /// when set and whenever it emits viewportChanged, and hit-tests it on a
+    /// selection click that misses every annotation. It never reads the store.
+    /// The owner connects the service's onChanged to update().
+    void setResultsService(app::ResultsOverlayService* service);
+
     /// Removes the last placed vertex of a live trace and returns true. Returns
     /// false when no trace is in progress, so the caller can fall through to the
     /// undo stack. Ctrl+Z during path drawing steps back one point in every
@@ -295,6 +303,12 @@ private:
 
     /// Moves the editor to follow its anchor after a pan or zoom.
     void positionTextEditor();
+    /// Processing results, painted just before the annotations in the same
+    /// QPainter pass: under them, over the tiles, outside the zoom snapshot.
+    void paintResults(QPainter& painter);
+    /// Hands the service the visible slide rect; a no-op without a service or
+    /// an open slide.
+    void requestResultsView();
     void paintAnnotations(QPainter& painter);
     void resetAnnotationState();
     void commitPendingShape();

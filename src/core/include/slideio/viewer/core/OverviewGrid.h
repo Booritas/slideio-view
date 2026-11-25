@@ -29,6 +29,7 @@ public:
     /// Computes the 99th-percentile square count; call after the last add().
     void finish();
 
+    const Rect<double>& sceneRect() const { return m_scene; }
     double squareSize() const { return m_squareSize; }
     int columns() const { return m_columns; }
     int rows() const { return m_rows; }

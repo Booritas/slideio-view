@@ -124,9 +124,11 @@ constexpr double kTrailMinScreenPixels = 2.0;
 
 /// Whether paintGL runs the annotation overlay at all: when the scene has
 /// annotations, or something is being built -- a drag, a pending trace, a
-/// pending angle. Each of those has nothing in the model yet, so a scene with
+/// pending angle -- or when processing results are attached, which draw in the
+/// same pass. Each of the built ones has nothing in the model yet, so a scene with
 /// no annotations would otherwise never show the shape under construction.
-[[nodiscard]] bool overlayNeedsPainting(bool hasAnnotations, bool drawing, bool tracePending, bool anglePending);
+[[nodiscard]] bool overlayNeedsPainting(bool hasAnnotations, bool drawing, bool tracePending, bool anglePending,
+                                        bool resultsAttached);
 
 /// True when the cursor has moved far enough from the last placed vertex to
 /// deserve another one. False for a non-positive scale: with no usable
