@@ -284,12 +284,18 @@ void ResultsOverlayService::requestView(const core::Rect<double>& visibleSlideRe
 {
     if (!m_attached)
         return;
-    if (canReuse(visibleSlideRect)) {
-        m_lastView = visibleSlideRect;
-        recountInView(visibleSlideRect);
-        return;
+    if (followView(visibleSlideRect))
+        notifyChanged();
+}
+
+bool ResultsOverlayService::followView(const core::Rect<double>& view)
+{
+    if (canReuse(view)) {
+        m_lastView = view;
+        return recountInView(view);
     }
-    issueQuery(visibleSlideRect);
+    issueQuery(view);
+    return false;
 }
 
 bool ResultsOverlayService::canReuse(const core::Rect<double>& view) const
@@ -315,7 +321,7 @@ bool ResultsOverlayService::canReuse(const core::Rect<double>& view) const
     return true;
 }
 
-void ResultsOverlayService::recountInView(const core::Rect<double>& view)
+bool ResultsOverlayService::recountInView(const core::Rect<double>& view)
 {
     bool changed = false;
     for (std::size_t l = 0; l < m_data.size(); ++l) {
@@ -328,8 +334,7 @@ void ResultsOverlayService::recountInView(const core::Rect<double>& view)
             changed = true;
         }
     }
-    if (changed)
-        notifyChanged();
+    return changed;
 }
 
 void ResultsOverlayService::issueQuery(const core::Rect<double>& view)
@@ -345,6 +350,10 @@ void ResultsOverlayService::issueQuery(const core::Rect<double>& view)
     job.source = m_source;
     job.rect = grown(view);
     job.view = view;
+    for (const int layer : job.layers) {
+        const auto& data = m_data[static_cast<std::size_t>(layer)];
+        job.viewFirst.push_back(data.hasAnswer && data.overBudget);
+    }
     m_lastGrown = job.rect;
     m_lastQueried = view;
     m_settingsChanged = false;
@@ -393,32 +402,73 @@ void ResultsOverlayService::queryLoop()
                 };
                 auto answers = std::make_shared<std::vector<LayerAnswer>>();
                 bool complete = true;
-                for (const int layer : query->layers) {
-                    if (!current(generation)) {
-                        complete = false;
-                        break;
-                    }
+                for (std::size_t i = 0; i < query->layers.size(); ++i) {
+                    const int layer = query->layers[i];
                     LayerAnswer a;
                     a.layer = layer;
-                    a.answer = query->source->query(layer, query->rect, core::kResultsDrawBudget);
-                    a.covered = query->rect;
-                    if (a.answer.overBudget) {
-                        // Over budget around the view: the view itself decides (spec 5.2, "in view").
-                        if (!current(generation)) {
-                            complete = false;
-                            break;
-                        }
-                        a.answer = query->source->query(layer, query->view, core::kResultsDrawBudget);
+                    // Every query checks the generation first: a detach or a
+                    // new attach since then stops the rest.
+                    const auto ask = [&](const core::Rect<double>& rect, core::ResultQueryAnswer& answer) {
+                        if (!current(generation))
+                            return false;
+                        answer = query->source->query(layer, rect, core::kResultsDrawBudget);
+                        return true;
+                    };
+                    // The view's own answer decides the mode and the count (spec 5.2, "in view").
+                    const auto useView = [&](core::ResultQueryAnswer answer) {
+                        a.answer = std::move(answer);
                         a.covered = query->view;
                         if (!a.answer.overBudget)
                             a.answer.inView = static_cast<int64_t>(a.answer.objects.size());
-                    } else {
+                    };
+                    const auto useGrown = [&](core::ResultQueryAnswer answer) {
+                        a.answer = std::move(answer);
+                        a.covered = query->rect;
                         a.answer.inView = countIntersecting(a.answer.objects, query->view);
+                    };
+                    core::ResultQueryAnswer viewAnswer;
+                    core::ResultQueryAnswer grownAnswer;
+                    if (query->viewFirst[i]) {
+                        // Over budget last time: the grown rectangle holds the
+                        // view, so it would almost surely be over budget again.
+                        // Ask the view first, and the grown rectangle only when
+                        // the view is within budget.
+                        if (!ask(query->view, viewAnswer)) {
+                            complete = false;
+                            break;
+                        }
+                        if (viewAnswer.overBudget) {
+                            useView(std::move(viewAnswer));
+                        } else {
+                            if (!ask(query->rect, grownAnswer)) {
+                                complete = false;
+                                break;
+                            }
+                            if (grownAnswer.overBudget)
+                                useView(std::move(viewAnswer));
+                            else
+                                useGrown(std::move(grownAnswer));
+                        }
+                    } else {
+                        if (!ask(query->rect, grownAnswer)) {
+                            complete = false;
+                            break;
+                        }
+                        if (!grownAnswer.overBudget) {
+                            useGrown(std::move(grownAnswer));
+                        } else {
+                            // Over budget around the view: the view itself decides.
+                            if (!ask(query->view, viewAnswer)) {
+                                complete = false;
+                                break;
+                            }
+                            useView(std::move(viewAnswer));
+                        }
                     }
                     answers->push_back(std::move(a));
                 }
                 if (complete) {
-                    post(generation, [this, answers] {
+                    post(generation, [this, answers, view = query->view] {
                         for (auto& a : *answers) {
                             const int layer = a.layer;
                             const auto l = static_cast<std::size_t>(layer);
@@ -435,6 +485,11 @@ void ResultsOverlayService::queryLoop()
                                 data.state.objects = std::move(a.answer.objects);
                             refreshMode(layer);
                         }
+                        // The view moved while this was in flight: these are the
+                        // old view's answers, so follow the latest view --
+                        // recount over it, or query it when they cannot serve it.
+                        if (m_lastView && !sameRect(*m_lastView, view))
+                            followView(*m_lastView);
                         notifyChanged();
                     });
                 }

@@ -182,6 +182,14 @@ void ResultsPanel::scheduleRefresh()
     }
 }
 
+void ResultsPanel::flushPendingSave()
+{
+    if (m_impl->opacitySaveTimer->isActive()) {
+        m_impl->opacitySaveTimer->stop();
+        emit layerViewChanged();
+    }
+}
+
 void ResultsPanel::rebuild()
 {
     app::ResultsOverlayService* service = m_impl->service;
@@ -369,12 +377,7 @@ void ResultsPanel::rebuild()
             emit layerViewPreviewed();
             m_impl->opacitySaveTimer->start();
         });
-        connect(opacity, &QSpinBox::editingFinished, this, [this]() {
-            if (m_impl->opacitySaveTimer->isActive()) {
-                m_impl->opacitySaveTimer->stop();
-                emit layerViewChanged();
-            }
-        });
+        connect(opacity, &QSpinBox::editingFinished, this, [this]() { flushPendingSave(); });
         connect(byClass, &QCheckBox::toggled, this, [edit](bool on) {
             edit([on](core::ResultsLayerView& v) { v.colourByClass = on; });
         });

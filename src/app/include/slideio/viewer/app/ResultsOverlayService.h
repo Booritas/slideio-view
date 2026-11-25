@@ -67,6 +67,11 @@ public:
     /// Latest request wins. Each visible layer is queried over the view grown
     /// by half its size on every side; a layer over budget there is queried
     /// again over the view itself, and that answer decides its mode and count.
+    /// A layer whose last answer was over budget is queried over the view
+    /// first, and over the grown rectangle only when the view is within budget
+    /// (keeping the view's answer when the grown one is over budget). An
+    /// answer that arrives after the view moved on is applied, then the latest
+    /// view is followed: recounted, or queried when the answers cannot serve it.
     /// Does nothing when detached or no layer is visible. Reuses the last
     /// answers -- recounting inView over the new view -- when no setting
     /// changed and either the view is the last one queried, or it lies inside
@@ -128,6 +133,10 @@ private:
         core::Rect<double> rect;   ///< the view grown
         core::Rect<double> view;   ///< the visible rectangle
         std::vector<int> layers;
+        /// Per entry of `layers`: its last answer was over budget, so the view
+        /// is queried first and the grown rectangle only when the view is
+        /// within budget.
+        std::vector<bool> viewFirst;
     };
     struct DetailsJob
     {
@@ -168,7 +177,11 @@ private:
     void startGeneration(std::shared_ptr<core::ResultsSource> source, std::vector<core::ResultLayerInfo> layers,
                          SourceFactory scanFactory);
     bool canReuse(const core::Rect<double>& view) const;
-    void recountInView(const core::Rect<double>& view);
+    /// Reuses the last answers for `view` when canReuse, else queries it.
+    /// True when a reuse changed an inView count; the caller notifies.
+    bool followView(const core::Rect<double>& view);
+    /// True when a count changed. Does not notify.
+    bool recountInView(const core::Rect<double>& view);
     void issueQuery(const core::Rect<double>& view);
     void requestDetails(const std::string& objectId);
     void startScans();

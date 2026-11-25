@@ -710,14 +710,17 @@ TEST_CASE("ZoomInRequeriesOverBudgetLayer", "[ResultsOverlayService]")
         before = store->queries.size();
     }
 
-    // Zoomed in, and inside the grown rectangle (-500,-500)-(1500,1500).
+    // Zoomed in, and inside the grown rectangle (-500,-500)-(1500,1500). The
+    // layer was over budget, so the view is asked first; it is within budget,
+    // so the grown rectangle is asked too, and its answer is kept.
     service.requestView({400, 400, 100, 100});
     REQUIRE(ui.drainUntil([&] { return service.layerState(0).mode == Mode::Outlines; }));
     CHECK(service.layerState(0).objects.size() == 1);
     CHECK(service.layerState(0).inView == 1);
     {
         std::lock_guard<std::mutex> lock(store->mutex);
-        REQUIRE(store->queries.size() == before + 1);
+        REQUIRE(store->queries.size() == before + 2);
+        CHECK(sameRect(store->queries[before].second, {400, 400, 100, 100}));
         CHECK(sameRect(store->queries.back().second, {350, 350, 200, 200}));
     }
     store->scanGate.open();
@@ -739,11 +742,14 @@ TEST_CASE("OverBudgetLayerRequeriesOnPanInsideGrownRect", "[ResultsOverlayServic
     REQUIRE(store->waitFor([&] { return store->queriesReturned == 2; }));   // grown, then the view
     service.requestView({0, 0, 100, 100});     // the same view: reused
     service.requestView({10, 10, 100, 100});   // a pan inside the grown rectangle: queried
-    REQUIRE(store->waitFor([&] { return store->queriesReturned == 4; }));
+    // Over budget last time: the view is asked first, and is over budget, so
+    // the grown rectangle is not asked.
+    REQUIRE(store->waitFor([&] { return store->queriesReturned == 3; }));
     ui.drain();
     {
         std::lock_guard<std::mutex> lock(store->mutex);
-        CHECK(store->queries.size() == 4);
+        REQUIRE(store->queries.size() == 3);
+        CHECK(sameRect(store->queries[2].second, {10, 10, 100, 100}));
     }
     store->scanGate.open();
 }
@@ -833,6 +839,107 @@ TEST_CASE("GrownOverBudgetButViewWithinFallsBackToView", "[ResultsOverlayService
     CHECK(service.layerState(0).inView == 1);
     CHECK(service.layerState(0).objects.empty());
     CHECK_FALSE(service.layerState(0).scanQueued);   // 3 objects at open: no overview scan
+}
+
+TEST_CASE("OverBudgetLayerCountsViewFirst", "[ResultsOverlayService]")
+{
+    auto store = std::make_shared<FakeStore>();
+    store->layers = {layerInfo("cells", 3)};
+    // One object in the view (0,0)-(100,100), two in the grown margin only.
+    store->objects = {{square("in", 0, 10, 10, 20), square("left", 0, -40, 10, 20), square("below", 0, 10, 120, 20)}};
+    store->overBudget = {true};
+    UiQueue ui;
+    Service service(ui.poster());
+    service.attach(factoryFor(store), kScene);
+
+    // No answer yet: the grown rectangle first, then the view.
+    service.requestView({0, 0, 100, 100});
+    REQUIRE(ui.drainUntil([&] { return service.layerState(0).mode == Mode::BuildingOverview; }));
+    {
+        std::lock_guard<std::mutex> lock(store->mutex);
+        REQUIRE(store->queries.size() == 2);
+        CHECK(sameRect(store->queries[0].second, {-50, -50, 200, 200}));
+        CHECK(sameRect(store->queries[1].second, {0, 0, 100, 100}));
+    }
+
+    // Over budget last time, and the view is over budget again: one query, the
+    // view's, and no count of the grown rectangle.
+    service.requestView({10, 10, 100, 100});
+    REQUIRE(store->waitFor([&] { return store->queriesReturned == 3; }));
+    REQUIRE(ui.waitPosted(2));
+    ui.drain();
+    {
+        std::lock_guard<std::mutex> lock(store->mutex);
+        REQUIRE(store->queries.size() == 3);
+        CHECK(sameRect(store->queries[2].second, {10, 10, 100, 100}));
+    }
+    CHECK(service.layerState(0).mode == Mode::BuildingOverview);
+
+    // The view is within budget now but the grown rectangle is not: the view
+    // first, then the grown rectangle, and the view's answer is kept.
+    {
+        std::lock_guard<std::mutex> lock(store->mutex);
+        store->overBudget = {false};
+        store->overBudgetAbove = 2;
+    }
+    service.requestView({-30, 0, 100, 100});
+    REQUIRE(ui.drainUntil([&] { return service.layerState(0).mode == Mode::Outlines; }));
+    CHECK(service.layerState(0).objects.size() == 2);
+    CHECK(service.layerState(0).inView == 2);
+    std::lock_guard<std::mutex> lock(store->mutex);
+    REQUIRE(store->queries.size() == 5);
+    CHECK(sameRect(store->queries[3].second, {-30, 0, 100, 100}));
+    CHECK(sameRect(store->queries[4].second, {-80, -50, 200, 200}));
+}
+
+TEST_CASE("PanDuringInFlightQueryRequeries", "[ResultsOverlayService]")
+{
+    auto store = std::make_shared<FakeStore>();
+    store->layers = {layerInfo("cells", 3)};
+    store->objects = {{square("in", 0, 10, 10, 20), square("left", 0, -40, 10, 20), square("below", 0, 10, 120, 20)}};
+    store->overBudgetAbove = 2;   // the grown rectangle holds 3: its answers cover the view only
+    store->queryGate.close();
+    UiQueue ui;
+    Service service(ui.poster());
+    service.attach(factoryFor(store), kScene);
+
+    service.requestView({0, 0, 100, 100});
+    REQUIRE(store->queryGate.waitEntered(1));
+    // Inside the grown rectangle and no answer yet, so nothing is queried now.
+    service.requestView({-30, 0, 100, 100});
+    store->queryGate.open();
+
+    // The answer for (0,0,100,100) covers that view only; the latest view sees
+    // "left" too, so it is queried as soon as that answer is applied.
+    REQUIRE(ui.drainUntil([&] { return service.layerState(0).objects.size() == 2; }));
+    CHECK(service.layerState(0).inView == 2);
+    std::lock_guard<std::mutex> lock(store->mutex);
+    REQUIRE(store->queries.size() == 4);
+    CHECK(sameRect(store->queries[2].second, {-80, -50, 200, 200}));
+    CHECK(sameRect(store->queries[3].second, {-30, 0, 100, 100}));
+}
+
+TEST_CASE("PanDuringInFlightQueryRecountsInView", "[ResultsOverlayService]")
+{
+    auto store = std::make_shared<FakeStore>();
+    store->layers = {layerInfo("cells", 3)};
+    store->objects = {{square("in", 0, 10, 10, 20), square("left", 0, -40, 10, 20), square("below", 0, 10, 120, 20)}};
+    store->queryGate.close();
+    UiQueue ui;
+    Service service(ui.poster());
+    service.attach(factoryFor(store), kScene);
+
+    service.requestView({0, 0, 100, 100});
+    REQUIRE(store->queryGate.waitEntered(1));
+    service.requestView({-30, 0, 100, 100});   // inside the grown rectangle
+    store->queryGate.open();
+
+    // The grown answer serves the latest view: counted over it, not re-queried.
+    REQUIRE(ui.drainUntil([&] { return service.layerState(0).mode == Mode::Outlines; }));
+    CHECK(service.layerState(0).objects.size() == 3);
+    CHECK(service.layerState(0).inView == 2);
+    std::lock_guard<std::mutex> lock(store->mutex);
+    CHECK(store->queries.size() == 1);
 }
 
 TEST_CASE("ScanQueuedOnlyForLayersOverBudgetAtOpen", "[ResultsOverlayService]")

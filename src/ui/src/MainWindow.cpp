@@ -1114,6 +1114,13 @@ struct MainWindow::Impl
             if (annotationPropertiesPanel != nullptr) {
                 annotationPropertiesPanel->commitPendingEdit();
             }
+            // An opacity change still waiting on its save timer is saved now,
+            // under this slide's id: by slideClosed the id is already cleared,
+            // and a timer firing after the next slide opens would save nothing
+            // (or save under that slide).
+            if (resultsPanel != nullptr) {
+                resultsPanel->flushPendingSave();
+            }
         });
 
         QObject::connect(calibrationAction, &QAction::triggered, owner, [this]() { editCalibration(); });
@@ -1440,12 +1447,24 @@ struct MainWindow::Impl
             // the counts and the current values again.
             ztNavigationWidget->setSliceFrameCounts(1, 1);
             // Every open closes the slide first, so this cannot tell a reopen
-            // from a close: the viewport lets go of the processing results but
-            // the service stays attached. slideOpened keeps the attachment for
-            // the same slide file and scene (a colour-profile reopen) and
-            // replaces it otherwise; File > Close Slide and a failed open
-            // detach. The attachment stays remembered either way.
+            // from a close: the viewport and the Results tab let go of the
+            // processing results but the service stays attached. slideOpened
+            // keeps the attachment for the same slide file and scene (a
+            // colour-profile reopen) and replaces it otherwise; File > Close
+            // Slide and a failed open detach. The attachment stays remembered
+            // either way. Until then nothing may show or act on the previous
+            // slide's results (spec 2): the tab shows the detached state, its
+            // Reload and Close and the menu's Close are off, and the selection
+            // goes. The scans keep running -- stopping them needs a new
+            // generation, which a same-slide reopen would have to restart.
             viewportWidget->setResultsService(nullptr);
+            if (resultsPanel != nullptr) {
+                resultsPanel->setService(nullptr);
+            }
+            if (results != nullptr) {
+                results->clearSelection();
+                updateResultsActions();
+            }
 
             colorManagementAction->setEnabled(false);
             setSlideProfileAction->setEnabled(false);
@@ -2757,7 +2776,9 @@ void MainWindow::Impl::updateResultsActions()
 {
     const bool sceneOpen = viewportWidget->isSlideOpen() && !viewportWidget->isAuxImageShown();
     openResultsAction->setEnabled(sceneOpen);
-    closeResultsAction->setEnabled(results != nullptr && results->attached());
+    // Between a slide close and the next open the service may still hold the
+    // previous slide's attachment, which Close must not touch.
+    closeResultsAction->setEnabled(viewportWidget->isSlideOpen() && results != nullptr && results->attached());
 }
 
 void MainWindow::Impl::attachResults(const std::string& dir, const std::vector<core::ResultsLayerView>& savedViews,
@@ -2798,6 +2819,7 @@ void MainWindow::Impl::attachResults(const std::string& dir, const std::vector<c
     }
     // Set again after attach: it is what asks the service for the current view.
     viewportWidget->setResultsService(results.get());
+    resultsPanel->setService(results.get());   // the slide close took it away
     resultsPanel->setAttachment(QString::fromStdString(dir), QString::fromStdString(viewportWidget->currentFilePath()),
                                 viewportWidget->currentSceneIndex());
     resultsPanel->scheduleRebuild();
@@ -2827,6 +2849,11 @@ void MainWindow::Impl::detachResults()
 
 void MainWindow::Impl::closeProcessingResults()
 {
+    // No slide: an attachment still held belongs to the slide just closed, and
+    // forgetting it needs that slide's id. slideOpened settles it.
+    if (!viewportWidget->isSlideOpen()) {
+        return;
+    }
     const std::string slideId = viewportWidget->currentSlideId();
     if (!slideId.empty() && !viewportWidget->isAuxImageShown()) {
         resultsSettings->remove(slideId, viewportWidget->currentSceneIndex());
@@ -2930,7 +2957,9 @@ void MainWindow::Impl::openProcessingResults()
 
 void MainWindow::Impl::reloadProcessingResults()
 {
-    if (!results->attached()) {
+    // No slide: the attachment belongs to the slide just closed and must not be
+    // handed to the viewport again.
+    if (!viewportWidget->isSlideOpen() || !results->attached()) {
         return;
     }
     try {
@@ -2961,7 +2990,7 @@ void MainWindow::Impl::reattachResultsForOpenScene()
     if (results->attached() && !slideId.empty() && !viewportWidget->isAuxImageShown() && slideId == resultsSlideId
         && scene == resultsScene && slidePath == resultsSlidePath) {
         viewportWidget->setResultsService(results.get());
-        resultsPanel->scheduleRefresh();
+        resultsPanel->setService(results.get());   // the slide close took it away
         updateResultsActions();
         return;
     }

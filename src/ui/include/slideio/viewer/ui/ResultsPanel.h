@@ -47,6 +47,10 @@ public:
     /// Updates the in-view / building lines and the selection details, at most
     /// once per 50 ms: onChanged fires up to a hundred times per scanned layer.
     void scheduleRefresh();
+    /// Emits layerViewChanged() now when an opacity save is still waiting on
+    /// its timer. MainWindow calls it before the slide closes, while the slide
+    /// id the settings are saved under is still known.
+    void flushPendingSave();
 
 signals:
     void reloadRequested();
