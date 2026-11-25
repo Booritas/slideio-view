@@ -8,6 +8,7 @@ add_library(slideio-viewer-infra STATIC
     src/QSettingsResultsSettingsStore.cpp
     src/QSettingsAnnotationCategoryStore.cpp
     src/JsonAnnotationRepository.cpp
+    src/ProcessorWorkspaceSource.cpp
 )
 
 target_include_directories(slideio-viewer-infra PUBLIC

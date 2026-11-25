@@ -77,10 +77,13 @@ add_executable(slideio-viewer-infra-tests
     infra/QSettingsAnnotationCategoryStoreTest.cpp
     infra/JsonAnnotationRepositoryTest.cpp
     infra/ProcessorDataLinkTest.cpp
+    infra/ProcessorWorkspaceSourceTest.cpp
+    infra/support/ProcessorFixture.cpp
 )
 
 target_link_libraries(slideio-viewer-infra-tests
-    # slideio-processor-data for ProcessorDataLinkTest, which calls it directly;
+    # slideio-processor-data for ProcessorDataLinkTest and the ProcessorFixture
+    # support code, which call it directly;
     # infra links it PRIVATE and never exposes it.
     PRIVATE slideio-viewer-infra Catch2::Catch2WithMain Qt6::Core slideio-processor-data
 )
