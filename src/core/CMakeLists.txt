@@ -30,6 +30,7 @@ add_library(slideio-viewer-core STATIC
     src/AutosavePolicy.cpp
     src/ResultGeometry.cpp
     src/ResultsPalette.cpp
+    src/ResultsAttachment.cpp
     src/OverviewGrid.cpp
 )
 

@@ -5,6 +5,7 @@ add_library(slideio-viewer-infra STATIC
     src/Prefetcher.cpp
     src/QSettingsColorProfileOverrideStore.cpp
     src/QSettingsCalibrationOverrideStore.cpp
+    src/QSettingsResultsSettingsStore.cpp
     src/QSettingsAnnotationCategoryStore.cpp
     src/JsonAnnotationRepository.cpp
 )

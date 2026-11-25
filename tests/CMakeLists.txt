@@ -15,6 +15,7 @@ add_executable(slideio-viewer-core-tests
     core/AnnotationGeometryTest.cpp
     core/ResultGeometryTest.cpp
     core/ResultsPaletteTest.cpp
+    core/ResultsAttachmentTest.cpp
     core/OverviewGridTest.cpp
     core/AnnotationMeasurementTest.cpp
     core/AnnotationMergeTest.cpp
@@ -72,6 +73,7 @@ add_executable(slideio-viewer-infra-tests
     infra/ColorManagedAdapterTest.cpp
     infra/QSettingsColorProfileOverrideStoreTest.cpp
     infra/QSettingsCalibrationOverrideStoreTest.cpp
+    infra/QSettingsResultsSettingsStoreTest.cpp
     infra/QSettingsAnnotationCategoryStoreTest.cpp
     infra/JsonAnnotationRepositoryTest.cpp
     infra/ProcessorDataLinkTest.cpp
