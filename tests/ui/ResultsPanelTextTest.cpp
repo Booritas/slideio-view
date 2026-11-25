@@ -40,6 +40,11 @@ TEST_CASE("buildingText shows an integer percentage", "[ResultsPanelText]")
     CHECK(buildingText(std::numeric_limits<double>::quiet_NaN()) == "building overview\xE2\x80\xA6 0 %");
 }
 
+TEST_CASE("tooManyToOutlineText points at Reload", "[ResultsPanelText]")
+{
+    CHECK(tooManyToOutlineText() == "too many to outline \xE2\x80\x94 Reload to build the overview");
+}
+
 TEST_CASE("measurementLine is name, value and unit", "[ResultsPanelText]")
 {
     core::ResultMeasurement area{"area", 41.0, "px\xC2\xB2", ""};

@@ -10,10 +10,10 @@ namespace slideio::viewer::infra
 
 /// Reads a slideio-processor workspace store, `<dir>/workspace.store`, read-only.
 ///
-/// The layer list, each layer's classes (legend order) and stage state are read
-/// once, at open(); class indices in ResultObject refer to that list. Queries
-/// and details read the store afresh, so objects committed by a writer after
-/// open() are seen.
+/// The layer list, each layer's classes (legend order), unclassified count and
+/// stage state are read once, at open(), and shared by sibling(); class indices
+/// in ResultObject refer to that list. Queries and details read the store
+/// afresh, so objects committed by a writer after open() are seen.
 ///
 /// Not thread-safe: use one instance per thread.
 class ProcessorWorkspaceSource : public core::ResultsSource
@@ -34,6 +34,9 @@ public:
     void scan(int layer,
               const std::function<void(const core::Rect<double>&, const std::vector<int>&)>& visit,
               const std::function<bool(double)>& progress) override;
+    /// Opens the same store again, sharing this source's layer list and class
+    /// mapping: no provenance read and no per-label counting, so it is cheap.
+    std::function<std::unique_ptr<core::ResultsSource>()> sibling() const override;
 
 private:
     struct Impl;

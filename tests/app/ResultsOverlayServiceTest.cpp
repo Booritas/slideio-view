@@ -68,6 +68,9 @@ struct FakeStore
     std::vector<core::ResultLayerInfo> layers;
     std::vector<std::vector<core::ResultObject>> objects;   // per layer
     std::vector<bool> overBudget;                           // per layer: query answers overBudget
+    int64_t overBudgetAbove = -1;    // >= 0: a query finding more objects than this answers overBudget
+    bool offerSibling = false;       // sources offer sibling(), counted in siblingCalls
+    int siblingCalls = 0;
     std::map<std::string, core::ResultDetails> details;
     std::string queryError;                                 // non-empty: query throws it
 
@@ -133,6 +136,10 @@ public:
                         if (intersects(object.bounds, rect))
                             answer.objects.push_back(object);
                     answer.inView = static_cast<int64_t>(answer.objects.size());
+                    if (m_store->overBudgetAbove >= 0 && answer.inView > m_store->overBudgetAbove) {
+                        answer.overBudget = true;
+                        answer.objects.clear();
+                    }
                 }
             }
             ++m_store->queriesReturned;
@@ -180,6 +187,20 @@ public:
             m_store->scanCancelled[index] = !keepGoing;
         }
         m_store->cv.notify_all();
+    }
+
+    std::function<std::unique_ptr<core::ResultsSource>()> sibling() const override
+    {
+        if (!m_store->offerSibling)
+            return {};
+        return [store = m_store]() -> std::unique_ptr<core::ResultsSource> {
+            {
+                std::lock_guard<std::mutex> lock(store->mutex);
+                ++store->siblingCalls;
+            }
+            store->cv.notify_all();
+            return std::make_unique<FakeResultsSource>(store);
+        };
     }
 
 private:
@@ -552,7 +573,7 @@ TEST_CASE("ReloadRestartsScan", "[ResultsOverlayService]")
     CHECK(store->scanCancelled[0]);
     CHECK_FALSE(store->scanCancelled[1]);
     CHECK(store->factoryCalls == 4);   // attach, scan, reload, rescan
-    CHECK(store->queries.size() == 2); // reload re-queried the last view
+    CHECK(store->queries.size() == 4); // grown then view, and reload re-queried the last view
 }
 
 TEST_CASE("SourceErrorDetachesAndReports", "[ResultsOverlayService]")
@@ -667,4 +688,223 @@ TEST_CASE("ClassAndLayerColours", "[ResultsOverlayService]")
     view.colour = core::Color{1, 2, 3, 255};
     service.setLayerView(1, view);
     CHECK((service.layerColour(1).r == 1 && service.layerColour(1).g == 2 && service.layerColour(1).b == 3));
+}
+
+TEST_CASE("ZoomInRequeriesOverBudgetLayer", "[ResultsOverlayService]")
+{
+    auto store = std::make_shared<FakeStore>();
+    store->layers = {layerInfo("cells", 30000)};
+    store->objects = {{square("a", 0, 420, 420, 20)}};
+    store->overBudget = {true};
+    store->scanGate.close();   // the overview never finishes: outlines must still take over
+    UiQueue ui;
+    Service service(ui.poster());
+    service.attach(factoryFor(store), kScene);
+
+    service.requestView({0, 0, 1000, 1000});
+    REQUIRE(ui.drainUntil([&] { return service.layerState(0).mode == Mode::BuildingOverview; }));
+    std::size_t before = 0;
+    {
+        std::lock_guard<std::mutex> lock(store->mutex);
+        store->overBudget = {false};
+        before = store->queries.size();
+    }
+
+    // Zoomed in, and inside the grown rectangle (-500,-500)-(1500,1500).
+    service.requestView({400, 400, 100, 100});
+    REQUIRE(ui.drainUntil([&] { return service.layerState(0).mode == Mode::Outlines; }));
+    CHECK(service.layerState(0).objects.size() == 1);
+    CHECK(service.layerState(0).inView == 1);
+    {
+        std::lock_guard<std::mutex> lock(store->mutex);
+        REQUIRE(store->queries.size() == before + 1);
+        CHECK(sameRect(store->queries.back().second, {350, 350, 200, 200}));
+    }
+    store->scanGate.open();
+}
+
+TEST_CASE("OverBudgetLayerRequeriesOnPanInsideGrownRect", "[ResultsOverlayService]")
+{
+    auto store = std::make_shared<FakeStore>();
+    store->layers = {layerInfo("cells", 30000)};
+    store->objects = {{square("a", 0, 10, 10, 5)}};
+    store->overBudget = {true};
+    store->scanGate.close();
+    UiQueue ui;
+    Service service(ui.poster());
+    service.attach(factoryFor(store), kScene);
+
+    service.requestView({0, 0, 100, 100});
+    REQUIRE(ui.drainUntil([&] { return service.layerState(0).mode == Mode::BuildingOverview; }));
+    REQUIRE(store->waitFor([&] { return store->queriesReturned == 2; }));   // grown, then the view
+    service.requestView({0, 0, 100, 100});     // the same view: reused
+    service.requestView({10, 10, 100, 100});   // a pan inside the grown rectangle: queried
+    REQUIRE(store->waitFor([&] { return store->queriesReturned == 4; }));
+    ui.drain();
+    {
+        std::lock_guard<std::mutex> lock(store->mutex);
+        CHECK(store->queries.size() == 4);
+    }
+    store->scanGate.open();
+}
+
+TEST_CASE("UnderBudgetZoomInsideGrownRectRequeries", "[ResultsOverlayService]")
+{
+    auto store = std::make_shared<FakeStore>();
+    store->layers = {layerInfo("cells", 1)};
+    store->objects = {{square("a", 0, 10, 10, 20)}};
+    UiQueue ui;
+    Service service(ui.poster());
+    service.attach(factoryFor(store), kScene);
+
+    service.requestView({0, 0, 100, 100});
+    REQUIRE(ui.drainUntil([&] { return service.layerState(0).mode == Mode::Outlines; }));
+    service.requestView({5, 5, 90, 90});     // within the zoom factor: reused
+    service.requestView({20, 20, 40, 40});   // zoomed in past it: queried
+    REQUIRE(store->waitFor([&] { return store->queriesReturned == 2; }));
+    ui.drain();
+    std::lock_guard<std::mutex> lock(store->mutex);
+    REQUIRE(store->queries.size() == 2);
+    CHECK(sameRect(store->queries[1].second, {0, 0, 80, 80}));
+}
+
+TEST_CASE("InViewCountsVisibleRectNotGrown", "[ResultsOverlayService]")
+{
+    auto store = std::make_shared<FakeStore>();
+    store->layers = {layerInfo("cells", 3)};
+    // One object in the view, two in the grown margin only.
+    store->objects = {{square("in", 0, 10, 10, 20), square("left", 0, -40, 10, 20), square("below", 0, 10, 120, 20)}};
+    UiQueue ui;
+    Service service(ui.poster());
+    int changed = 0;
+    service.setOnChanged([&] { ++changed; });
+    service.attach(factoryFor(store), kScene);
+
+    service.requestView({0, 0, 100, 100});
+    REQUIRE(ui.drainUntil([&] { return service.layerState(0).mode == Mode::Outlines; }));
+    CHECK(service.layerState(0).objects.size() == 3);   // fetched for the grown rectangle
+    CHECK(service.layerState(0).inView == 1);
+
+    // A pan inside the grown rectangle reuses the objects and recounts.
+    const int changedBefore = changed;
+    service.requestView({-30, 0, 100, 100});
+    CHECK(service.layerState(0).inView == 2);
+    CHECK(changed == changedBefore + 1);
+    std::lock_guard<std::mutex> lock(store->mutex);
+    CHECK(store->queries.size() == 1);
+}
+
+TEST_CASE("GrownOverBudgetButViewWithinFallsBackToView", "[ResultsOverlayService]")
+{
+    auto store = std::make_shared<FakeStore>();
+    store->layers = {layerInfo("cells", 3)};
+    store->objects = {{square("in", 0, 10, 10, 20), square("left", 0, -40, 10, 20), square("below", 0, 10, 120, 20)}};
+    store->overBudgetAbove = 2;   // the grown rectangle holds 3, the view 1
+    UiQueue ui;
+    Service service(ui.poster());
+    service.attach(factoryFor(store), kScene);
+
+    service.requestView({0, 0, 100, 100});
+    REQUIRE(ui.drainUntil([&] { return service.layerState(0).mode == Mode::Outlines; }));
+    REQUIRE(service.layerState(0).objects.size() == 1);
+    CHECK(service.layerState(0).objects[0].id == "in");
+    CHECK(service.layerState(0).inView == 1);
+    {
+        std::lock_guard<std::mutex> lock(store->mutex);
+        REQUIRE(store->queries.size() == 2);
+        CHECK(sameRect(store->queries[0].second, {-50, -50, 200, 200}));
+        CHECK(sameRect(store->queries[1].second, {0, 0, 100, 100}));
+    }
+
+    // The objects cover the view only: a pan inside the grown rectangle but
+    // outside the view is queried again.
+    service.requestView({-30, 0, 100, 100});
+    REQUIRE(store->waitFor([&] { return store->queriesReturned == 4; }));
+    REQUIRE(ui.drainUntil([&] { return service.layerState(0).objects.size() == 2; }));
+    CHECK(service.layerState(0).inView == 2);
+
+    // Over budget in the view too: the mode and the count are the view's.
+    {
+        std::lock_guard<std::mutex> lock(store->mutex);
+        store->overBudgetAbove = 0;
+    }
+    service.requestView({0, 0, 100, 100});
+    REQUIRE(ui.drainUntil([&] { return service.layerState(0).mode == Mode::BuildingOverview; }));
+    CHECK(service.layerState(0).inView == 1);
+    CHECK(service.layerState(0).objects.empty());
+    CHECK_FALSE(service.layerState(0).scanQueued);   // 3 objects at open: no overview scan
+}
+
+TEST_CASE("ScanQueuedOnlyForLayersOverBudgetAtOpen", "[ResultsOverlayService]")
+{
+    auto store = std::make_shared<FakeStore>();
+    store->layers = {layerInfo("large", 30000), layerInfo("small", 10)};
+    store->objects = {{square("l", 0, 10, 10, 5)}, {square("s", 1, 10, 10, 5)}};
+    store->scanGate.close();
+    UiQueue ui;
+    Service service(ui.poster());
+    service.attach(factoryFor(store), kScene);
+    CHECK(service.layerState(0).scanQueued);
+    CHECK_FALSE(service.layerState(1).scanQueued);
+    store->scanGate.open();
+}
+
+TEST_CASE("ScanUsesTheSourceSibling", "[ResultsOverlayService]")
+{
+    auto store = std::make_shared<FakeStore>();
+    store->layers = {layerInfo("cells", 30000)};
+    store->objects = {{square("a", 0, 10, 10, 5)}};
+    store->overBudget = {true};
+    store->offerSibling = true;
+    UiQueue ui;
+    Service service(ui.poster());
+    service.attach(factoryFor(store), kScene);
+    service.requestView({0, 0, 100, 100});
+    REQUIRE(ui.drainUntil([&] { return service.layerState(0).mode == Mode::Overview; }));
+
+    service.reload();
+    REQUIRE(ui.drainUntil([&] { return service.layerState(0).mode == Mode::Overview; }));
+    std::lock_guard<std::mutex> lock(store->mutex);
+    CHECK(store->factoryCalls == 2);   // attach and reload only
+    CHECK(store->siblingCalls == 2);   // one scan source each
+    CHECK(store->scans.size() == 2);
+}
+
+TEST_CASE("ReuseFirstReturnsTheOpenedSourceOnce", "[ResultsOverlayService]")
+{
+    auto store = std::make_shared<FakeStore>();
+    auto opened = std::make_unique<FakeResultsSource>(store);
+    const core::ResultsSource* openedAddress = opened.get();
+    auto factory = Service::reuseFirst(std::move(opened), factoryFor(store));
+
+    auto first = factory();
+    CHECK(first.get() == openedAddress);
+    {
+        std::lock_guard<std::mutex> lock(store->mutex);
+        CHECK(store->factoryCalls == 0);
+    }
+    auto second = factory();
+    REQUIRE(second != nullptr);
+    CHECK(second.get() != openedAddress);
+    std::lock_guard<std::mutex> lock(store->mutex);
+    CHECK(store->factoryCalls == 1);
+}
+
+TEST_CASE("AttachThroughReuseFirstOpensOnce", "[ResultsOverlayService]")
+{
+    auto store = std::make_shared<FakeStore>();
+    store->layers = {layerInfo("cells", 1)};
+    store->objects = {{square("a", 0, 10, 10, 20)}};
+    UiQueue ui;
+    Service service(ui.poster());
+    service.attach(Service::reuseFirst(std::make_unique<FakeResultsSource>(store), factoryFor(store)), kScene);
+    service.requestView({0, 0, 100, 100});
+    REQUIRE(ui.drainUntil([&] { return service.layerState(0).mode == Mode::Outlines; }));
+    {
+        std::lock_guard<std::mutex> lock(store->mutex);
+        CHECK(store->factoryCalls == 0);
+    }
+    service.reload();   // a reload reads the store afresh
+    std::lock_guard<std::mutex> lock(store->mutex);
+    CHECK(store->factoryCalls == 1);
 }

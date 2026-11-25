@@ -432,12 +432,20 @@ struct MainWindow::Impl
     std::string resultsWorkspacePath;
     /// The slide path the user said "Attach anyway" for, or empty.
     std::string resultsAttachAnywayPath;
+    /// What the attachment was made for: a reopen of this same slide file and
+    /// scene (a colour-profile reopen) keeps it rather than attaching again.
+    std::string resultsSlideId;
+    std::string resultsSlidePath;
+    int resultsScene = -1;
 
     /// File > Open Processing Results...: folder, slide check, attach.
     void openProcessingResults();
-    /// Opens `dir`, attaches it to the open scene and restores `savedViews`
-    /// by layer name. Throws core::ResultsError (left detached).
-    void attachResults(const std::string& dir, const std::vector<core::ResultsLayerView>& savedViews);
+    /// Attaches `opened` -- `dir`'s source, already opened to read its
+    /// provenance, so the store is opened once -- to the open scene and
+    /// restores `savedViews` by layer name. Throws core::ResultsError (left
+    /// detached).
+    void attachResults(const std::string& dir, const std::vector<core::ResultsLayerView>& savedViews,
+                       std::unique_ptr<core::ResultsSource> opened);
     /// Detaches and forgets nothing: closing a slide keeps its attachment.
     void detachResults();
     /// File > Close Processing Results and the tab's Close: detaches and
@@ -882,6 +890,9 @@ struct MainWindow::Impl
             // A pending properties edit is committed by the aboutToCloseSlide
             // listener above, which closeSlide() emits before it flushes.
             viewportWidget->closeSlide();
+            // Here and not on slideClosed, which every open emits too: a slide
+            // close detaches the processing results and keeps them remembered.
+            detachResults();
             closeAction->setEnabled(false);
             // Paired with closeAction at all four of its sites -- construction,
             // here, a successful open and a failed one: the three exports belong
@@ -1391,6 +1402,8 @@ struct MainWindow::Impl
                 // the only thing that emits this is an open that failed, so the
                 // title is naming a slide that is not there.
                 owner->setWindowTitle(kApplicationTitle);
+                // No slide is open: the results the slide close kept go too.
+                detachResults();
                 QMessageBox::critical(owner, "Error", QString::fromStdString(message));
             });
 
@@ -1426,10 +1439,13 @@ struct MainWindow::Impl
             // colour-profile reopen comes back through slideOpened, which sets
             // the counts and the current values again.
             ztNavigationWidget->setSliceFrameCounts(1, 1);
-            // Closing the slide detaches its processing results; the attachment
-            // stays remembered, so reopening the slide reattaches. A scene
-            // switch and a colour-profile reopen come back through slideOpened.
-            detachResults();
+            // Every open closes the slide first, so this cannot tell a reopen
+            // from a close: the viewport lets go of the processing results but
+            // the service stays attached. slideOpened keeps the attachment for
+            // the same slide file and scene (a colour-profile reopen) and
+            // replaces it otherwise; File > Close Slide and a failed open
+            // detach. The attachment stays remembered either way.
+            viewportWidget->setResultsService(nullptr);
 
             colorManagementAction->setEnabled(false);
             setSlideProfileAction->setEnabled(false);
@@ -2744,22 +2760,32 @@ void MainWindow::Impl::updateResultsActions()
     closeResultsAction->setEnabled(results != nullptr && results->attached());
 }
 
-void MainWindow::Impl::attachResults(const std::string& dir, const std::vector<core::ResultsLayerView>& savedViews)
+void MainWindow::Impl::attachResults(const std::string& dir, const std::vector<core::ResultsLayerView>& savedViews,
+                                     std::unique_ptr<core::ResultsSource> opened)
 {
     const core::SlideInfo& info = viewportWidget->slideInfo();
     const core::Rect<double> sceneRect{0.0, 0.0, static_cast<double>(info.width), static_cast<double>(info.height)};
 
     viewportWidget->setResultsService(nullptr);
     resultsWorkspacePath.clear();
+    resultsSlideId.clear();
+    resultsSlidePath.clear();
+    resultsScene = -1;
     results->setClassColourOverrides(resultsSettings->classColours());
     try {
-        results->attach([dir]() { return infra::ProcessorWorkspaceSource::open(dir); }, sceneRect);
+        // The first call takes the source already opened; Reload opens anew.
+        results->attach(app::ResultsOverlayService::reuseFirst(
+                            std::move(opened), [dir]() { return infra::ProcessorWorkspaceSource::open(dir); }),
+                        sceneRect);
     } catch (const core::ResultsError&) {
         resultsPanel->scheduleRebuild();
         updateResultsActions();
         throw;
     }
     resultsWorkspacePath = dir;
+    resultsSlideId = viewportWidget->currentSlideId();
+    resultsSlidePath = viewportWidget->currentFilePath();
+    resultsScene = viewportWidget->currentSceneIndex();
 
     const auto& layers = results->layers();
     for (std::size_t i = 0; i < layers.size(); ++i) {
@@ -2788,6 +2814,9 @@ void MainWindow::Impl::detachResults()
     }
     resultsWorkspacePath.clear();
     resultsAttachAnywayPath.clear();
+    resultsSlideId.clear();
+    resultsSlidePath.clear();
+    resultsScene = -1;
     if (resultsPanel != nullptr) {
         resultsPanel->scheduleRebuild();
     }
@@ -2850,12 +2879,10 @@ void MainWindow::Impl::openProcessingResults()
     std::string attachAnyway = sameWorkspace ? remembered->attachAnywaySlidePath : std::string();
 
     try {
-        core::ResultsProvenance provenance;
-        {
-            // Opened once, read-only, to read where the run's slide was.
-            const auto source = infra::ProcessorWorkspaceSource::open(dir);
-            provenance = source->provenance();
-        }
+        // Opened once, read-only: its provenance is read here, and the same
+        // source is the one attachResults() attaches.
+        std::unique_ptr<core::ResultsSource> source = infra::ProcessorWorkspaceSource::open(dir);
+        const core::ResultsProvenance provenance = source->provenance();
         switch (core::decideAttachment(provenance, slidePath, scene, attachAnyway)) {
         case core::AttachmentDecision::RefuseScene:
             QMessageBox::warning(owner, title,
@@ -2889,7 +2916,8 @@ void MainWindow::Impl::openProcessingResults()
             || viewportWidget->currentSceneIndex() != scene) {
             return;
         }
-        attachResults(dir, sameWorkspace ? remembered->layers : std::vector<core::ResultsLayerView>{});
+        attachResults(dir, sameWorkspace ? remembered->layers : std::vector<core::ResultsLayerView>{},
+                      std::move(source));
     } catch (const core::ResultsError& e) {
         QMessageBox::warning(owner, title, QString::fromUtf8(e.what()));
         return;
@@ -2923,24 +2951,34 @@ void MainWindow::Impl::reloadProcessingResults()
 
 void MainWindow::Impl::reattachResultsForOpenScene()
 {
-    detachResults();
     const std::string slideId = viewportWidget->currentSlideId();
+    const int scene = viewportWidget->currentSceneIndex();
+    const std::string slidePath = viewportWidget->currentFilePath();
+    // A colour-profile reopen of the same scene: the slide close kept the
+    // attachment (only an explicit close or a failed open detaches), so keep
+    // it -- no store open, no layer read, no scan restart. Just hand the
+    // viewport the service again.
+    if (results->attached() && !slideId.empty() && !viewportWidget->isAuxImageShown() && slideId == resultsSlideId
+        && scene == resultsScene && slidePath == resultsSlidePath) {
+        viewportWidget->setResultsService(results.get());
+        resultsPanel->scheduleRefresh();
+        updateResultsActions();
+        return;
+    }
+    detachResults();
     if (slideId.empty() || viewportWidget->isAuxImageShown()) {
         return;
     }
-    const int scene = viewportWidget->currentSceneIndex();
     const auto remembered = resultsSettings->find(slideId, scene);
     if (!remembered || remembered->workspacePath.empty()) {
         return;
     }
-    const std::string slidePath = viewportWidget->currentFilePath();
     const QString workspace = QString::fromStdString(remembered->workspacePath);
     try {
-        core::ResultsProvenance provenance;
-        {
-            const auto source = infra::ProcessorWorkspaceSource::open(remembered->workspacePath);
-            provenance = source->provenance();
-        }
+        // Opened once: provenance here, then the same source is attached.
+        std::unique_ptr<core::ResultsSource> source =
+            infra::ProcessorWorkspaceSource::open(remembered->workspacePath);
+        const core::ResultsProvenance provenance = source->provenance();
         switch (core::decideAttachment(provenance, slidePath, scene, remembered->attachAnywaySlidePath)) {
         case core::AttachmentDecision::Attach:
             break;
@@ -2957,7 +2995,7 @@ void MainWindow::Impl::reattachResultsForOpenScene()
                     .arg(provenance.scene));
             return;
         }
-        attachResults(remembered->workspacePath, remembered->layers);
+        attachResults(remembered->workspacePath, remembered->layers, std::move(source));
     } catch (const core::ResultsError& e) {
         statusBarManager->showTransientMessage(
             tr("Processing results not reattached: %1").arg(QString::fromUtf8(e.what())));
@@ -3176,6 +3214,8 @@ MainWindow::MainWindow(QWidget* parent)
         m_impl->saveResultsSettings();
         m_impl->viewportWidget->update();
     });
+    connect(m_impl->resultsPanel, &ResultsPanel::layerViewPreviewed, this,
+            [this]() { m_impl->viewportWidget->update(); });
     connect(m_impl->resultsPanel, &ResultsPanel::classColourChosen, this,
             [this](const std::string& className, core::Color colour) {
                 m_impl->resultsSettings->setClassColour(className, colour);

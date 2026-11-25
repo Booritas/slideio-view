@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -40,6 +41,7 @@ struct ResultLayerInfo
     std::string name;
     int64_t objectCount = 0;
     std::vector<ResultClassInfo> classes;   ///< legend order: descending objectCount, then name
+    int64_t unclassifiedCount = 0;          ///< objects whose effective label set is empty
     std::string stageState;                 ///< "", "stale" or "failed"
 };
 
@@ -92,6 +94,13 @@ public:
     virtual void scan(int layer,
                       const std::function<void(const Rect<double>&, const std::vector<int>&)>& visit,
                       const std::function<bool(double)>& progress) = 0;
+    /// Opens another source on the same store for use on another thread, cheaply:
+    /// it reuses this source's layer list and class mapping instead of reading
+    /// them again, so its layers() and class indices match this one's. sibling()
+    /// reads only what this source read when it opened, never the store; the
+    /// function it returns may be called on any thread. Empty when the source
+    /// offers no such open, and then the caller opens a full source.
+    virtual std::function<std::unique_ptr<ResultsSource>()> sibling() const { return {}; }
 };
 
 constexpr int64_t kResultsDrawBudget = 20000;

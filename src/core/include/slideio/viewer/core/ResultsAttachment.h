@@ -11,9 +11,11 @@
 namespace slideio::viewer::core
 {
 
-/// True when both paths name the same file after making them absolute and
-/// lexically normalising them. Case-insensitive on Windows only. No file
-/// system access beyond the current directory. An empty path equals nothing.
+/// True when both UTF-8 paths name the same file after making them absolute,
+/// lexically normalising them and dropping a trailing separator. Case-insensitive
+/// (ASCII) on Windows only. No file system access beyond the current directory.
+/// An empty path equals nothing; a path that cannot be converted equals nothing
+/// and never throws.
 [[nodiscard]] bool sameSlidePath(const std::string& a, const std::string& b);
 
 enum class AttachmentDecision

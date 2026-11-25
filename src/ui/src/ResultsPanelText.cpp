@@ -40,6 +40,11 @@ std::string buildingText(double fraction)
     return "building overview\xE2\x80\xA6 " + std::to_string(percent) + " %";
 }
 
+std::string tooManyToOutlineText()
+{
+    return "too many to outline \xE2\x80\x94 Reload to build the overview";
+}
+
 std::string measurementLine(const core::ResultMeasurement& measurement)
 {
     std::ostringstream value;

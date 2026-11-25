@@ -53,6 +53,9 @@ signals:
     void closeRequested();
     /// A layer view was changed through the service; save it and repaint.
     void layerViewChanged();
+    /// A layer view was changed through the service and is not to be saved yet
+    /// (an opacity spin still moving): repaint only. layerViewChanged follows.
+    void layerViewPreviewed();
     /// The user picked `colour` for the class `className` in a legend.
     void classColourChosen(const std::string& className, slideio::viewer::core::Color colour);
 

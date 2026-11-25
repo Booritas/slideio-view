@@ -89,6 +89,49 @@ TEST_CASE("ProcessorWorkspaceSourceTest: LayersAndClasses", "[infra][ProcessorWo
     CHECK(layers[1].classes[0].objectCount == 10);
     CHECK(layers[1].classes[1].name == "tumour");
     CHECK(layers[1].classes[1].objectCount == 10);
+    // Unclassified: an empty effective label set, the asserted stroma label included.
+    CHECK(layers[0].unclassifiedCount == 1);
+    CHECK(layers[1].unclassifiedCount == 10);
+}
+
+TEST_CASE("ProcessorWorkspaceSourceTest: SiblingSharesLayersAndReadsTheSameStore", "[infra][ProcessorWorkspaceSource]")
+{
+    QTemporaryDir temporary;
+    REQUIRE(temporary.isValid());
+    auto fixture = ProcessorFixture::create(tempPath(temporary));
+    auto source = ProcessorWorkspaceSource::open(tempPath(temporary));
+    const auto opener = source->sibling();
+    REQUIRE(opener);
+    const auto sibling = opener();
+    REQUIRE(sibling != nullptr);
+
+    const auto layers = source->layers();
+    const auto siblingLayers = sibling->layers();
+    REQUIRE(siblingLayers.size() == layers.size());
+    for (size_t l = 0; l < layers.size(); ++l) {
+        CHECK(siblingLayers[l].name == layers[l].name);
+        CHECK(siblingLayers[l].objectCount == layers[l].objectCount);
+        CHECK(siblingLayers[l].unclassifiedCount == layers[l].unclassifiedCount);
+        REQUIRE(siblingLayers[l].classes.size() == layers[l].classes.size());
+        for (size_t c = 0; c < layers[l].classes.size(); ++c) {
+            CHECK(siblingLayers[l].classes[c].name == layers[l].classes[c].name);
+        }
+    }
+    CHECK(sibling->provenance().slidePath == source->provenance().slidePath);
+
+    // Same class indices: the sibling scans what the primary queries.
+    int visits = 0;
+    std::vector<int> classesSeen;
+    sibling->scan(
+        kNuclei,
+        [&](const Rect<double>&, const std::vector<int>& classes) {
+            ++visits;
+            classesSeen.insert(classesSeen.end(), classes.begin(), classes.end());
+        },
+        [](double) { return true; });
+    CHECK(visits == 30);
+    CHECK(std::count(classesSeen.begin(), classesSeen.end(), classIndex(*source, kNuclei, "stroma")) == 10);
+    CHECK(std::count(classesSeen.begin(), classesSeen.end(), classIndex(*source, kNuclei, "tumour")) == 10);
 }
 
 TEST_CASE("ProcessorWorkspaceSourceTest: QueryReturnsIntersectingWithHoles", "[infra][ProcessorWorkspaceSource]")

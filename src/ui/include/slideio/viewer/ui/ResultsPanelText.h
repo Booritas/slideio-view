@@ -23,6 +23,11 @@ namespace slideio::viewer::ui
 /// to [0, 100], so it reads 100 % only once the scan is done.
 [[nodiscard]] std::string buildingText(double fraction);
 
+/// A layer over the draw budget in view with no overview scan queued -- it was
+/// within budget when attached or last reloaded: "too many to outline — Reload
+/// to build the overview".
+[[nodiscard]] std::string tooManyToOutlineText();
+
 /// One line of the selected result's details: "area  41.0 px²", with
 /// " (<stage>)" appended for a measurement another stage asserted. Values of
 /// magnitude 1 or more (and 0) show one decimal; smaller ones three

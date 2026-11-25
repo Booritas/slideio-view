@@ -31,6 +31,8 @@ namespace
 {
 
 constexpr int kRefreshDelayMs = 50;
+/// An opacity spin is saved this long after its last step, or when its editing finishes.
+constexpr int kOpacitySaveDelayMs = 500;
 constexpr int kSwatchSize = 14;
 
 QColor toQColor(core::Color c)
@@ -86,6 +88,7 @@ struct ResultsPanel::Impl
 
     bool rebuildQueued = false;
     QTimer* refreshTimer = nullptr;
+    QTimer* opacitySaveTimer = nullptr;
 };
 
 ResultsPanel::ResultsPanel(QWidget* parent)
@@ -129,6 +132,11 @@ ResultsPanel::ResultsPanel(QWidget* parent)
     m_impl->refreshTimer->setSingleShot(true);
     m_impl->refreshTimer->setInterval(kRefreshDelayMs);
     connect(m_impl->refreshTimer, &QTimer::timeout, this, [this]() { refresh(); });
+
+    m_impl->opacitySaveTimer = new QTimer(this);
+    m_impl->opacitySaveTimer->setSingleShot(true);
+    m_impl->opacitySaveTimer->setInterval(kOpacitySaveDelayMs);
+    connect(m_impl->opacitySaveTimer, &QTimer::timeout, this, &ResultsPanel::layerViewChanged);
 
     connect(m_impl->reloadButton, &QPushButton::clicked, this, &ResultsPanel::reloadRequested);
     connect(m_impl->closeButton, &QPushButton::clicked, this, &ResultsPanel::closeRequested);
@@ -320,11 +328,8 @@ void ResultsPanel::rebuild()
             const core::Color c = ci < classColours.size() ? classColours[ci] : service->layerColour(layer);
             addLegendRow(cls.name, utf8(cls.name), c, utf8(groupedCount(cls.objectCount)), true);
         }
-        // The Unclassified row's count is only known when the layer has no
-        // classes at all: the class counts overlap, so the layer total minus
-        // their sum is not it.
         addLegendRow(app::ResultsOverlayService::kUnclassifiedName, tr("Unclassified"), service->layerColour(layer),
-                     info.classes.empty() ? utf8(groupedCount(info.objectCount)) : QString(), false);
+                     utf8(groupedCount(info.unclassifiedCount)), false);
         legend->setColumnStretch(2, 1);
         rows->addLayout(legend);
 
@@ -353,8 +358,22 @@ void ResultsPanel::rebuild()
             opacity->setEnabled(on);
             edit([on](core::ResultsLayerView& v) { v.fill = on; });
         });
-        connect(opacity, qOverload<int>(&QSpinBox::valueChanged), this, [edit](int percent) {
-            edit([percent](core::ResultsLayerView& v) { v.fillOpacity = percent / 100.0; });
+        // Every step repaints; the settings are written once the spinning stops.
+        connect(opacity, qOverload<int>(&QSpinBox::valueChanged), this, [this, layer](int percent) {
+            if (m_impl->service == nullptr || !m_impl->service->attached()) {
+                return;
+            }
+            core::ResultsLayerView next = m_impl->service->layerView(layer);
+            next.fillOpacity = percent / 100.0;
+            m_impl->service->setLayerView(layer, next);
+            emit layerViewPreviewed();
+            m_impl->opacitySaveTimer->start();
+        });
+        connect(opacity, &QSpinBox::editingFinished, this, [this]() {
+            if (m_impl->opacitySaveTimer->isActive()) {
+                m_impl->opacitySaveTimer->stop();
+                emit layerViewChanged();
+            }
         });
         connect(byClass, &QCheckBox::toggled, this, [edit](bool on) {
             edit([on](core::ResultsLayerView& v) { v.colourByClass = on; });
@@ -413,7 +432,9 @@ void ResultsPanel::refresh()
                 text = utf8(inViewText(state.inView));
                 break;
             case Mode::BuildingOverview:
-                text = utf8(buildingText(state.scanFraction));
+                // No scan queued: the layer was within budget when read, so
+                // only a Reload builds its overview.
+                text = utf8(state.scanQueued ? buildingText(state.scanFraction) : tooManyToOutlineText());
                 break;
             }
         }

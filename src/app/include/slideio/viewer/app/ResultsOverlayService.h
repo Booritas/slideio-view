@@ -28,8 +28,8 @@ namespace slideio::viewer::app
 /// there. The only store reads on the UI thread are the layer metadata reads in
 /// attach() and reload(); queries and details run on the query thread through
 /// the source attach() opened, scans on the scan thread through a second
-/// source from the factory. Each posted task carries the attach generation it
-/// was made for and does nothing once detach(), reload(), attach() or the
+/// source: the first source's sibling() when it offers one, else the factory.
+/// Each posted task carries the attach generation it was made for and does nothing once detach(), reload(), attach() or the
 /// destructor has run since. The Poster must queue the task, never run it
 /// synchronously, and must not call back into the service.
 class ResultsOverlayService
@@ -40,6 +40,11 @@ public:
 
     /// The name hiddenClasses uses for a layer's "Unclassified" legend row.
     static constexpr const char* kUnclassifiedName = "";
+
+    /// A factory whose first call returns `opened` -- a source the caller has
+    /// already opened, to read its provenance -- and whose later calls call
+    /// `open`. So an attach opens the store once. Safe to call on any thread.
+    static SourceFactory reuseFirst(std::unique_ptr<core::ResultsSource> opened, SourceFactory open);
 
     explicit ResultsOverlayService(Poster post);
     ~ResultsOverlayService();
@@ -59,19 +64,33 @@ public:
     bool attached() const;
     const std::vector<core::ResultLayerInfo>& layers() const;
 
-    /// Latest request wins. Does nothing when detached or no layer is visible,
-    /// or when the view lies inside the last queried (grown) rectangle and no
-    /// setting changed since.
+    /// Latest request wins. Each visible layer is queried over the view grown
+    /// by half its size on every side; a layer over budget there is queried
+    /// again over the view itself, and that answer decides its mode and count.
+    /// Does nothing when detached or no layer is visible. Reuses the last
+    /// answers -- recounting inView over the new view -- when no setting
+    /// changed and either the view is the last one queried, or it lies inside
+    /// every rectangle the visible layers' objects cover, no visible layer was
+    /// over budget, and its size is within kZoomRequeryFactor of the last
+    /// queried view's.
     void requestView(const core::Rect<double>& visibleSlideRect);
+
+    /// A view whose width or height differs from the last queried view's by
+    /// more than this factor is a zoom, and is queried again.
+    static constexpr double kZoomRequeryFactor = 1.25;
 
     enum class LayerMode { Hidden, Outlines, Overview, BuildingOverview };
     struct LayerState
     {
         LayerMode mode = LayerMode::Hidden;
-        int64_t inView = 0;
+        int64_t inView = 0;   ///< objects intersecting the visible rectangle
         double scanFraction = 0.0;
         std::vector<core::ResultObject> objects;
         std::shared_ptr<const core::OverviewGrid> grid;
+        /// An overview scan of this layer was queued at attach or reload (its
+        /// object count was over budget). False: BuildingOverview never ends
+        /// until a Reload.
+        bool scanQueued = false;
     };
     const LayerState& layerState(int layer) const;
 
@@ -106,7 +125,8 @@ private:
     {
         uint64_t generation = 0;
         std::shared_ptr<core::ResultsSource> source;
-        core::Rect<double> rect;
+        core::Rect<double> rect;   ///< the view grown
+        core::Rect<double> view;   ///< the visible rectangle
         std::vector<int> layers;
     };
     struct DetailsJob
@@ -132,6 +152,9 @@ private:
         LayerState state;
         bool hasAnswer = false;
         bool overBudget = false;
+        /// The rectangle the answer's objects cover: the grown rectangle, or
+        /// the view when the grown one was over budget.
+        std::optional<core::Rect<double>> covered;
     };
 
     void queryLoop();
@@ -142,7 +165,10 @@ private:
     void post(uint64_t generation, std::function<void()> apply);
     void postError(uint64_t generation, const std::string& message);
 
-    void startGeneration(std::shared_ptr<core::ResultsSource> source, std::vector<core::ResultLayerInfo> layers);
+    void startGeneration(std::shared_ptr<core::ResultsSource> source, std::vector<core::ResultLayerInfo> layers,
+                         SourceFactory scanFactory);
+    bool canReuse(const core::Rect<double>& view) const;
+    void recountInView(const core::Rect<double>& view);
     void issueQuery(const core::Rect<double>& view);
     void requestDetails(const std::string& objectId);
     void startScans();
@@ -156,6 +182,7 @@ private:
     // UI thread state.
     bool m_attached = false;
     SourceFactory m_factory;
+    SourceFactory m_scanFactory;   ///< the source's sibling(); empty: scans use m_factory
     core::Rect<double> m_sceneRect;
     std::shared_ptr<core::ResultsSource> m_source;   ///< used by the query thread only
     std::vector<core::ResultLayerInfo> m_layers;
@@ -163,7 +190,8 @@ private:
     std::vector<LayerData> m_data;
     std::map<std::string, core::Color> m_classOverrides;
     std::optional<core::Rect<double>> m_lastView;
-    std::optional<core::Rect<double>> m_lastGrown;
+    std::optional<core::Rect<double>> m_lastGrown;     ///< the grown rectangle last queried
+    std::optional<core::Rect<double>> m_lastQueried;   ///< the view last queried
     bool m_settingsChanged = true;
     std::optional<std::string> m_selectedId;
     std::optional<core::ResultObject> m_selectedObject;

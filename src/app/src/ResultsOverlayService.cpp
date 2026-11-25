@@ -26,6 +26,33 @@ core::Rect<double> grown(const core::Rect<double>& view)
     return {view.x - view.width * 0.5, view.y - view.height * 0.5, view.width * 2.0, view.height * 2.0};
 }
 
+bool intersects(const core::Rect<double>& a, const core::Rect<double>& b)
+{
+    return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+}
+
+bool sameRect(const core::Rect<double>& a, const core::Rect<double>& b)
+{
+    return a.x == b.x && a.y == b.y && a.width == b.width && a.height == b.height;
+}
+
+/// True when `size` differs from `previous` by more than the factor either way.
+bool zoomed(double size, double previous, double factor)
+{
+    if (!(size > 0.0) || !(previous > 0.0))
+        return size != previous;
+    return size > previous * factor || previous > size * factor;
+}
+
+int64_t countIntersecting(const std::vector<core::ResultObject>& objects, const core::Rect<double>& view)
+{
+    int64_t n = 0;
+    for (const auto& object : objects)
+        if (intersects(object.bounds, view))
+            ++n;
+    return n;
+}
+
 bool contains(const std::vector<std::string>& names, const std::string& name)
 {
     return std::find(names.begin(), names.end(), name) != names.end();
@@ -50,6 +77,26 @@ const core::ResultsLayerView kNoLayerView{};
 constexpr double kProgressStep = 0.01;
 
 } // namespace
+
+ResultsOverlayService::SourceFactory ResultsOverlayService::reuseFirst(std::unique_ptr<core::ResultsSource> opened,
+                                                                      SourceFactory open)
+{
+    struct First
+    {
+        std::mutex mutex;
+        std::unique_ptr<core::ResultsSource> source;
+    };
+    auto first = std::make_shared<First>();
+    first->source = std::move(opened);
+    return [first, open = std::move(open)]() -> std::unique_ptr<core::ResultsSource> {
+        {
+            std::lock_guard<std::mutex> lock(first->mutex);
+            if (first->source)
+                return std::move(first->source);
+        }
+        return open ? open() : nullptr;
+    };
+}
 
 ResultsOverlayService::ResultsOverlayService(Poster post)
     : m_post(std::move(post))
@@ -91,11 +138,12 @@ void ResultsOverlayService::attach(SourceFactory factory, const core::Rect<doubl
     if (!source)
         throw core::ResultsError("cannot open results");
     auto layers = source->layers();
+    auto scanFactory = source->sibling();
 
     m_factory = std::move(factory);
     m_sceneRect = sceneRect;
     m_views.clear();
-    startGeneration(std::move(source), std::move(layers));
+    startGeneration(std::move(source), std::move(layers), std::move(scanFactory));
 }
 
 void ResultsOverlayService::detach()
@@ -115,12 +163,14 @@ void ResultsOverlayService::detach()
     }
     m_attached = false;
     m_factory = nullptr;
+    m_scanFactory = nullptr;
     m_source.reset();
     m_layers.clear();
     m_views.clear();
     m_data.clear();
     m_lastView.reset();
     m_lastGrown.reset();
+    m_lastQueried.reset();
     clearSelection();
 }
 
@@ -130,11 +180,13 @@ void ResultsOverlayService::reload()
         return;
     std::shared_ptr<core::ResultsSource> source;
     std::vector<core::ResultLayerInfo> layers;
+    SourceFactory scanFactory;
     try {
         source = m_factory();
         if (!source)
             throw core::ResultsError("cannot open results");
         layers = source->layers();
+        scanFactory = source->sibling();
     } catch (const core::ResultsError&) {
         detach();
         throw;
@@ -165,7 +217,7 @@ void ResultsOverlayService::reload()
     const std::optional<std::string> selectedId = m_selectedId;
     const auto lastView = m_lastView;
 
-    startGeneration(std::move(source), std::move(layers));
+    startGeneration(std::move(source), std::move(layers), std::move(scanFactory));
 
     if (selected && selected->layer >= 0) {
         m_selectedId = selectedId;
@@ -179,7 +231,7 @@ void ResultsOverlayService::reload()
 }
 
 void ResultsOverlayService::startGeneration(std::shared_ptr<core::ResultsSource> source,
-                                            std::vector<core::ResultLayerInfo> layers)
+                                            std::vector<core::ResultLayerInfo> layers, SourceFactory scanFactory)
 {
     {
         std::lock_guard<std::mutex> lock(m_postMutex);
@@ -203,11 +255,13 @@ void ResultsOverlayService::startGeneration(std::shared_ptr<core::ResultsSource>
     }
 
     m_source = std::move(source);
+    m_scanFactory = std::move(scanFactory);
     m_layers = std::move(layers);
     m_views = std::move(views);
     m_data.assign(m_layers.size(), LayerData{});
     m_lastView.reset();
     m_lastGrown.reset();
+    m_lastQueried.reset();
     m_settingsChanged = true;
     clearSelection();
     m_attached = true;
@@ -230,11 +284,52 @@ void ResultsOverlayService::requestView(const core::Rect<double>& visibleSlideRe
 {
     if (!m_attached)
         return;
-    if (!m_settingsChanged && m_lastGrown && inside(visibleSlideRect, *m_lastGrown)) {
+    if (canReuse(visibleSlideRect)) {
         m_lastView = visibleSlideRect;
+        recountInView(visibleSlideRect);
         return;
     }
     issueQuery(visibleSlideRect);
+}
+
+bool ResultsOverlayService::canReuse(const core::Rect<double>& view) const
+{
+    if (m_settingsChanged || !m_lastGrown || !m_lastQueried)
+        return false;
+    if (sameRect(view, *m_lastQueried))
+        return true;   // the same query would give the same answers
+    if (!inside(view, *m_lastGrown))
+        return false;
+    // Zooming in on an over-budget layer is how its outlines take over (spec 5.3a).
+    if (zoomed(view.width, m_lastQueried->width, kZoomRequeryFactor)
+        || zoomed(view.height, m_lastQueried->height, kZoomRequeryFactor))
+        return false;
+    for (std::size_t l = 0; l < m_data.size(); ++l) {
+        if (!m_views[l].visible || !m_data[l].hasAnswer)
+            continue;   // a visible layer with no answer yet waits on the query for m_lastGrown
+        if (m_data[l].overBudget)
+            return false;
+        if (m_data[l].covered && !inside(view, *m_data[l].covered))
+            return false;
+    }
+    return true;
+}
+
+void ResultsOverlayService::recountInView(const core::Rect<double>& view)
+{
+    bool changed = false;
+    for (std::size_t l = 0; l < m_data.size(); ++l) {
+        auto& data = m_data[l];
+        if (!m_views[l].visible || !data.hasAnswer || data.overBudget)
+            continue;
+        const int64_t inView = countIntersecting(data.state.objects, view);
+        if (inView != data.state.inView) {
+            data.state.inView = inView;
+            changed = true;
+        }
+    }
+    if (changed)
+        notifyChanged();
 }
 
 void ResultsOverlayService::issueQuery(const core::Rect<double>& view)
@@ -249,7 +344,9 @@ void ResultsOverlayService::issueQuery(const core::Rect<double>& view)
     job.generation = m_generation;
     job.source = m_source;
     job.rect = grown(view);
+    job.view = view;
     m_lastGrown = job.rect;
+    m_lastQueried = view;
     m_settingsChanged = false;
     {
         std::lock_guard<std::mutex> lock(m_queryMutex);
@@ -288,31 +385,54 @@ void ResultsOverlayService::queryLoop()
         if (query && current(query->generation)) {
             const uint64_t generation = query->generation;
             try {
-                auto answers = std::make_shared<std::vector<std::pair<int, core::ResultQueryAnswer>>>();
+                struct LayerAnswer
+                {
+                    int layer = 0;
+                    core::ResultQueryAnswer answer;   ///< inView counts the visible rectangle
+                    core::Rect<double> covered;
+                };
+                auto answers = std::make_shared<std::vector<LayerAnswer>>();
                 bool complete = true;
                 for (const int layer : query->layers) {
                     if (!current(generation)) {
                         complete = false;
                         break;
                     }
-                    answers->emplace_back(layer, query->source->query(layer, query->rect, core::kResultsDrawBudget));
+                    LayerAnswer a;
+                    a.layer = layer;
+                    a.answer = query->source->query(layer, query->rect, core::kResultsDrawBudget);
+                    a.covered = query->rect;
+                    if (a.answer.overBudget) {
+                        // Over budget around the view: the view itself decides (spec 5.2, "in view").
+                        if (!current(generation)) {
+                            complete = false;
+                            break;
+                        }
+                        a.answer = query->source->query(layer, query->view, core::kResultsDrawBudget);
+                        a.covered = query->view;
+                        if (!a.answer.overBudget)
+                            a.answer.inView = static_cast<int64_t>(a.answer.objects.size());
+                    } else {
+                        a.answer.inView = countIntersecting(a.answer.objects, query->view);
+                    }
+                    answers->push_back(std::move(a));
                 }
                 if (complete) {
                     post(generation, [this, answers] {
-                        for (auto& [layer, answer] : *answers) {
+                        for (auto& a : *answers) {
+                            const int layer = a.layer;
                             const auto l = static_cast<std::size_t>(layer);
                             if (l >= m_data.size() || !m_views[l].visible)
                                 continue;   // hidden since the request
                             auto& data = m_data[l];
                             data.hasAnswer = true;
-                            data.overBudget = answer.overBudget;
-                            if (answer.overBudget) {
+                            data.overBudget = a.answer.overBudget;
+                            data.covered = a.covered;
+                            data.state.inView = a.answer.inView;
+                            if (a.answer.overBudget)
                                 data.state.objects.clear();
-                                data.state.inView = answer.inView;
-                            } else {
-                                data.state.objects = std::move(answer.objects);
-                                data.state.inView = static_cast<int64_t>(data.state.objects.size());
-                            }
+                            else
+                                data.state.objects = std::move(a.answer.objects);
                             refreshMode(layer);
                         }
                         notifyChanged();
@@ -349,7 +469,8 @@ void ResultsOverlayService::startScans()
 {
     ScanJob job;
     job.generation = m_generation;
-    job.factory = m_factory;
+    // The sibling reuses the layer list just read; the factory would read it again.
+    job.factory = m_scanFactory ? m_scanFactory : m_factory;
     job.sceneRect = m_sceneRect;
     std::vector<std::size_t> order;
     for (std::size_t i = 0; i < m_layers.size(); ++i)
@@ -364,6 +485,7 @@ void ResultsOverlayService::startScans()
         for (const auto& c : m_layers[i].classes)
             layer.classCounts.push_back(c.objectCount);
         job.layers.push_back(std::move(layer));
+        m_data[i].state.scanQueued = true;
     }
     {
         std::lock_guard<std::mutex> lock(m_scanMutex);
@@ -540,6 +662,7 @@ void ResultsOverlayService::setLayerView(int layer, const core::ResultsLayerView
         auto& data = m_data[l];
         data.hasAnswer = false;
         data.overBudget = false;
+        data.covered.reset();
         data.state.objects.clear();
         data.state.inView = 0;
     }

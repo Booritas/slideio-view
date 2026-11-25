@@ -25,6 +25,34 @@ TEST_CASE("SameSlidePathEmptyEqualsNothing", "[core][ResultsAttachment]")
     CHECK_FALSE(sameSlidePath("", "/a/c.svs"));
 }
 
+TEST_CASE("SameSlidePathReadsNonAsciiAsUtf8", "[core][ResultsAttachment]")
+{
+    // "/Präparate/Schnitt_1.svs", "/Präparate/Schnitt_2.svs" and a Japanese
+    // folder, in UTF-8: on Windows these are not in the ANSI code page's terms.
+    const std::string german = "/Pr\xC3\xA4parate/Schnitt_1.svs";
+    const std::string germanOther = "/Pr\xC3\xA4parate/Schnitt_2.svs";
+    const std::string japanese = "/\xE6\xA8\x99\xE6\x9C\xAC/\xE5\x88\x87\xE7\x89\x87.svs";
+    const std::string japaneseOther = "/\xE6\xA8\x99\xE6\x9C\xAC/\xE5\x88\x87\xE7\x89\x87\xE4\xBA\x8C.svs";
+    CHECK(sameSlidePath(german, german));
+    CHECK(sameSlidePath(japanese, japanese));
+    CHECK_FALSE(sameSlidePath(german, germanOther));
+    CHECK_FALSE(sameSlidePath(japanese, japaneseOther));
+    CHECK_FALSE(sameSlidePath(german, japanese));
+    CHECK(sameSlidePath("/Pr\xC3\xA4parate/x/../Schnitt_1.svs", german));
+}
+
+TEST_CASE("SameSlidePathIgnoresTrailingSeparator", "[core][ResultsAttachment]")
+{
+    CHECK(sameSlidePath("/a/workspace/", "/a/workspace"));
+    CHECK(sameSlidePath("/a/workspace//", "/a/workspace"));
+    CHECK(sameSlidePath("/", "/"));
+    CHECK_FALSE(sameSlidePath("/a/workspace/", "/a"));
+#ifdef _WIN32
+    CHECK(sameSlidePath("C:\\Results\\ws\\", "c:/results/ws"));
+    CHECK(sameSlidePath("C:\\", "c:/"));
+#endif
+}
+
 TEST_CASE("decideAttachment covers every branch", "[core][ResultsAttachment]")
 {
     const ResultsProvenance ws{"/slides/a.svs", 1};

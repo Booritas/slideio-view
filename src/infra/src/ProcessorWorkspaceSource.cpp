@@ -135,8 +135,11 @@ struct ProcessorWorkspaceSource::Impl
     std::string directory;
     sp::StorePtr store;
     core::ResultsProvenance provenance;
-    std::vector<Layer> layers;
+    /// Read once by the first open; a sibling shares it rather than reading it again.
+    std::shared_ptr<const std::vector<Layer>> layers;
 
+    /// Opens `<directory>/workspace.store` read-only into `store`.
+    void openStore();
     void readLayers();
     std::string stageStateOf(sp::LayerId layer) const;
     /// The record's effective label set: the row label first, then the asserted ones.
@@ -154,6 +157,7 @@ void ProcessorWorkspaceSource::Impl::readLayers()
     sp::ObjectStore& objects = store->objects();
     const sp::LayerId pixel = registry.pixelLayer();
 
+    auto read = std::make_shared<std::vector<Layer>>();
     for (int32_t i = 0; i < registry.count(); ++i) {
         const sp::LayerId id = registry.at(i);
         if (id == pixel || registry.isDropped(id)) {
@@ -191,7 +195,27 @@ void ProcessorWorkspaceSource::Impl::readLayers()
             layer.classIndex[labelValue] = static_cast<int>(layer.info.classes.size());
             layer.info.classes.push_back(std::move(info));
         }
-        layers.push_back(std::move(layer));
+        // The legend's Unclassified row: one count, effective label set empty.
+        sp::ObjectQuery unlabelled;
+        unlabelled.layer(id).labelFilter(sp::LabelFilter::UnlabelledOnly);
+        layer.info.unclassifiedCount = objects.count(unlabelled);
+        read->push_back(std::move(layer));
+    }
+    layers = std::move(read);
+}
+
+void ProcessorWorkspaceSource::Impl::openStore()
+{
+    const std::filesystem::path path = std::filesystem::u8path(directory) / "workspace.store";
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(path, ec)) {
+        throw core::ResultsError("no workspace.store in " + directory);
+    }
+    try {
+        // The viewer never writes: always ReadOnly, which takes no writer lock.
+        store = sp::Store::open(path.u8string().c_str(), sp::OpenMode::ReadOnly, sp::Configuration());
+    } catch (const std::exception& e) {
+        throw core::ResultsError("cannot open the results store in " + directory + ": " + e.what());
     }
 }
 
@@ -255,10 +279,10 @@ std::string ProcessorWorkspaceSource::Impl::stageName(sp::StageId stage) const
 
 const ProcessorWorkspaceSource::Impl::Layer& ProcessorWorkspaceSource::Impl::layerAt(int layer) const
 {
-    if (layer < 0 || static_cast<size_t>(layer) >= layers.size()) {
+    if (layer < 0 || static_cast<size_t>(layer) >= layers->size()) {
         throw core::ResultsError("results layer index " + std::to_string(layer) + " out of range");
     }
-    return layers[static_cast<size_t>(layer)];
+    return (*layers)[static_cast<size_t>(layer)];
 }
 
 ProcessorWorkspaceSource::ProcessorWorkspaceSource(std::unique_ptr<Impl> impl) : m_impl(std::move(impl)) {}
@@ -267,20 +291,9 @@ ProcessorWorkspaceSource::~ProcessorWorkspaceSource() = default;
 
 std::unique_ptr<ProcessorWorkspaceSource> ProcessorWorkspaceSource::open(const std::string& workspaceDirectory)
 {
-    const std::filesystem::path path = std::filesystem::u8path(workspaceDirectory) / "workspace.store";
-    std::error_code ec;
-    if (!std::filesystem::is_regular_file(path, ec)) {
-        throw core::ResultsError("no workspace.store in " + workspaceDirectory);
-    }
-
     auto impl = std::make_unique<Impl>();
     impl->directory = workspaceDirectory;
-    try {
-        // The viewer never writes: always ReadOnly, which takes no writer lock.
-        impl->store = sp::Store::open(path.u8string().c_str(), sp::OpenMode::ReadOnly, sp::Configuration());
-    } catch (const std::exception& e) {
-        throw core::ResultsError("cannot open the results store in " + workspaceDirectory + ": " + e.what());
-    }
+    impl->openStore();
 
     guarded("cannot read the results store in " + workspaceDirectory, [&] {
         const sp::Provenance provenance = impl->store->provenance();
@@ -291,6 +304,20 @@ std::unique_ptr<ProcessorWorkspaceSource> ProcessorWorkspaceSource::open(const s
     return std::unique_ptr<ProcessorWorkspaceSource>(new ProcessorWorkspaceSource(std::move(impl)));
 }
 
+std::function<std::unique_ptr<core::ResultsSource>()> ProcessorWorkspaceSource::sibling() const
+{
+    return [directory = m_impl->directory, provenance = m_impl->provenance,
+            layers = m_impl->layers]() -> std::unique_ptr<core::ResultsSource> {
+        // Opens the store and nothing more: no provenance read, no per-label counts.
+        auto impl = std::make_unique<Impl>();
+        impl->directory = directory;
+        impl->provenance = provenance;
+        impl->layers = layers;
+        impl->openStore();
+        return std::unique_ptr<ProcessorWorkspaceSource>(new ProcessorWorkspaceSource(std::move(impl)));
+    };
+}
+
 core::ResultsProvenance ProcessorWorkspaceSource::provenance() const
 {
     return m_impl->provenance;
@@ -299,8 +326,8 @@ core::ResultsProvenance ProcessorWorkspaceSource::provenance() const
 std::vector<core::ResultLayerInfo> ProcessorWorkspaceSource::layers() const
 {
     std::vector<core::ResultLayerInfo> result;
-    result.reserve(m_impl->layers.size());
-    for (const auto& layer : m_impl->layers) {
+    result.reserve(m_impl->layers->size());
+    for (const auto& layer : *m_impl->layers) {
         result.push_back(layer.info);
     }
     return result;
