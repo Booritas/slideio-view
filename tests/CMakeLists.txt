@@ -13,6 +13,8 @@ add_executable(slideio-viewer-core-tests
     core/SlideIdTest.cpp
     core/ColorProfileOverrideTest.cpp
     core/AnnotationGeometryTest.cpp
+    core/ResultGeometryTest.cpp
+    core/ResultsPaletteTest.cpp
     core/AnnotationMeasurementTest.cpp
     core/AnnotationMergeTest.cpp
     core/VertexEditingTest.cpp

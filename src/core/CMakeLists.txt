@@ -28,6 +28,8 @@ add_library(slideio-viewer-core STATIC
     src/AnnotationGeoJson.cpp
     src/AnnotationImport.cpp
     src/AutosavePolicy.cpp
+    src/ResultGeometry.cpp
+    src/ResultsPalette.cpp
 )
 
 target_include_directories(slideio-viewer-core PUBLIC
