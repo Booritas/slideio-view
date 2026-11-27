@@ -64,8 +64,8 @@ Anti-goals
   enough to leave cores to the tile scheduler the user is waiting on. A
   constructor parameter (default from that rule) so tests can force 1 and N.
   **1 reader reproduces today's behaviour exactly.**
-- **Window** `2 × readers` chunks (8 × 4 MiB = 32 MiB worst case) decoded but not
-  yet fed.
+- **Window** `2 × readers` chunks claimed but not yet fed, plus the one the
+  worker is feeding: window+1 = 9 chunks (9 × 4 MiB ≈ 36 MiB worst case).
 - **Chunk order** is the existing band-major, left-to-right order; chunk *k*
   maps to (band, x) by the same arithmetic `run()` uses today.
 - **Feeding** (`run()` thread): waits for slot *k*, then under the exclusive
@@ -81,7 +81,10 @@ Anti-goals
   before it returns on every path (including exceptions), so the destructor's
   and `setColorMode`'s existing join of the worker still covers everything.
   A chunk read while the level was marked unreliable is never fed (same rule as
-  today: checked after the read, before accumulating).
+  today: checked after the read, before accumulating). With more than one
+  reader, which chunks were already fed when an unreliable mark abandons the
+  build is timing-dependent (as a mark from the tile scheduler already was); a
+  distrusted chunk is still never fed.
 - **One warning per build** for failed reads, as today (an atomic flag).
 - **Logging**: the existing start line gains the reader count; the completion
   line is unchanged.
@@ -116,3 +119,11 @@ Anti-goals
 Names, the exact synchronisation primitives (one mutex + condition variable
 over the slot ring is enough), whether readers are `std::thread`s owned by
 `run()` or a tiny local pool.
+
+## 8. Results
+
+| Check | Result |
+|-------|--------|
+| AP1 build time and responsiveness on `PIT_01_00248_01.tiff` | not run |
+| AP2 close mid-build | not run |
+| AP3 colour-management toggle mid-build | not run |
