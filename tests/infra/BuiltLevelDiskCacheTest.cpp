@@ -351,3 +351,37 @@ TEST_CASE("load marks the entry used", "[BuiltLevelDiskCache]")
     REQUIRE(f.open(QIODevice::ReadOnly));
     REQUIRE(f.readAll().trimmed().toLongLong() >= start);
 }
+
+TEST_CASE("a corrupt entry is set aside and can be rewritten", "[BuiltLevelDiskCache]")
+{
+    QTemporaryDir tmp;
+    REQUIRE(tmp.isValid());
+    const std::string folder = utf8(tmp.path());
+    infra::BuiltLevelDiskCache cache(folder);
+    const auto key = makeKey(core::DataType::Byte, 3);
+    const auto rasters = makeRasters(3);
+    std::atomic<bool> cancel{false};
+    REQUIRE(cache.save(key, makeDescription(), rasters.views(), cancel));
+    const QString dir = entryDir(folder, key);
+    {
+        QFile f(dir + "/level-0.bin");
+        REQUIRE(f.open(QIODevice::ReadWrite));
+        const qint64 mid = f.size() / 2;
+        f.seek(mid);
+        char c = 0;
+        f.read(&c, 1);
+        f.seek(mid);
+        c = static_cast<char>(c ^ 0x5A);
+        f.write(&c, 1);
+    }
+    REQUIRE_FALSE(cache.load(key, rasters.sizes, 3).has_value());
+    REQUIRE_FALSE(QDir(dir).exists());
+    const QStringList dirs = subdirs(folder);
+    REQUIRE(dirs.size() == 1);
+    REQUIRE(dirs[0].contains(".tmp-"));
+
+    REQUIRE(cache.save(key, makeDescription(), rasters.views(), cancel));
+    const auto loaded = cache.load(key, rasters.sizes, 3);
+    REQUIRE(loaded.has_value());
+    REQUIRE(*loaded == rasters.data);
+}

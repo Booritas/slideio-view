@@ -171,6 +171,13 @@ QString joinPath(const std::string& folder, const std::string& name)
     return QString::fromStdString(folder) + QLatin1Char('/') + QString::fromStdString(name);
 }
 
+/// "<key name>.tmp-<8 random hex>": a directory the sweep recognises as temporary.
+QString temporaryName(const std::string& keyName)
+{
+    return QString::fromStdString(keyName) + QStringLiteral(".tmp-")
+           + QString::number(QRandomGenerator::global()->generate(), 16).rightJustified(8, '0');
+}
+
 /// Removes a temporary directory; reports nothing.
 void discard(const QString& dir)
 {
@@ -202,13 +209,20 @@ std::optional<std::vector<std::vector<uint8_t>>> BuiltLevelDiskCache::load(
     const QString dir = joinPath(m_folder, name);
     std::string describedPath;
 
-    auto miss = [&](const char* reason) -> std::optional<std::vector<std::vector<uint8_t>>> {
-        spdlog::info("Level cache miss for {}: {} (slide '{}')", name, reason, describedPath);
+    using Rasters = std::optional<std::vector<std::vector<uint8_t>>>;
+    std::string reason;
+    bool absent = false;
+
+    auto miss = [&](const char* why) -> Rasters {
+        reason = why;
         return std::nullopt;
     };
 
-    try {
+    // Every file handle lives inside this lambda, so none is open when a
+    // failed entry is moved aside below.
+    auto attempt = [&]() -> Rasters {
         if (!QFileInfo(dir).isDir()) {
+            absent = true;
             spdlog::debug("Level cache: no entry {}", name);
             return std::nullopt;
         }
@@ -312,11 +326,30 @@ std::optional<std::vector<std::vector<uint8_t>>> BuiltLevelDiskCache::load(
             spdlog::debug("Level cache: could not update last-used of {}", name);
         }
         return result;
+    };
+
+    try {
+        if (Rasters hit = attempt()) {
+            return hit;
+        }
     } catch (const std::exception& e) {
-        spdlog::info("Level cache miss for {}: {}", name, e.what());
+        reason = e.what();
     } catch (...) {
-        spdlog::info("Level cache miss for {}: unknown error", name);
+        reason = "unknown error";
     }
+    if (absent) {
+        return std::nullopt;
+    }
+    // Move the failed entry aside so the next save's rename can succeed; the
+    // sweep removes the aside copy. Failing to do so (a file open elsewhere)
+    // leaves the entry where it was.
+    bool asideDone = false;
+    try {
+        asideDone = QDir(QString::fromStdString(m_folder)).rename(QString::fromStdString(name), temporaryName(name));
+    } catch (...) {
+    }
+    spdlog::info("Level cache miss for {}: {} (slide '{}'; entry {})", name, reason, describedPath,
+                 asideDone ? "set aside" : "left in place");
     return std::nullopt;
 }
 
@@ -326,8 +359,7 @@ bool BuiltLevelDiskCache::save(const core::BuiltLevelCacheKey& key, const core::
     const std::string name = core::builtLevelCacheKeyName(key);
     const QString folder = QString::fromStdString(m_folder);
     const QString finalDir = joinPath(m_folder, name);
-    const QString tempName = QString::fromStdString(name) + QStringLiteral(".tmp-")
-                             + QString::number(QRandomGenerator::global()->generate(), 16).rightJustified(8, '0');
+    const QString tempName = temporaryName(name);
     const QString tempDir = folder + QLatin1Char('/') + tempName;
     bool tempCreated = false;
 
