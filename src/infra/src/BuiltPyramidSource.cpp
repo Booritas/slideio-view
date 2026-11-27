@@ -670,7 +670,16 @@ void BuiltPyramidSource::run(uint64_t generation, core::ColorMode mode)
         if (readers > 1) {
             pool.emplace(totalChunks, 2 * readers, readChunk,
                          [this] { return m_cancel.load() || sourceUnreliable(); });
-            pool->spawn(readers);
+            try {
+                pool->spawn(readers);
+            } catch (const std::exception& e) {
+                // The readers are a speed-up, not a way for the build to fail:
+                // read on this thread instead, as the sequential pass did.
+                spdlog::warn("BuiltPyramidSource: could not start {} built-level readers ({}); reading on the "
+                             "build thread",
+                             readers, e.what());
+                pool.reset();
+            }
         }
         // An abandoned build says it is over; join the readers first, so no
         // read of the distrusted level is still running once it has.
@@ -694,9 +703,8 @@ void BuiltPyramidSource::run(uint64_t generation, core::ColorMode mode)
             if (!pool) {
                 ok = readChunk(k, tile);
             } else if (!pool->take(k, tile, ok)) {
-                // The readers stopped short of this chunk: they stop only for
-                // a cancel or an unreliable source level, or on a failure of
-                // their own, which stops the build like any other throw.
+                // The readers stopped short of this chunk: for a cancel or an
+                // unreliable source level, or on a failure of their own.
                 if (m_cancel) {
                     spdlog::debug("BuiltPyramidSource: build in mode {} cancelled at row {}", modeName(mode), c.y);
                     return;
@@ -705,7 +713,13 @@ void BuiltPyramidSource::run(uint64_t generation, core::ColorMode mode)
                     abandonBuild(c.y);
                     return;
                 }
-                throw std::runtime_error("the built-level readers stopped before the build was read");
+                // Their own failure is not the build's: join them, drop what they
+                // read ahead, and read this chunk and the rest on this thread.
+                spdlog::warn("BuiltPyramidSource: built-level readers stopped at chunk {} of {}; reading the rest "
+                             "on the build thread",
+                             k, totalChunks);
+                pool.reset();
+                ok = readChunk(k, tile);
             }
             ++chunksRead;
             if (sourceUnreliable()) {
