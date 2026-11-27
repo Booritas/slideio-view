@@ -369,3 +369,37 @@ TEST_CASE("an override changes the pixels and the reported origin",
             == core::ColorProfileOrigin::Library);
     REQUIRE_FALSE(withDefault.slideInfo().displacedEmbeddedProfile);
 }
+
+TEST_CASE("a mode-explicit block read follows the mode it is given, not the adapter's",
+          "[infra][ColorManagement]")
+{
+    const std::string path = imagePath("svs/JP2K-33003-1.svs");
+    if (!haveImage(path)) { SKIP("test image corpus not available"); }
+
+    infra::SlideIOAdapter adapter(path, 0, "");
+    REQUIRE(adapter.slideInfo().colorManagement == core::ColorManagementAvailability::Available);
+
+    const int w = adapter.slideInfo().width;
+    const int h = adapter.slideInfo().height;
+
+    adapter.setColorMode(core::ColorMode::Raw);
+    const core::TileData managedWhileRaw =
+        adapter.readBlock(0, 0, w, h, 256, 256, 0, 0, core::ColorMode::Managed);
+    const core::TileData rawWhileRaw = adapter.readBlock(0, 0, w, h, 256, 256, 0, 0, core::ColorMode::Raw);
+    // The mode-less overload follows the adapter's own mode.
+    const core::TileData defaultWhileRaw = adapter.readBlock(0, 0, w, h, 256, 256);
+
+    adapter.setColorMode(core::ColorMode::Managed);
+    const core::TileData managedWhileManaged =
+        adapter.readBlock(0, 0, w, h, 256, 256, 0, 0, core::ColorMode::Managed);
+    const core::TileData defaultWhileManaged = adapter.readBlock(0, 0, w, h, 256, 256);
+
+    REQUIRE_FALSE(managedWhileRaw.isError());
+    REQUIRE_FALSE(rawWhileRaw.isError());
+    REQUIRE_FALSE(managedWhileManaged.isError());
+    REQUIRE(managedWhileRaw.buffer().size() == managedWhileManaged.buffer().size());
+    REQUIRE(countDifferingBytes(managedWhileRaw.buffer(), managedWhileManaged.buffer()) == 0);
+    REQUIRE(countDifferingBytes(managedWhileRaw.buffer(), rawWhileRaw.buffer()) > 0);
+    REQUIRE(countDifferingBytes(defaultWhileRaw.buffer(), rawWhileRaw.buffer()) == 0);
+    REQUIRE(countDifferingBytes(defaultWhileManaged.buffer(), managedWhileManaged.buffer()) == 0);
+}

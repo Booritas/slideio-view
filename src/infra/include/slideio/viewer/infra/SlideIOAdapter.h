@@ -65,6 +65,10 @@ public:
     core::TileData readBlock(int slideX, int slideY, int slideWidth, int slideHeight,
                               int targetWidth, int targetHeight,
                               int zIndex = 0, int tFrame = 0) override;
+    // Reads through the scene of the given mode, not the adapter's live one.
+    core::TileData readBlock(int slideX, int slideY, int slideWidth, int slideHeight,
+                              int targetWidth, int targetHeight,
+                              int zIndex, int tFrame, core::ColorMode mode) override;
 
     void addOnLevelMarkedUnreliable(std::function<void(int)> listener) override;
 

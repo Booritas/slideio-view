@@ -1432,10 +1432,18 @@ core::TileData SlideIOAdapter::readBlock(int slideX, int slideY, int slideWidth,
                                           int targetWidth, int targetHeight,
                                           int zIndex, int tFrame)
 {
+    return readBlock(slideX, slideY, slideWidth, slideHeight, targetWidth, targetHeight, zIndex, tFrame,
+                     colorMode());
+}
+
+core::TileData SlideIOAdapter::readBlock(int slideX, int slideY, int slideWidth, int slideHeight,
+                                          int targetWidth, int targetHeight,
+                                          int zIndex, int tFrame, core::ColorMode mode)
+{
     if (slideWidth <= 0 || slideHeight <= 0 || targetWidth <= 0 || targetHeight <= 0) {
         return core::TileData::createError(targetWidth, targetHeight);
     }
-    const auto& scene = activeScene();
+    const auto& scene = sceneForMode(mode);
     try {
         std::tuple<int, int, int, int> blockRect(slideX, slideY, slideWidth, slideHeight);
         std::tuple<int, int> blockSize(targetWidth, targetHeight);
