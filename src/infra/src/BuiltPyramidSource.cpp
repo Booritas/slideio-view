@@ -7,8 +7,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <exception>
+#include <functional>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -23,12 +26,158 @@ const char* modeName(core::ColorMode mode)
     return mode == core::ColorMode::Managed ? "Managed" : "Raw";
 }
 
+// The reader threads of one build and the ring of slots they park chunks in.
+// Readers claim chunk indices in order, at most `window` ahead of the next one
+// to feed, and read them through `read`, which touches only the inner source.
+// The worker takes them back strictly in order. Destroying this stops the
+// readers and joins them -- on every exit path of run(), exceptions included,
+// since it lives on run()'s stack.
+class ChunkReaders
+{
+public:
+    using ReadFn = std::function<bool(int chunk, core::TileData& tile)>;
+
+    ChunkReaders(int total, int window, ReadFn read, std::function<bool()> stopReading)
+        : m_total(total)
+        , m_window(std::max(1, window))
+        , m_read(std::move(read))
+        , m_stopReading(std::move(stopReading))
+        , m_slots(static_cast<size_t>(m_window))
+    {
+    }
+
+    ~ChunkReaders()
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_stop = true;
+        }
+        m_cv.notify_all();
+        for (std::thread& thread : m_threads) {
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
+    }
+
+    ChunkReaders(const ChunkReaders&) = delete;
+    ChunkReaders& operator=(const ChunkReaders&) = delete;
+
+    // May throw if a thread cannot be created; those already running are
+    // joined by the destructor.
+    void spawn(int count)
+    {
+        m_threads.reserve(static_cast<size_t>(count));
+        for (int i = 0; i < count; ++i) {
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                ++m_active;
+            }
+            try {
+                m_threads.emplace_back(&ChunkReaders::loop, this);
+            } catch (...) {
+                {
+                    std::lock_guard<std::mutex> lock(m_mutex);
+                    --m_active;
+                }
+                m_cv.notify_all();
+                throw;
+            }
+        }
+    }
+
+    // Waits for `chunk`, the next one to feed. False when every reader has
+    // stopped without reading it: a cancel, an unreliable source level, or a
+    // reader that failed outside its read.
+    bool take(int chunk, core::TileData& tile, bool& ok)
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        Slot& slot = m_slots[static_cast<size_t>(chunk % m_window)];
+        m_cv.wait(lock, [this, &slot] { return slot.ready || m_active == 0; });
+        if (!slot.ready) {
+            return false;
+        }
+        tile = std::move(slot.tile);
+        ok = slot.ok;
+        slot = Slot{};
+        m_fed = chunk + 1;
+        lock.unlock();
+        m_cv.notify_all(); // the window moved on
+        return true;
+    }
+
+private:
+    struct Slot
+    {
+        bool ready = false;
+        bool ok = false;
+        core::TileData tile;
+    };
+
+    void loop()
+    {
+        try {
+            for (;;) {
+                int chunk = 0;
+                {
+                    std::unique_lock<std::mutex> lock(m_mutex);
+                    m_cv.wait(lock, [this] { return m_stop || m_next >= m_total || m_next < m_fed + m_window; });
+                    if (m_stop || m_next >= m_total || m_stopReading()) {
+                        break;
+                    }
+                    chunk = m_next++;
+                }
+                core::TileData tile;
+                const bool ok = m_read(chunk, tile);
+                {
+                    std::lock_guard<std::mutex> lock(m_mutex);
+                    Slot& slot = m_slots[static_cast<size_t>(chunk % m_window)];
+                    slot.tile = std::move(tile);
+                    slot.ok = ok;
+                    slot.ready = true;
+                }
+                m_cv.notify_all();
+            }
+        } catch (...) {
+            // m_read never throws; this is a failure of the machinery itself.
+            // The worker sees the chunk never arrive and stops the build.
+            spdlog::error("BuiltPyramidSource: a built-level reader stopped");
+        }
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            --m_active;
+        }
+        m_cv.notify_all();
+    }
+
+    const int m_total;
+    const int m_window;
+    const ReadFn m_read;
+    const std::function<bool()> m_stopReading;
+
+    std::mutex m_mutex;
+    std::condition_variable m_cv;
+    std::vector<Slot> m_slots;
+    int m_next = 0;   // the next chunk to claim
+    int m_fed = 0;    // chunks taken by the worker
+    int m_active = 0; // readers not yet stopped
+    bool m_stop = false;
+    std::vector<std::thread> m_threads;
+};
+
 } // namespace
 
+int BuiltPyramidSource::defaultBuiltPassReaders()
+{
+    const int cores = static_cast<int>(std::thread::hardware_concurrency());
+    return std::min(4, std::max(1, cores / 2));
+}
+
 BuiltPyramidSource::BuiltPyramidSource(std::shared_ptr<core::ISlideSource> inner, size_t budgetBytes,
-                                       int bandChunkMaxBytes)
+                                       int bandChunkMaxBytes, int readers)
     : m_inner(std::move(inner))
     , m_bandChunkMaxBytes(std::max(1, bandChunkMaxBytes))
+    , m_readers(std::max(1, readers))
 {
     const core::SlideInfo info = m_inner->slideInfo();
     m_levels = m_inner->levels();
@@ -445,75 +594,137 @@ void BuiltPyramidSource::run(uint64_t generation, core::ColorMode mode)
             return;
         }
 
+        const int totalChunks = bands * chunksPerBand;
+        const int readers = std::max(1, std::min(m_readers, totalChunks));
         spdlog::info("BuiltPyramidSource: building {} resident of {} built levels from level {} ({}x{}) in mode {}: "
-                     "{} bands of {} chunks, each up to {}x{} px",
+                     "{} bands of {} chunks, each up to {}x{} px, with {} reader(s)",
                      m_residentFactors.size(), m_levels.size() - static_cast<size_t>(m_storedCount), m_sourceLevel,
-                     source.width, source.height, modeName(mode), bands, chunksPerBand, chunkWidth, bandHeight);
+                     source.width, source.height, modeName(mode), bands, chunksPerBand, chunkWidth, bandHeight,
+                     readers);
         const auto started = std::chrono::steady_clock::now();
-        bool warned = false;
+        std::atomic<bool> warned{false};
         long long chunksRead = 0;
 
-        for (int y = 0; y < source.height; y += bandHeight) {
-            const int h = std::min(bandHeight, source.height - y);
-            for (int x = 0; x < source.width; x += chunkWidth) {
+        // Chunk k's place, band-major and left to right: the one arithmetic
+        // both the readers and the feeding loop below use.
+        struct Chunk
+        {
+            int x, y, w, h;
+            int slideX, slideY, slideW, slideH;
+            bool lastOfBand;
+        };
+        const auto chunkAt = [&](int k) {
+            Chunk c{};
+            const int band = k / chunksPerBand;
+            const int column = k % chunksPerBand;
+            c.y = band * bandHeight;
+            c.h = std::min(bandHeight, source.height - c.y);
+            c.x = column * chunkWidth;
+            c.w = std::min(chunkWidth, source.width - c.x);
+            c.slideX = static_cast<int>(std::round(c.x * invScale));
+            c.slideY = static_cast<int>(std::round(c.y * invScale));
+            c.slideW = std::min(static_cast<int>(std::round((c.x + c.w) * invScale)), m_slideWidth) - c.slideX;
+            c.slideH = std::min(static_cast<int>(std::round((c.y + c.h) * invScale)), m_slideHeight) - c.slideY;
+            c.lastOfBand = column == chunksPerBand - 1;
+            return c;
+        };
+        // Reads one chunk unlocked -- nobody may wait behind a SlideIO call --
+        // and touches only the inner source: no accumulator, no state lock, no
+        // listener, so it can run on a reader thread. Never throws.
+        const auto readChunk = [&](int k, core::TileData& tile) {
+            const Chunk c = chunkAt(k);
+            if (c.slideW <= 0 || c.slideH <= 0) {
+                return false;
+            }
+            try {
+                tile = m_inner->readBlock(c.slideX, c.slideY, c.slideW, c.slideH, c.w, c.h, 0, 0, mode);
+                return !tile.isError() && !tile.isPending() && tile.width() == c.w && tile.height() == c.h
+                    && tile.byteSize() == static_cast<size_t>(c.w) * static_cast<size_t>(c.h) * pixelBytes;
+            } catch (const std::exception& e) {
+                if (!warned.exchange(true)) {
+                    spdlog::warn("BuiltPyramidSource: band read at ({}, {}) failed: {}", c.x, c.y, e.what());
+                }
+            } catch (...) {
+                if (!warned.exchange(true)) {
+                    spdlog::warn("BuiltPyramidSource: band read at ({}, {}) failed", c.x, c.y);
+                }
+            }
+            return false;
+        };
+
+        // One reader reads inline, exactly the sequential pass. More run as
+        // threads owned by this frame: leaving it on any path, a throw
+        // included, stops and joins them before run() returns.
+        std::optional<ChunkReaders> pool;
+        if (readers > 1) {
+            pool.emplace(totalChunks, 2 * readers, readChunk,
+                         [this] { return m_cancel.load() || sourceUnreliable(); });
+            pool->spawn(readers);
+        }
+        // An abandoned build says it is over; join the readers first, so no
+        // read of the distrusted level is still running once it has.
+        const auto abandonBuild = [&](int y) {
+            pool.reset();
+            abandon(y);
+        };
+
+        for (int k = 0; k < totalChunks; ++k) {
+            const Chunk c = chunkAt(k);
+            if (m_cancel) {
+                spdlog::debug("BuiltPyramidSource: build in mode {} cancelled at row {}", modeName(mode), c.y);
+                return;
+            }
+            if (sourceUnreliable()) {
+                abandonBuild(c.y);
+                return;
+            }
+            core::TileData tile;
+            bool ok = false;
+            if (!pool) {
+                ok = readChunk(k, tile);
+            } else if (!pool->take(k, tile, ok)) {
+                // The readers stopped short of this chunk: they stop only for
+                // a cancel or an unreliable source level, or on a failure of
+                // their own, which stops the build like any other throw.
                 if (m_cancel) {
-                    spdlog::debug("BuiltPyramidSource: build in mode {} cancelled at row {}", modeName(mode), y);
+                    spdlog::debug("BuiltPyramidSource: build in mode {} cancelled at row {}", modeName(mode), c.y);
                     return;
                 }
                 if (sourceUnreliable()) {
-                    abandon(y);
+                    abandonBuild(c.y);
                     return;
                 }
-                const int w = std::min(chunkWidth, source.width - x);
-                const int slideX = static_cast<int>(std::round(x * invScale));
-                const int slideY = static_cast<int>(std::round(y * invScale));
-                const int slideW = std::min(static_cast<int>(std::round((x + w) * invScale)), m_slideWidth) - slideX;
-                const int slideH = std::min(static_cast<int>(std::round((y + h) * invScale)), m_slideHeight) - slideY;
+                throw std::runtime_error("the built-level readers stopped before the build was read");
+            }
+            ++chunksRead;
+            if (sourceUnreliable()) {
+                // Marked while this chunk was in flight: its pixels came
+                // from the distrusted level, so they are not averaged in.
+                abandonBuild(c.y);
+                return;
+            }
 
-                // Read unlocked: readers must not wait behind a SlideIO call.
-                core::TileData tile;
-                bool ok = false;
-                if (slideW > 0 && slideH > 0) {
-                    try {
-                        tile = m_inner->readBlock(slideX, slideY, slideW, slideH, w, h, 0, 0, mode);
-                        ok = !tile.isError() && !tile.isPending() && tile.width() == w && tile.height() == h
-                            && tile.byteSize() == static_cast<size_t>(w) * static_cast<size_t>(h) * pixelBytes;
-                    } catch (const std::exception& e) {
-                        if (!warned) {
-                            spdlog::warn("BuiltPyramidSource: band read at ({}, {}) failed: {}", x, y, e.what());
-                            warned = true;
-                        }
-                    } catch (...) {
-                        if (!warned) {
-                            spdlog::warn("BuiltPyramidSource: band read at ({}, {}) failed", x, y);
-                            warned = true;
-                        }
-                    }
-                }
-                ++chunksRead;
-                if (sourceUnreliable()) {
-                    // Marked while this chunk was in flight: its pixels came
-                    // from the distrusted level, so they are not averaged in.
-                    abandon(y);
-                    return;
-                }
-
+            {
                 std::unique_lock<std::shared_mutex> state(m_stateMutex);
                 if (m_generation != generation) {
                     return; // a newer build owns the accumulator
                 }
                 if (ok) {
-                    m_accumulator->addChunk(x, y, w, h, tile.buffer().data());
+                    m_accumulator->addChunk(c.x, c.y, c.w, c.h, tile.buffer().data());
                 } else {
-                    m_accumulator->failChunk(x, y, w, h);
+                    m_accumulator->failChunk(c.x, c.y, c.w, c.h);
                 }
             }
-            if (m_cancel) {
-                spdlog::debug("BuiltPyramidSource: build in mode {} cancelled at row {}", modeName(mode), y + h);
-                return;
+            if (c.lastOfBand) {
+                if (m_cancel) {
+                    spdlog::debug("BuiltPyramidSource: build in mode {} cancelled at row {}", modeName(mode),
+                                  c.y + c.h);
+                    return;
+                }
+                notify(false);
             }
-            notify(false);
         }
+        pool.reset(); // every reader has stopped: nothing is left to claim
 
         {
             std::unique_lock<std::shared_mutex> state(m_stateMutex);

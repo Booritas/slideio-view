@@ -191,14 +191,51 @@ public:
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             m_blocking = false;
+            m_holdX = -1;
+            m_holdY = -1;
         }
         m_cv.notify_all();
     }
 
-    bool waitUntilBlocked()
+    bool waitUntilBlocked(int readers = 1)
     {
         std::unique_lock<std::mutex> lock(m_mutex);
-        return m_cv.wait_for(lock, kWait, [this] { return m_waiting > 0; });
+        return m_cv.wait_for(lock, kWait, [this, readers] { return m_waiting >= readers; });
+    }
+
+    // Only the chunk read starting at (x, y) blocks, until release().
+    void holdChunkAt(int x, int y)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_holdX = x;
+        m_holdY = y;
+    }
+
+    // Every read of the band starting at y throws an int, not a std::exception.
+    void throwNonStdAt(int y)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_throwIntY = y;
+    }
+
+    // Every read sleeps this long, outside the lock, so concurrent reads overlap.
+    void setReadDelay(std::chrono::milliseconds delay)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_delay = delay;
+    }
+
+    // The most readBlock calls that were ever inside serve() at once.
+    int maxInFlight() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_maxInFlight;
+    }
+
+    bool waitForCalls(size_t n)
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_cv.wait_for(lock, kWait, [this, n] { return m_calls.size() >= n; });
     }
 
     void failBandAt(int y)
@@ -245,20 +282,35 @@ private:
     {
         bool fail = false;
         bool shrink = false;
+        std::chrono::milliseconds delay{0};
         {
             std::unique_lock<std::mutex> lock(m_mutex);
             m_calls.push_back(BlockCall{x, y, w, h, tw, th, z, t, mode, live});
+            m_cv.notify_all();
             fail = (y == m_failY) || (x == m_failChunkX && y == m_failChunkY);
             shrink = (y == m_shrinkY);
+            delay = m_delay;
             if (y == m_throwY) {
                 throw std::runtime_error("fake read failure");
             }
-            if (m_blocking) {
+            if (y == m_throwIntY) {
+                throw 7;
+            }
+            const bool held = x == m_holdX && y == m_holdY;
+            if (m_blocking || held) {
                 ++m_waiting;
                 m_cv.notify_all();
-                m_cv.wait(lock, [this] { return !m_blocking; });
+                m_cv.wait(lock, [this, held] { return !m_blocking && !(held && m_holdX >= 0); });
                 --m_waiting;
             }
+            m_maxInFlight = std::max(m_maxInFlight, ++m_inFlight);
+        }
+        if (delay.count() > 0) {
+            std::this_thread::sleep_for(delay);
+        }
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            --m_inFlight;
         }
         if (fail) {
             return TileData::createError(tw, th);
@@ -291,6 +343,12 @@ private:
     int m_failChunkY = -1;
     int m_throwY = -1;
     int m_shrinkY = -1;
+    int m_throwIntY = -1;
+    int m_holdX = -1;
+    int m_holdY = -1;
+    int m_inFlight = 0;
+    int m_maxInFlight = 0;
+    std::chrono::milliseconds m_delay{0};
     std::vector<BlockCall> m_calls;
     std::vector<TileKey> m_tileReads;
     UnreliableNotifier m_unreliable;
@@ -516,7 +574,9 @@ TEST_CASE("reads the source level once, in bands, top to bottom, in the build's 
 {
     auto fake = std::make_shared<FakeSource>();
     // 512-row bands of one byte per pixel: 1953 columns per chunk, three chunks a band.
-    BuiltPyramidSource source(fake, kBuiltLevelBudgetBytes, 1'000'000);
+    // One reader: the order the reads START in is only top to bottom when one
+    // thread makes them; with several only the feeding order is (see [parallel]).
+    BuiltPyramidSource source(fake, kBuiltLevelBudgetBytes, 1'000'000, 1);
     Progress progress;
     progress.attach(source);
 
@@ -927,7 +987,9 @@ TEST_CASE("a coarser source level is read at its own resolution and mapped back 
 TEST_CASE("a mode change while the worker is inside a read restarts cleanly", "[infra][BuiltPyramidSource]")
 {
     auto fake = std::make_shared<FakeSource>();
-    BuiltPyramidSource source(fake);
+    // One reader, so exactly one Raw read is in flight; the four-reader case is
+    // "a mode change while four readers are inside reads restarts cleanly".
+    BuiltPyramidSource source(fake, kBuiltLevelBudgetBytes, BuiltPyramidSource::kDefaultBandChunkMaxBytes, 1);
     Progress progress;
     progress.attach(source);
 
@@ -1048,7 +1110,9 @@ TEST_CASE("the source level marked unreliable mid-build abandons the build", "[i
 {
     LogCapture log;
     auto fake = std::make_shared<FakeSource>();
-    BuiltPyramidSource source(fake, kBuiltLevelBudgetBytes, 1'000'000);
+    // One reader, so exactly one read is in flight; the four-reader case is
+    // "unreliable while chunks are in flight is abandoned".
+    BuiltPyramidSource source(fake, kBuiltLevelBudgetBytes, 1'000'000, 1);
     CHECK(fake->unreliableListeners() == 1); // subscribed at construction, before start()
     Progress progress;
     progress.attach(source);
@@ -1640,4 +1704,308 @@ TEST_CASE("a failed save leaves the store's line as the only one at info", "[inf
     source.reset(); // joins, so the source has logged whatever it logs
 
     CHECK(log.count("not saved") == 0);
+}
+
+namespace
+{
+
+// What a reader of one resident tile sees: whether it is ready, an error, and its bytes.
+struct TileAnswer
+{
+    bool ready = false;
+    bool error = false;
+    std::vector<uint8_t> bytes;
+
+    bool operator==(const TileAnswer& other) const
+    {
+        return ready == other.ready && error == other.error && bytes == other.bytes;
+    }
+};
+
+std::vector<TileAnswer> residentTiles(BuiltPyramidSource& source)
+{
+    std::vector<TileAnswer> answers;
+    for (const LevelInfo& level : source.levels()) {
+        if (!level.built || !level.resident) {
+            continue;
+        }
+        for (int row = 0; row < level.tilesY; ++row) {
+            for (int col = 0; col < level.tilesX; ++col) {
+                const TileKey key(level.level, col, row);
+                TileAnswer answer;
+                answer.ready = source.isTileReady(key);
+                const TileData tile = source.readTile(key);
+                answer.error = tile.isError();
+                if (!tile.isError() && !tile.isPending()) {
+                    answer.bytes = tile.buffer();
+                }
+                answers.push_back(std::move(answer));
+            }
+        }
+    }
+    return answers;
+}
+
+struct BuildResult
+{
+    std::vector<TileAnswer> tiles;
+    std::vector<uint8_t> overview;
+    bool overviewEmpty = true;
+};
+
+// Builds the fake to completion with the given reader count and reads every resident tile.
+BuildResult buildWith(const std::shared_ptr<FakeSource>& fake, int readers, int chunkBytes)
+{
+    BuiltPyramidSource source(fake, kBuiltLevelBudgetBytes, chunkBytes, readers);
+    Progress progress;
+    progress.attach(source);
+    source.start();
+    REQUIRE(progress.waitForCompletes(1));
+    BuildResult result;
+    result.tiles = residentTiles(source);
+    const TileData overview = source.smallestBuiltLevel();
+    result.overviewEmpty = overview.isEmpty();
+    if (!overview.isEmpty()) {
+        result.overview = overview.buffer();
+    }
+    return result;
+}
+
+bool sameTiles(const BuildResult& a, const BuildResult& b)
+{
+    if (a.tiles.size() != b.tiles.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < a.tiles.size(); ++i) {
+        if (!(a.tiles[i] == b.tiles[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int errorTiles(const BuildResult& r)
+{
+    int errors = 0;
+    for (const TileAnswer& answer : r.tiles) {
+        errors += answer.error ? 1 : 0;
+    }
+    return errors;
+}
+
+} // namespace
+
+TEST_CASE("the default reader count is half the cores, between one and four",
+          "[infra][BuiltPyramidSource][parallel]")
+{
+    const int hc = static_cast<int>(std::thread::hardware_concurrency());
+    CHECK(BuiltPyramidSource::defaultBuiltPassReaders() == std::min(4, std::max(1, hc / 2)));
+}
+
+TEST_CASE("four readers build the same bytes as one", "[infra][BuiltPyramidSource][parallel]")
+{
+    // 512-row bands, 300 000-byte chunks: two source tiles a chunk, 9 chunks a band, 54 in all.
+    const BuildResult one = buildWith(std::make_shared<FakeSource>(), 1, 300'000);
+    const BuildResult four = buildWith(std::make_shared<FakeSource>(), 4, 300'000);
+
+    REQUIRE_FALSE(one.tiles.empty());
+    CHECK(errorTiles(one) == 0);
+    bool allReady = true;
+    for (const TileAnswer& answer : one.tiles) {
+        allReady = allReady && answer.ready;
+    }
+    CHECK(allReady);
+    CHECK(sameTiles(one, four));
+    REQUIRE_FALSE(one.overviewEmpty);
+    REQUIRE_FALSE(four.overviewEmpty);
+    CHECK(one.overview == four.overview);
+}
+
+TEST_CASE("a failed chunk fails the same region with four readers", "[infra][BuiltPyramidSource][parallel]")
+{
+    auto fakeOne = std::make_shared<FakeSource>();
+    fakeOne->throwAt(512);
+    auto fakeFour = std::make_shared<FakeSource>();
+    fakeFour->throwAt(512);
+    LogCapture log;
+    const BuildResult one = buildWith(fakeOne, 1, 1'000'000);
+    const int warningsOne = log.count("fake read failure");
+    const BuildResult four = buildWith(fakeFour, 4, 1'000'000);
+
+    CHECK(errorTiles(one) > 0);
+    CHECK(sameTiles(one, four));
+    CHECK(one.overviewEmpty);
+    CHECK(four.overviewEmpty);
+    CHECK(warningsOne == 1);
+    CHECK(log.count("fake read failure") == 2); // one warning per build
+}
+
+TEST_CASE("a read throwing a non-standard exception fails its chunk with four readers",
+          "[infra][BuiltPyramidSource][parallel]")
+{
+    auto fakeOne = std::make_shared<FakeSource>();
+    fakeOne->throwNonStdAt(1024);
+    auto fakeFour = std::make_shared<FakeSource>();
+    fakeFour->throwNonStdAt(1024);
+    const BuildResult one = buildWith(fakeOne, 1, 1'000'000);
+    const BuildResult four = buildWith(fakeFour, 4, 1'000'000);
+
+    CHECK(errorTiles(four) > 0);
+    CHECK(sameTiles(one, four));
+}
+
+TEST_CASE("four readers overlap and one does not", "[infra][BuiltPyramidSource][parallel]")
+{
+    for (const int readers : {1, 4}) {
+        auto fake = std::make_shared<FakeSource>();
+        fake->setReadDelay(std::chrono::milliseconds(5));
+        BuiltPyramidSource source(fake, kBuiltLevelBudgetBytes, 1'000'000, readers);
+        Progress progress;
+        progress.attach(source);
+        source.start();
+        REQUIRE(progress.waitForCompletes(1));
+        CHECK(fake->calls().size() == 18);
+        if (readers == 1) {
+            CHECK(fake->maxInFlight() == 1);
+        } else {
+            CHECK(fake->maxInFlight() > 1);
+            CHECK(fake->maxInFlight() <= 4);
+        }
+    }
+}
+
+TEST_CASE("the window bounds reads ahead", "[infra][BuiltPyramidSource][parallel]")
+{
+    auto fake = std::make_shared<FakeSource>();
+    fake->holdChunkAt(0, 0);
+    // 54 chunks: far more than the window of 2 x 4 readers.
+    BuiltPyramidSource source(fake, kBuiltLevelBudgetBytes, 300'000, 4);
+    Progress progress;
+    progress.attach(source);
+    source.start();
+    REQUIRE(fake->waitUntilBlocked());
+    REQUIRE(fake->waitForCalls(8));
+    // A ninth read could only be a reader running past the window; give one
+    // the chance to show itself.
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    CHECK(fake->calls().size() == 8);
+    CHECK(progress.eventCount() == 0); // nothing fed while chunk 0 is out
+
+    fake->release();
+    REQUIRE(progress.waitForCompletes(1));
+    CHECK(fake->calls().size() == 54);
+    CHECK_FALSE(source.smallestBuiltLevel().isEmpty());
+}
+
+TEST_CASE("destroying during blocked reads returns promptly", "[infra][BuiltPyramidSource][parallel]")
+{
+    auto fake = std::make_shared<FakeSource>();
+    auto source = std::make_unique<BuiltPyramidSource>(fake, kBuiltLevelBudgetBytes, 300'000, 4);
+    std::atomic<int> callbacks{0};
+    source->addOnBuiltRowsReady([&callbacks](bool) { ++callbacks; });
+
+    fake->blockReads();
+    source->start();
+    REQUIRE(fake->waitUntilBlocked(4)); // every reader inside readBlock
+
+    const auto started = std::chrono::steady_clock::now();
+    std::atomic<bool> destroyed{false};
+    std::thread destroyer([&source, &destroyed] {
+        source.reset();
+        destroyed = true;
+    });
+    // The destructor should be in its join when the reads return; no latch can
+    // observe that, and releasing earlier only makes the test weaker, not flaky.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    fake->release();
+    destroyer.join();
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    CHECK(destroyed.load());
+    CHECK(elapsed < std::chrono::seconds(2));
+    CHECK(callbacks.load() == 0);
+    // Only the four reads in flight; none started after the cancel.
+    CHECK(fake->calls().size() == 4);
+}
+
+TEST_CASE("unreliable while chunks are in flight is abandoned", "[infra][BuiltPyramidSource][parallel]")
+{
+    auto fake = std::make_shared<FakeSource>();
+    BuiltPyramidSource source(fake, kBuiltLevelBudgetBytes, 1'000'000, 4);
+    Progress progress;
+    progress.attach(source);
+
+    fake->blockReads();
+    source.start();
+    REQUIRE(fake->waitUntilBlocked(4));
+    fake->markUnreliable(0);
+    fake->release();
+    REQUIRE(progress.waitForCompletes(1));
+
+    // The four reads in flight, none after, and none of them fed.
+    CHECK(fake->calls().size() == 4);
+    CHECK_FALSE(source.builtOverviewPending());
+    CHECK(source.smallestBuiltLevel().isEmpty());
+    bool allErrors = true;
+    for (const TileAnswer& answer : residentTiles(source)) {
+        allErrors = allErrors && answer.ready && answer.error;
+    }
+    CHECK(allErrors);
+    std::lock_guard<std::mutex> lock(progress.mutex);
+    CHECK(progress.completes == 1);
+    CHECK(progress.events.size() == 1); // no band was ever fed
+}
+
+TEST_CASE("a slide with fewer chunks than readers completes", "[infra][BuiltPyramidSource][parallel]")
+{
+    // 2100x600: one /2 resident level, two bands of one chunk each. (A 600x400
+    // slide plans no built levels at all, so it would test nothing.)
+    auto probe = std::make_shared<FakeSource>(2100, 600);
+    REQUIRE(BuiltPyramidSource(probe).hasBuiltLevels());
+
+    const BuildResult one =
+        buildWith(std::make_shared<FakeSource>(2100, 600), 1, BuiltPyramidSource::kDefaultBandChunkMaxBytes);
+    auto fakeFour = std::make_shared<FakeSource>(2100, 600);
+    const BuildResult four = buildWith(fakeFour, 4, BuiltPyramidSource::kDefaultBandChunkMaxBytes);
+
+    CHECK(fakeFour->calls().size() == 2);
+    CHECK(errorTiles(four) == 0);
+    CHECK(sameTiles(one, four));
+    REQUIRE_FALSE(four.overviewEmpty);
+    CHECK(one.overview == four.overview);
+}
+
+TEST_CASE("a mode change while four readers are inside reads restarts cleanly",
+          "[infra][BuiltPyramidSource][parallel]")
+{
+    auto fake = std::make_shared<FakeSource>();
+    BuiltPyramidSource source(fake, kBuiltLevelBudgetBytes, 1'000'000, 4);
+    Progress progress;
+    progress.attach(source);
+
+    fake->blockReads();
+    source.start(); // Raw
+    REQUIRE(fake->waitUntilBlocked(4));
+
+    std::thread toggler([&source] { source.setColorMode(ColorMode::Managed); });
+    REQUIRE(fake->waitForMode(ColorMode::Managed));
+    fake->release();
+    toggler.join(); // returns once every Raw reader is joined and the Managed build launched
+    REQUIRE(progress.waitForCompletes(1));
+
+    // The four Raw reads in flight, all before any Managed read, then the 18 Managed chunks.
+    const auto calls = fake->calls();
+    REQUIRE(calls.size() == 22);
+    for (size_t i = 0; i < calls.size(); ++i) {
+        CHECK(calls[i].mode == (i < 4 ? ColorMode::Raw : ColorMode::Managed));
+    }
+    {
+        std::lock_guard<std::mutex> lock(progress.mutex);
+        CHECK(progress.completes == 1);
+        CHECK(progress.events.size() == 7); // the Managed build's 6 bands and its completion
+    }
+    CHECK(source.readTile(TileKey(1, 0, 0, 0, 0, ColorMode::Raw)).isPending());
+    const TileData tile = source.readTile(TileKey(1, 0, 0, 0, 0, ColorMode::Managed));
+    CHECK_FALSE(tile.isPending());
+    CHECK_FALSE(tile.isError());
+    CHECK_FALSE(source.smallestBuiltLevel().isEmpty());
 }

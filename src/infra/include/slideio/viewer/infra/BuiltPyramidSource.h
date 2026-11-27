@@ -44,8 +44,18 @@ namespace slideio::viewer::infra
 //
 // A band is read in chunks whose width is a whole number of the source level's
 // tiles, as many as keep one chunk within bandChunkMaxBytes (at least one tile),
-// so no source tile is decoded twice and the one read a close or a colour toggle
-// waits for stays short.
+// so no source tile is decoded twice and the reads a close or a colour toggle
+// waits for stay short.
+//
+// With more than one reader (spec 2026-11-27 parallel built-level pass) the
+// worker owns that many reader threads for the build. They claim chunks in
+// band-major order, read them unlocked and park them; the worker feeds them to
+// the accumulator strictly in chunk order, exactly as one reader would, so the
+// built bytes are identical. At most 2 x readers chunks are claimed but not yet
+// fed. Readers touch only the inner source -- never the accumulator, the state
+// lock or a listener -- and the worker joins them before run() returns on
+// every path, so joining the worker joins them too. One reader reads inline on
+// the worker, with no other thread: the sequential pass.
 //
 // The source level marked unreliable by the inner source (a corrupt tile-offset
 // table, found by whichever thread read the tile) abandons the build: the
@@ -58,11 +68,16 @@ class BuiltPyramidSource : public core::ISlideSource
 public:
     static constexpr int kDefaultBandChunkMaxBytes = 4 * 1024 * 1024;
 
+    // min(4, max(1, hardware_concurrency / 2)): enough to cut decoding several-
+    // fold, few enough to leave cores to the tile scheduler the user waits on.
+    static int defaultBuiltPassReaders();
+
     // Plans the built levels and subscribes to the inner source's unreliable-
-    // level notifications; does not start the worker.
+    // level notifications; does not start the worker. readers is clamped to >= 1.
     explicit BuiltPyramidSource(std::shared_ptr<core::ISlideSource> inner,
                                 size_t budgetBytes = core::kBuiltLevelBudgetBytes,
-                                int bandChunkMaxBytes = kDefaultBandChunkMaxBytes);
+                                int bandChunkMaxBytes = kDefaultBandChunkMaxBytes,
+                                int readers = defaultBuiltPassReaders());
     ~BuiltPyramidSource() override;
 
     BuiltPyramidSource(const BuiltPyramidSource&) = delete;
@@ -115,7 +130,7 @@ public:
 
     // Forwards; a mode other than the build's cancels the running build, joins
     // it, frees its rasters and -- if start() was called -- builds again in the
-    // new mode. Waits for at most the one inner read the worker is inside.
+    // new mode. Waits for at most the inner reads in flight, one chunk each.
     void setColorMode(core::ColorMode mode) override;
     core::ColorMode colorMode() const override;
     core::ColorProfileInfo activeColorProfileInfo() const override;
@@ -157,6 +172,7 @@ private:
     int m_numChannels = 0;
     core::DataType m_dataType = core::DataType::None;
     int m_bandChunkMaxBytes;
+    int m_readers;
 
     // Set under m_controlMutex before start(); only read by the worker after.
     std::shared_ptr<core::IBuiltLevelStore> m_store;
