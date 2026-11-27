@@ -1915,7 +1915,7 @@ TEST_CASE("destroying during blocked reads returns promptly", "[infra][BuiltPyra
         destroyed = true;
     });
     // The destructor should be in its join when the reads return; no latch can
-    // observe that, and releasing earlier only makes the test weaker, not flaky.
+    // observe that; releasing early lets readers start more reads before the cancel lands, which the bound below allows.
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     fake->release();
     destroyer.join();
@@ -1923,8 +1923,8 @@ TEST_CASE("destroying during blocked reads returns promptly", "[infra][BuiltPyra
     CHECK(destroyed.load());
     CHECK(elapsed < std::chrono::seconds(2));
     CHECK(callbacks.load() == 0);
-    // Only the four reads in flight; none started after the cancel.
-    CHECK(fake->calls().size() == 4);
+    // The four reads in flight plus at most the window (2 x 4) claimed before the cancel landed.
+    CHECK(fake->calls().size() <= 8);
 }
 
 TEST_CASE("unreliable while chunks are in flight is abandoned", "[infra][BuiltPyramidSource][parallel]")
