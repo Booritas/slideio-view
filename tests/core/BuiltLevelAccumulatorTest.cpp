@@ -429,6 +429,35 @@ TEST_CASE("loadComplete restores what a build produced", "[core][BuiltLevelAccum
     REQUIRE(loaded.levelBytes(1) == level1);
 }
 
+TEST_CASE("rasters are allocated on the first chunk, never beside loaded ones", "[core][BuiltLevelAccumulator]")
+{
+    const auto px = pattern(100, 60, 3);
+    BuiltLevelAccumulator acc(100, 60, 3, DataType::Byte, {2, 4});
+    // Constructed: no raster yet, so a cache hit does not hold two copies.
+    REQUIRE(acc.levelBytes(0).empty());
+    REQUIRE(acc.levelBytes(1).empty());
+    // A region read before any chunk is zeros of the right shape, not a crash.
+    const TileData early = acc.extract(0, 0, 0, 10, 5);
+    REQUIRE(early.width() == 10);
+    REQUIRE(early.height() == 5);
+    REQUIRE(early.buffer() == std::vector<uint8_t>(10 * 5 * 3, 0));
+
+    SECTION("the first addChunk allocates every level")
+    {
+        // Three bytes a pixel: the left 50 pixels are the left 150 bytes of each 300-byte row.
+        const auto left = columnsOf(px, 300, 60, 0, 150);
+        acc.addChunk(0, 0, 50, 60, left.data());
+        REQUIRE(acc.levelBytes(0).size() == static_cast<size_t>(50) * 30 * 3);
+        REQUIRE(acc.levelBytes(1).size() == static_cast<size_t>(25) * 15 * 3);
+    }
+    SECTION("the first failChunk allocates every level")
+    {
+        acc.failChunk(0, 0, 50, 60);
+        REQUIRE(acc.levelBytes(0).size() == static_cast<size_t>(50) * 30 * 3);
+        REQUIRE(acc.levelBytes(1).size() == static_cast<size_t>(25) * 15 * 3);
+    }
+}
+
 TEST_CASE("loadComplete rejects wrong shapes", "[core][BuiltLevelAccumulator]")
 {
     const auto px = pattern(100, 60, 3);
@@ -450,8 +479,8 @@ TEST_CASE("loadComplete rejects wrong shapes", "[core][BuiltLevelAccumulator]")
         shortLevel.pop_back();
         REQUIRE_THROWS_AS(acc.loadComplete({level0, shortLevel}), std::invalid_argument);
         REQUIRE_FALSE(acc.complete());
-        // Nothing was touched: the first level is still the zero-filled buffer.
-        REQUIRE(acc.levelBytes(0) == std::vector<uint8_t>(level0.size(), 0));
+        // Nothing was touched: the first level still has no raster at all.
+        REQUIRE(acc.levelBytes(0).empty());
     }
     SECTION("after an addChunk")
     {

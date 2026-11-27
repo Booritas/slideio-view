@@ -365,6 +365,10 @@ void BuiltPyramidSource::launchLocked(core::ColorMode mode)
             return;
         }
         const core::LevelInfo& source = m_levels[static_cast<size_t>(m_sourceLevel)];
+        // The accumulator allocates its rasters on the first chunk, so a cache
+        // hit never holds a zero-filled set beside the loaded one. A build that
+        // cannot allocate them stops in run() and completes with every resident
+        // tile an error.
         try {
             m_accumulator = std::make_unique<core::BuiltLevelAccumulator>(source.width, source.height, m_numChannels,
                                                                           m_dataType, m_residentFactors);

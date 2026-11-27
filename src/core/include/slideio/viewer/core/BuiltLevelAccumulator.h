@@ -32,6 +32,11 @@ enum class BuiltRegionState
 ///
 /// A plain single-threaded value type. Callers that read while another thread
 /// feeds it must provide their own locking; the read methods are const.
+///
+/// The level rasters are allocated on the first addChunk or failChunk, not in
+/// the constructor, so loadComplete can take finished rasters without a
+/// zero-filled set beside them; an allocation failure surfaces from that first
+/// chunk as std::bad_alloc.
 class BuiltLevelAccumulator
 {
 public:
@@ -107,6 +112,11 @@ private:
         std::vector<uint8_t> data;
         std::vector<Spans> failedSpans; // one per row; empty for a row with no failure
     };
+
+    size_t levelByteSize(const Level& level) const;
+    /// Zero-filled rasters for every level that has none; done on the first
+    /// chunk, so an accumulator filled by loadComplete never holds two copies.
+    void allocateRasters();
 
     static void addSpan(Spans& spans, int begin, int end);
     static bool spansIntersect(const Spans& spans, int begin, int end);

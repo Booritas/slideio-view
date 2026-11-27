@@ -201,15 +201,30 @@ BuiltLevelAccumulator::BuiltLevelAccumulator(int sourceWidth, int sourceHeight, 
             throw std::invalid_argument("BuiltLevelAccumulator: factors must be strictly ascending");
         }
     }
-    const size_t pixelBytes = static_cast<size_t>(numChannels) * dataTypeSize(dataType);
     for (int factor : residentFactors) {
         Level level;
         level.factor = factor;
         level.width = std::max(1, ceilDiv(sourceWidth, factor));
         level.height = std::max(1, ceilDiv(sourceHeight, factor));
-        level.data.assign(static_cast<size_t>(level.width) * level.height * pixelBytes, 0);
+        // No raster yet: a cache hit hands in finished ones through
+        // loadComplete, and allocating zeros first would hold two copies.
         level.failedSpans.assign(static_cast<size_t>(level.height), Spans{});
         m_levels.push_back(std::move(level));
+    }
+}
+
+size_t BuiltLevelAccumulator::levelByteSize(const Level& level) const
+{
+    return static_cast<size_t>(level.width) * level.height * static_cast<size_t>(m_numChannels)
+        * dataTypeSize(m_dataType);
+}
+
+void BuiltLevelAccumulator::allocateRasters()
+{
+    for (Level& level : m_levels) {
+        if (level.data.empty()) {
+            level.data.assign(levelByteSize(level), 0);
+        }
     }
 }
 
@@ -241,10 +256,8 @@ void BuiltLevelAccumulator::loadComplete(std::vector<std::vector<uint8_t>> level
     if (levels.size() != m_levels.size()) {
         throw std::invalid_argument("BuiltLevelAccumulator::loadComplete: wrong number of levels");
     }
-    const size_t pixelBytes = static_cast<size_t>(m_numChannels) * dataTypeSize(m_dataType);
     for (size_t i = 0; i < levels.size(); ++i) {
-        const size_t expected = static_cast<size_t>(m_levels[i].width) * m_levels[i].height * pixelBytes;
-        if (levels[i].size() != expected) {
+        if (levels[i].size() != levelByteSize(m_levels[i])) {
             throw std::invalid_argument("BuiltLevelAccumulator::loadComplete: wrong level size");
         }
     }
@@ -336,6 +349,7 @@ void BuiltLevelAccumulator::addChunk(int x, int y, int w, int h, const uint8_t* 
         throw std::invalid_argument("BuiltLevelAccumulator::addChunk: null pixels");
     }
     validateChunk(x, y, w, h);
+    allocateRasters();
     beginBand(y, h);
     const int factor = m_levels.front().factor;
     const int boxesAcross = m_levels.front().width;
@@ -365,6 +379,7 @@ void BuiltLevelAccumulator::addChunk(int x, int y, int w, int h, const uint8_t* 
 void BuiltLevelAccumulator::failChunk(int x, int y, int w, int h)
 {
     validateChunk(x, y, w, h);
+    allocateRasters();
     beginBand(y, h);
     const int factor = m_levels.front().factor;
     // A box straddling the chunk's edge averages pixels it never received, so
@@ -530,6 +545,9 @@ TileData BuiltLevelAccumulator::extract(int residentIndex, int x, int y, int w, 
 
     const size_t pixelBytes = static_cast<size_t>(m_numChannels) * dataTypeSize(m_dataType);
     std::vector<uint8_t> out(static_cast<size_t>(cw) * ch * pixelBytes);
+    if (level.data.empty()) {
+        return TileData(std::move(out), cw, ch, m_numChannels, m_dataType); // nothing arrived yet: zeros
+    }
     for (int r = 0; r < ch; ++r) {
         const uint8_t* src = level.data.data() + (static_cast<size_t>(y0 + r) * level.width + x0) * pixelBytes;
         std::memcpy(out.data() + static_cast<size_t>(r) * cw * pixelBytes, src, static_cast<size_t>(cw) * pixelBytes);
