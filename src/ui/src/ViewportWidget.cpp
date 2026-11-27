@@ -1213,11 +1213,15 @@ std::string sceneNameAt(const std::vector<slideio::viewer::core::SceneInfo>& sce
 // applies to it (spec 2026-11-27 built-level disk cache §4): enabled, a regular
 // file, a single-file driver, an identified slide, and no open-time overview.
 // Runs on the open's worker thread, before the build is started on the UI thread.
+// hadOpenTimeOverview is whether the open-time pass produced a thumbnail -- the
+// same signal installSceneOpenResult uses to decide whether a built overview
+// is published -- not SlideInfo::overviewAvailable, which can disagree with it.
 void attachBuiltLevelStore(slideio::viewer::infra::BuiltPyramidSource& built,
                            const slideio::viewer::infra::SlideIOAdapter& adapter,
                            std::shared_ptr<slideio::viewer::core::IBuiltLevelStore> store,
                            const std::string& filePath, int sceneIndex, const std::string& slideId,
-                           const std::string& sceneName, const slideio::viewer::core::SlideInfo& info)
+                           const std::string& sceneName, const slideio::viewer::core::SlideInfo& info,
+                           bool hadOpenTimeOverview)
 {
     namespace core = slideio::viewer::core;
     namespace infra = slideio::viewer::infra;
@@ -1230,7 +1234,7 @@ void attachBuiltLevelStore(slideio::viewer::infra::BuiltPyramidSource& built,
     facts.regularFile = file.isFile();
     facts.driverId = info.driverId;
     facts.slideId = slideId;
-    facts.hadOpenTimeOverview = info.overviewAvailable;
+    facts.hadOpenTimeOverview = hadOpenTimeOverview;
     if (!core::builtLevelCacheApplies(facts) || !built.hasBuiltLevels()) {
         return;
     }
@@ -1240,6 +1244,7 @@ void attachBuiltLevelStore(slideio::viewer::infra::BuiltPyramidSource& built,
 
     core::BuiltLevelCacheIdentity identity;
     identity.slideId = slideId;
+    identity.driverId = info.driverId;
     identity.sceneIndex = sceneIndex;
     identity.fileSize = fileSize;
     identity.fileModifiedMs = fileModifiedMs;
@@ -1317,7 +1322,7 @@ SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
         }
 
         attachBuiltLevelStore(*built, *adapter, std::move(store), filePath, sceneIndex, slideId, sceneName,
-                              r.slideInfo);
+                              r.slideInfo, !r.thumbnail.isNull());
 
         // Apply fallback display range if auto-detection didn't yield one. A
         // slide shown at its native range is not marked detected on purpose.
