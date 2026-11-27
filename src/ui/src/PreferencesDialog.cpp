@@ -67,7 +67,11 @@ PreferencesDialog::PreferencesDialog(const QString& workspaceDirectory, const QS
     m_cacheDaysSpin->setRange(clampCacheRetentionDays(0), clampCacheRetentionDays(1000000));
     m_cacheDaysSpin->setSuffix(tr(" days"));
     m_cacheDaysSpin->setValue(clampCacheRetentionDays(cacheSettings.retentionDays));
-    connect(m_cacheEnabledBox, &QCheckBox::toggled, this, &PreferencesDialog::updateCacheControls);
+    // The folder and the retention stay editable with the cache off: the sweep
+    // still visits that folder and deletes by that retention, and shortening it
+    // is how entries left behind are purged sooner.
+    m_cacheDaysSpin->setToolTip(
+        tr("Entries unused for this long are deleted, whether or not the cache is on."));
 
     auto* cacheFolderRow = new QHBoxLayout;
     cacheFolderRow->addWidget(m_cacheFolderEdit, 1);
@@ -77,7 +81,6 @@ PreferencesDialog::PreferencesDialog(const QString& workspaceDirectory, const QS
     cacheForm->addRow(m_cacheEnabledBox);
     cacheForm->addRow(tr("Folder:"), cacheFolderRow);
     cacheForm->addRow(tr("Keep for:"), m_cacheDaysSpin);
-    updateCacheControls();
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
@@ -112,14 +115,6 @@ BuiltLevelCacheSettings PreferencesDialog::builtLevelCacheSettings() const
     value.folder = m_cacheFolderEdit->text().trimmed();
     value.retentionDays = clampCacheRetentionDays(m_cacheDaysSpin->value());
     return value;
-}
-
-void PreferencesDialog::updateCacheControls()
-{
-    const bool enabled = m_cacheEnabledBox->isChecked();
-    m_cacheFolderEdit->setEnabled(enabled);
-    m_cacheBrowseButton->setEnabled(enabled);
-    m_cacheDaysSpin->setEnabled(enabled);
 }
 
 void PreferencesDialog::browseForCacheFolder()

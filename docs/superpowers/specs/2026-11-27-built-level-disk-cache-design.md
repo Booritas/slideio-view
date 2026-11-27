@@ -99,7 +99,10 @@ Preferences gains a group, **Built level cache**:
     Keep for:   [ 30 ] days since last use
 ```
 
-- Off by default. The folder and the days fields are disabled while it is off.
+- Off by default. The folder and the days fields stay editable while it is off
+  (changed in review, 2026-11-27; they were disabled): the sweep visits that
+  folder and deletes by that retention whether or not the cache is on, so
+  shortening the retention is how a user purges entries left behind.
 - Default folder: `<AppLocalDataLocation>/level-cache` (the same root the log
   folder uses). An empty folder field after trimming means the default, as the
   annotation workspace field does.

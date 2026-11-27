@@ -36,7 +36,6 @@ public:
 private:
     void browseForWorkspace();
     void browseForCacheFolder();
-    void updateCacheControls();
 
     QLineEdit* m_workspaceEdit = nullptr;
     QLineEdit* m_userNameEdit = nullptr;
