@@ -15,6 +15,7 @@
 #include "slideio/viewer/core/AnnotationDecoration.h"
 #include "slideio/viewer/core/AnnotationGeometry.h"
 #include "slideio/viewer/core/BoxResize.h"
+#include "slideio/viewer/core/BuiltLevels.h"
 #include "slideio/viewer/core/VertexEditing.h"
 #include "slideio/viewer/core/CoordinateSystem.h"
 #include "slideio/viewer/core/DisplayRangePolicy.h"
@@ -27,6 +28,7 @@
 #include "slideio/viewer/core/TilePyramid.h"
 #include "slideio/viewer/core/TileSampling.h"
 #include "slideio/viewer/core/Types.h"
+#include "slideio/viewer/infra/BuiltPyramidSource.h"
 #include "slideio/viewer/infra/LruTileCache.h"
 #include "slideio/viewer/infra/SlideIOAdapter.h"
 #include "slideio/viewer/infra/SlideIOAdapter.h"
@@ -45,6 +47,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPointer>
 #include <QPolygonF>
 #include <QTimer>
 #include <QOpenGLFunctions_3_3_Core>
@@ -589,9 +592,13 @@ QImage tileDataToQImage(const slideio::viewer::core::TileData& block,
 bool hasAffordableOverview(slideio::viewer::core::ISlideSource& source)
 {
     namespace core = slideio::viewer::core;
+    // The coarsest level the FILE stores: a level the viewer builds itself is
+    // not readable until its build fills it, so it says nothing about what a
+    // whole-slide read here would cost.
     auto levels = source.levels();
-    if (levels.empty()) return false;
-    const auto& lvl = levels.back();
+    const int coarsest = core::coarsestStoredLevelIndex(levels);
+    if (coarsest < 0) return false;
+    const auto& lvl = levels[static_cast<size_t>(coarsest)];
     if (lvl.width <= 0 || lvl.height <= 0) return false;
 
     const int tilesX = lvl.tilesX > 0
@@ -617,8 +624,9 @@ QImage buildCoarseLevelThumbnailFallback(slideio::viewer::core::ISlideSource& so
     // ruinous for a slide whose only level is full resolution.
     if (!hasAffordableOverview(source)) return {};
     auto levels = source.levels();
-    if (levels.empty()) return {};
-    const int coarsestLevel = static_cast<int>(levels.size()) - 1;
+    // Stored, not built: see hasAffordableOverview.
+    const int coarsestLevel = core::coarsestStoredLevelIndex(levels);
+    if (coarsestLevel < 0) return {};
     const auto& lvl = levels[static_cast<size_t>(coarsestLevel)];
     if (lvl.width <= 0 || lvl.height <= 0
         || lvl.tileWidth <= 0 || lvl.tileHeight <= 0) return {};
@@ -764,9 +772,24 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
                                       QImage& thumbnailOut)
 {
     namespace core = slideio::viewer::core;
-    int coarsestLevel = pyramid.numLevels() - 1;
+    // The coarsest level the FILE stores. Levels the viewer builds are appended
+    // after it and stay not-ready until their background build fills them, so
+    // reading one here would yield nothing; the display range is sampled from
+    // the file exactly as it was before built levels existed (spec 2026-11-27
+    // section 5.1). The tiles cached below are keyed by this level too.
+    std::vector<core::LevelInfo> pyramidLevels;
+    pyramidLevels.reserve(static_cast<size_t>(std::max(0, pyramid.numLevels())));
+    for (int i = 0; i < pyramid.numLevels(); ++i) {
+        pyramidLevels.push_back(pyramid.levelInfo(i));
+    }
+    const int coarsestLevel = core::coarsestStoredLevelIndex(pyramidLevels);
     if (coarsestLevel < 0) return;
     const auto& coarseLvl = pyramid.levelInfo(coarsestLevel);
+    // A slide that gets built levels is one whose coarsest stored level is too
+    // large to read whole cheaply; its overview comes from the build once that
+    // completes, so the whole-slide readBlock below is skipped.
+    const bool hasBuiltLevels = std::any_of(pyramidLevels.begin(), pyramidLevels.end(),
+                                            [](const core::LevelInfo& l) { return l.built; });
 
     // A pyramid's coarsest level is a handful of tiles, so it gets read whole.
     // A slide with no downsampled level has only its full-resolution level:
@@ -779,9 +802,9 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
     // Separate, far more generous budget: thinning the scan only costs
     // precision, but refusing to read the level in full costs the overview
     // image entirely, so that decision gets its own threshold.
-    const bool overviewAffordable =
-        core::planTileSampling(coarseLvl.tilesX, coarseLvl.tilesY,
-                               core::kMaxOverviewTiles).complete;
+    const bool overviewAffordable = !hasBuiltLevels
+        && core::planTileSampling(coarseLvl.tilesX, coarseLvl.tilesY,
+                                  core::kMaxOverviewTiles).complete;
     if (!samplingPlan.complete) {
         spdlog::info("autodetect: coarsest level is {}x{} tiles -- scanning every {}x{} "
                      "({} of {} tiles), overviewAffordable={}",
@@ -1320,8 +1343,14 @@ SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
     SceneOpenResult r;
     r.filePath = filePath;
     try {
-        r.slideSource = std::make_shared<infra::SlideIOAdapter>(
-            filePath, sceneIndex, driverId, std::move(supplied));
+        // A scene's source appends viewer-built coarser levels when the file's
+        // coarsest level is too large to show a zoomed-out frame in tens of
+        // tiles (spec 2026-11-27). The build is started on the UI thread when
+        // the result is installed, after the progress listener is registered;
+        // a result discarded as stale is destroyed with no thread to join.
+        // Associated images (openAuxImageSync) are never wrapped.
+        r.slideSource = std::make_shared<infra::BuiltPyramidSource>(
+            std::make_shared<infra::SlideIOAdapter>(filePath, sceneIndex, driverId, std::move(supplied)));
         {
             r.slideInfo = r.slideSource->slideInfo();
             auto levels = r.slideSource->levels();
@@ -2940,7 +2969,55 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
     m_impl->currentTFrame = 0;
     m_impl->controller->setZT(m_impl->currentZSlice, m_impl->currentTFrame);
     m_impl->controller->setScheduler(m_impl->scheduler);
+    {
+        // A built tile is not requested until its rows are accumulated
+        // (spec 2026-11-27 section 5.4). Weak, so the controller never keeps a
+        // closed slide's source alive.
+        std::weak_ptr<core::ISlideSource> weakSource = m_impl->slideSource;
+        m_impl->controller->setTileReadyPredicate([weakSource](const core::TileKey& key) {
+            const auto source = weakSource.lock();
+            return source && source->isTileReady(key);
+        });
+    }
     m_impl->controller->requestVisibleTiles();
+
+    // Built levels fill in the background. The listener runs on the build's
+    // worker thread after every band, so it only queues a call to the UI
+    // thread; there the call is dropped if the widget is gone or the source it
+    // was registered on is no longer the one on screen -- a band from a slide
+    // that has since been closed, or replaced by a scene switch or a colour
+    // profile reopen. Registered before start() so the first band is not
+    // missed.
+    if (auto built = std::dynamic_pointer_cast<infra::BuiltPyramidSource>(m_impl->slideSource)) {
+        QPointer<ViewportWidget> self(this);
+        std::weak_ptr<core::ISlideSource> registeredOn = m_impl->slideSource;
+        built->addOnBuiltRowsReady([self, registeredOn](bool complete) {
+            // The application object, not the widget, is the context: it lives
+            // on the UI thread for the whole run, so this never dereferences
+            // the widget from the worker thread, and a widget destroyed in the
+            // meantime is caught by the QPointer check on the UI thread.
+            QMetaObject::invokeMethod(
+                QCoreApplication::instance(),
+                [self, registeredOn, complete]() {
+                    if (self.isNull()) {
+                        return;
+                    }
+                    const auto source = registeredOn.lock();
+                    if (!source || source != self->m_impl->slideSource) {
+                        return;
+                    }
+                    if (self->m_impl->controller) {
+                        self->m_impl->controller->requestVisibleTiles();
+                    }
+                    self->update();
+                    if (complete) {
+                        self->onBuiltLevelsComplete();
+                    }
+                },
+                Qt::QueuedConnection);
+        });
+        built->start();
+    }
 
     m_impl->slideOpen = true;
 
@@ -4489,6 +4566,13 @@ void ViewportWidget::setColorMode(core::ColorMode mode)
     update();
 }
 
+void ViewportWidget::onBuiltLevelsComplete()
+{
+    // Deliberately empty for now: the overview built from the smallest built
+    // level, and the builtOverviewReady emission, are rendered here once the
+    // minimap side lands (spec 2026-11-27 section 5.5).
+}
+
 core::ColorProfileInfo ViewportWidget::activeColorProfileInfo() const
 {
     if (!m_impl->slideSource) {
@@ -4860,6 +4944,13 @@ void ViewportWidget::paintGL()
             if (texIt != m_impl->textures.end()) {
                 texId = texIt->second;
             } else {
+                // A built tile whose rows are not accumulated yet is not a
+                // skipped tile: counting it would re-arm the 16 ms repaint for
+                // the whole build. Its area shows the background until the
+                // build's progress callback requests it (spec 2026-11-27 5.4).
+                if (!m_impl->slideSource->isTileReady(key)) {
+                    continue;
+                }
                 auto tileData = m_impl->tileCache->lookup(key);
                 if (tileData && !tileData->isEmpty() && !tileData->isError()) {
                     texId = m_impl->uploadTileTexture(*tileData);
@@ -5036,6 +5127,10 @@ void ViewportWidget::paintGL()
 
             auto texIt = m_impl->fluorescenceTextures.find(key);
             if (texIt == m_impl->fluorescenceTextures.end()) {
+                // Not-ready built tile: not skipped, see the brightfield loop.
+                if (!m_impl->slideSource->isTileReady(key)) {
+                    continue;
+                }
                 auto tileData = m_impl->tileCache->lookup(key);
                 if (!tileData || tileData->isEmpty()) {
                     ++tilesSkipped;

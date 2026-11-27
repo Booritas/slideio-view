@@ -231,6 +231,10 @@ signals:
     void aboutToCloseSlide();
     void slideClosed();
     void thumbnailReady(const QImage& thumbnail);
+    /// The overview a slide with viewer-built levels gets once their build
+    /// completes; such a slide opens with no thumbnail (spec 2026-11-27
+    /// section 5.5). Declared here, emitted from onBuiltLevelsComplete().
+    void builtOverviewReady(const QImage& thumbnail);
     void errorOccurred(const std::string& message);
     void sceneThumbnailReady(int sceneIndex, bool isAuxiliary, const std::string& name, const QImage& thumbnail);
     void loadingStarted(const QString& displayName);
@@ -360,6 +364,12 @@ private:
     /// from the per-frame setGeometry that drives the live preview.
     void pushMoveCommand(const std::string& id, const std::optional<core::Annotation>& original);
     void installSceneOpenResult(uint64_t opId, SceneOpenResult result);
+
+    /// Runs on the UI thread once the slide on screen has finished building
+    /// its viewer-built levels, after the tiles were re-requested and a frame
+    /// scheduled. Rendering the overview and emitting builtOverviewReady are
+    /// left to it.
+    void onBuiltLevelsComplete();
 
     // Drops the GPU textures of every tile not in `keep`'s colour mode so the
     // other rendition's CPU-cached tiles can be re-uploaded on demand instead

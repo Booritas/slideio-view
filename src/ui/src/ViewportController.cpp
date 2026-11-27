@@ -1,5 +1,7 @@
 #include "slideio/viewer/ui/ViewportController.h"
 
+#include "slideio/viewer/core/BuiltLevels.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -127,6 +129,11 @@ std::vector<core::TileKey> ViewportController::visibleTileKeys() const
     return keys;
 }
 
+void ViewportController::setTileReadyPredicate(std::function<bool(const core::TileKey&)> isReady)
+{
+    m_isTileReady = std::move(isReady);
+}
+
 void ViewportController::requestVisibleTiles()
 {
     if (!m_coordSystem || !m_scheduler) {
@@ -136,6 +143,11 @@ void ViewportController::requestVisibleTiles()
     m_scheduler->cancelAll();
 
     auto visibleKeys = visibleTileKeys();
+    if (m_isTileReady) {
+        // A built tile whose rows are not accumulated yet would only come back
+        // pending; it is requested by the build's progress callback instead.
+        visibleKeys = core::requestableTiles(visibleKeys, m_isTileReady);
+    }
 
     std::vector<infra::TileRequest> visibleRequests;
     visibleRequests.reserve(visibleKeys.size());
