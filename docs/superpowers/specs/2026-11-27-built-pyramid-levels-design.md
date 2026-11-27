@@ -1,6 +1,7 @@
 # Built pyramid levels for slides without a usable overview level
 
-Status: design, 2026-11-27. Not implemented.
+Status: implemented 2026-11-27 (`43e20e9`..`1c6cc68`); manual checks run
+2026-11-27, group AN, see §8. §5.7 lists what changed after the final review.
 
 ## 1. Why
 
@@ -40,8 +41,12 @@ separate 999×705 `readBlock` — worked.
 `extern/slideio/src/slideio/drivers/gdal/gdalscene.{hpp,cpp}` now reads a
 tiled TIFF page tile by tile through `TileComposer` and `TiffTools::readTile`
 and reports the file's tile size; three tests in `test_gdal_driver.cpp` cover
-it. Committed as `95ab634d` on SlideIO branch `feature/gdal-tiled-tiff-reads`
-(pushed; pull request to follow). This design assumes it.
+it. Committed as `95ab634d` on SlideIO branch `feature/gdal-tiled-tiff-reads`,
+which is pushed but **not yet merged into SlideIO master**. **The viewer's
+submodule pin has not moved**: `extern/slideio` is still pinned at `e2ceb224`,
+and the builds that ran group AN had the branch checked out in the working
+tree by hand. A clean clone builds against the old GDAL path until the
+SlideIO pull request lands and the pin moves (§6). This design assumes it.
 
 The GDAL scene still serialises reads (`supportsConcurrentReads()` is
 false: one libtiff handle per file). One full pass over the 44 000 tiles of
@@ -324,6 +329,38 @@ zoom out to ~25%     /4 virtual level: each tile = 16 full-res decodes,
 build completes      minimap shows the slide; zoomed-out frames are ~60 tiles
 ```
 
+### 5.7 Changes after the final review (2026-11-27)
+
+The whole-branch review found four places where the text above and the
+shipped code had to part. The code is the truth; these are the differences.
+
+- **F1 -- band chunks are 4 MiB and tile-aligned**, not 64 MB.
+  `BuiltPyramidSource::kDefaultBandChunkMaxBytes` is 4 MiB and
+  `bandChunkWidth` makes a chunk a whole number of source tiles (at least
+  one). A 64 MiB chunk took about 0.5 s to read, and that read is what a colour
+  toggle or a slide close joins on the UI thread and what every interactive
+  tile read waits behind on the serialised GDAL scene. On the example slide a
+  band is 125 chunks of 512x2048 px; a close mid-build now cancels in 26-50 ms.
+- **F2 -- an unreliable source level abandons the build.** The source
+  subscribes to `addOnLevelMarkedUnreliable`; when the level it reads from is
+  marked, the build stops, no overview is published, and every resident tile
+  not yet built is an error tile rather than pending. The adapter's
+  finer-level fallback is deliberately not used: a built level must not move
+  tissue (§3). Recorded as debt (TD-6).
+- **F3 -- an overview with any failed row is withheld.** `smallestBuiltLevel()`
+  returns nothing, and logs once per build, if any row of the coarsest resident
+  level failed; the minimap stays "unavailable". A black stripe in a minimap
+  reads as tissue absence.
+- **F4 -- the open-time overview is kept.** §5.5's "skip the whole-slide
+  `readBlock`" cost every mid-sized pyramid (coarsest stored level 2049 px to
+  ~16k px) its instant minimap and its block-based display-range fallback.
+  Affordability is now decided exactly as before the feature; the built
+  overview is published only when the open produced none, and "Building
+  overview..." shows only when a build is pending **and** there is no
+  open-time overview. An ordinary pyramidal SVS whose coarsest level is over
+  2048 px therefore builds one small resident level that nothing displays as
+  an overview.
+
 ## 6. Constraints
 
 - Core stays Qt-free; the plan and the accumulator are core, the thread and
@@ -384,34 +421,32 @@ into a pure function over keys and a readiness predicate and tested there.
 
 ## 8. Manual checks (group AN)
 
-To be run against the installed build:
+Written before the implementation; run 2026-11-27 against the installed build
+of `1c6cc68` (installed to a scratch prefix, binary compared byte for byte with
+the build tree), driven by script on a 3456x1408 maximised window, with state
+read from the log and from process counters wherever possible. **10 of 12
+pass, 1 fails, 1 not run.** AN1 fails on its "within 2 s" clause: the fit view
+stays empty for about 13 s, because the level it shows is the coarsest built
+level and one tile row of it needs four bands (below). AN12 was not run: no
+single-level fluorescence TIFF was found. AN10's "no built levels" does not
+hold for an ordinary pyramidal SVS since F4 (§5.7), and was judged on the
+rest of its text. The tile-cache budget is 2 GiB (`LruTileCache`), so AN5's
+ceiling is about 2.3 GB.
 
-- AN1 Open `PIT_01_00248_01.tiff`: the window is responsive at once; the
-  main view starts filling within 2 s; no step of the open blocks input.
-- AN2 The whole slide is drawn zoomed out within ~90 s on the test machine;
-  log shows the band pass reading level 0 once.
-- AN3 Minimap reads "Building overview…", then shows the slide when the
-  build completes, and navigating with it works.
-- AN4 Zoom to 100% mid-build: full-resolution tiles appear as fast as with
-  no build running (within the band-chunk wait).
-- AN5 Process memory during and after the build stays below the tile-cache
-  budget plus 256 MB plus a margin; not ~7 GB.
-- AN6 Slide Properties lists one level for this file.
-- AN7 Close the slide mid-build: it closes at once, the log shows the
-  builder stopped, and opening another slide is unaffected.
-- AN8 Toggle colour management mid-build and after: the build restarts in
-  the new mode (log), zoomed-out tiles fill in again in that mode's colours,
-  and no tile of one mode is shown in the other.
-- AN9 `PIT_01_02548_01.tiff` (11963×6985): gets three built levels, all
-  resident, and its overview within a few seconds; the display range is the
-  same as before this change.
-- AN12 Open the large slide in a fluorescence-style view if one is
-  available (or any single-level fluorescence TIFF): not-ready areas stay
-  background without a repaint storm (log shows no 16 ms repaint loop).
-- AN10 A pyramidal SVS: no built levels, behaviour identical to today
-  (log shows no build).
-- AN11 Annotate and measure on the large slide while it builds: nothing
-  about annotations is affected.
+| | Check | Result |
+|---|---|---|
+| AN1 | Open `PIT_01_00248_01.tiff`: the window is responsive at once; the main view starts filling within 2 s; no step of the open blocks input. | **Fail** on the 2 s clause; the rest passes. The window was up and answering at 1 s (Windows reported it responding in 26 of 26 samples over the first 8 s), and the minimap read "Building overview...". But the first built tiles were drawn **13.4 s after the build started** (build start 18:39:52.580, first `paintGL` with rendered tiles 18:40:06.015), and the frames between rendered 0 tiles, one per band, about 3 s apart. The fit view (2.9%) shows the /32 level, and one 256-px tile row of /32 covers 8192 source rows, which is four 2048-row bands. §5.6's "first bands fill within ~1 s" was wrong for that reason. Left for the owner: accept the wait, or draw a finer resident level where the /32 tile is not ready yet. |
+| AN2 | The whole slide is drawn zoomed out within ~90 s on the test machine; log shows the band pass reading level 0 once. | **Pass.** The build took **66.9 s** (2750 chunks, 22 bands of 125) while AN4 was zooming in alongside it, and 54.1 s in another Raw run. One "building 3 resident of 5 built levels from level 0" line per build and no re-read. In Managed mode the same pass took **93.1 s** (AN8). |
+| AN3 | Minimap reads "Building overview...", then shows the slide when the build completes, and navigating with it works. | **Pass.** "Building overview..." during the build, the slide's overview right after "complete". At 100% a click on the minimap's lower middle moved the view there, and the frame rectangle followed. |
+| AN4 | Zoom to 100% mid-build: full-resolution tiles appear as fast as with no build running (within the band-chunk wait). | **Pass.** Ctrl+1 at 40 s into the build: the view was full at the first sample, 300 ms (93% of samples non-background, then unchanged to 6 s). After the build, a minimap jump to a fresh region at 100% was full at the first sample, 150 ms. Both reads finished before the first sample, so the sampling cannot tell them apart. |
+| AN5 | Process memory during and after the build stays below the tile-cache budget plus 256 MB plus a margin; not ~7 GB. | **Pass.** Peak **920 MB working set / 705 MB private** across all runs, mid-build and after, including a 100% excursion and three colour-mode builds. Before the change this was ~7 GB. |
+| AN6 | Slide Properties lists one level for this file. | **Pass.** "Pyramid levels 1"; Levels shows one entry: 63,803 x 44,997, tile 256x256, 250x176 tiles. |
+| AN7 | Close the slide mid-build: it closes at once, the log shows the builder stopped, and opening another slide is unaffected. | **Pass.** Ctrl+W at 18:50:04.339, "build in mode Raw cancelled at row 18432" at .383 (**44 ms**), the window kept answering, and private memory fell from 631 to 325 MB. `PIT_01_02548_01.tiff` was then opened in the same window (AN9). |
+| AN8 | Toggle colour management mid-build and after: the build restarts in the new mode (log), zoomed-out tiles fill in again in that mode's colours, and no tile of one mode is shown in the other. | **Pass.** The TIFF has no ICC profile, so the check ran with a per-slide override (a Windows RGB monitor profile), which was cleared afterwards. Mid-build: Managed was cancelled at row 10240 and Raw started **51 ms** later. The view blanked to background at once, then refilled in Raw; the Raw rows were not shown back in Managed. Toggled back: the Managed tiles built before the first toggle reappeared at once from the cache, Raw's further rows did not, and Managed rebuilt. After completion: Raw restarted and showed only the Raw rows already in the cache. The two renditions differ by about 1 level per channel on this profile, so the separation was judged from the log and from which rows were drawn, not from colour. The minimap keeps the previous mode's built overview until the new build completes. That is deliberate (comment in `onBuiltLevelsComplete`), and recorded here for the owner's eye. |
+| AN9 | `PIT_01_02548_01.tiff` (11963x6985): gets three built levels, all resident, and its overview within a few seconds; the display range is the same as before this change. | **Pass.** "building 3 resident of 3 built levels from level 0 (11963x6985)", complete in **2.0 s**. The overview is the open-time one (F4: `overviewAffordable=true`, `readBlock usable=true`), on screen with the first frame. The display range was min 0, max 255, not autodetected, identical to the log of this file's open at 10:34 that morning, before the first commit of the feature. |
+| AN10 | A pyramidal SVS: no built levels, behaviour identical to today (log shows no build). | **Pass**, read against F4. On `JP2K-33003-1.svs` (3 levels, coarsest 1921x2187) the open-time overview was on the minimap at once, and "nothing to publish, the open-time overview stays". **But the log does show a build**: 1 resident level from level 2, 5 chunks, 277 ms. The same holds for `jp2k_3chnl_8bit.svs` (coarsest 2194x2285, 144 ms), `S1303802-11-HE-DX1.svs` (coarsest 3520x4077, 16 chunks, 448 ms) and the single-level `CMU-1-Small-Region.svs` (2220x2967, 138 ms). Only `jp2k_1chnl.svs` (one 1559x1621 level) showed no build. No SVS in the corpus is pyramidal with a coarsest level of 2048 px or less. |
+| AN11 | Annotate and measure on the large slide while it builds: nothing about annotations is affected. | **Pass.** Mid-build, a rectangle (R) and a marker (M) were drawn. Both appeared in the list (Rectangle 1, Point 2) and the tally (Unclassified 2), and Annotation Properties showed the rectangle's area and perimeter. Both were deleted from the list. Autosave created `6469d5a641deeed2.s0.annotations.json`, which now holds an empty `annotations` array and is left in place. |
+| AN12 | Open the large slide in a fluorescence-style view if one is available (or any single-level fluorescence TIFF): not-ready areas stay background without a repaint storm (log shows no 16 ms repaint loop). | **Not run.** No single-level fluorescence TIFF was found. Four single-channel candidates (a 16-bit GDAL TIFF, an SCN page, a CZI preview and a QPTIFF region) all open as `isBrightfield=true`, and each builds in one chunk in under 130 ms. **The brightfield half was observed:** on the large slide `paintGL` logs frames 1-5 and every hundredth. The first run reached frame 5 in 13 s, one frame per band, and never reached frame 100 in its 2.5 minutes. The second reached frame 100 only after 4.7 minutes of driving. Every logged frame had `skipped=0`. |
 
 ## 9. Debt this does not fix
 
@@ -419,7 +454,9 @@ To be run against the installed build:
   grows until a slide close, a reopen, a Z/T change or a colour-mode change
   releases them wholesale; `deleteTexture` has no callers). Built levels make the zoomed-out case tens of textures, but
   a long full-resolution pan across any large slide still accumulates them.
-  To be recorded in `docs/technical-debt.md`.
+  Recorded in `docs/technical-debt.md` as TD-5.
+- **An unreliable source level leaves the zoomed-out view blank** (F2,
+  §5.7). Recorded as TD-6.
 - The GDAL scene serialises reads (§2).
 - No persistence: every open of the same slide rebuilds (approach C).
 
