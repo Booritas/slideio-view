@@ -79,6 +79,15 @@ public:
     // Raw bytes of the profile the file embeds, empty when it embeds none.
     std::vector<uint8_t> embeddedProfileBytes() const;
 
+    // core::colorProfileFingerprint of the bytes the managed scene was bound to
+    // (a supplied profile when it was used, else the embedded one); "" when
+    // there is no managed scene.
+    std::string boundColorProfileFingerprint() const;
+    // "sRGB/<intent>" for the transform the managed scene is built with: the
+    // target it sets and the rendering intent SlideIO's ColorManagementWrap
+    // uses by default, read from the library so a change there changes this.
+    static std::string managedRenditionTag();
+
 private:
     // Pyramid reliability is tracked per read path, not per slide: see the
     // comment on m_unreliableLevels. Both take the flag readTile computes for
@@ -107,6 +116,8 @@ private:
     // underlying CVScene and its read serialisation mutex, so this is a second
     // Scene object, not a second reader or file handle.
     std::shared_ptr<::slideio::Scene> m_managedScene;
+    // Set in the constructor with m_managedScene; "" when there is none.
+    std::string m_boundProfileFingerprint;
     std::atomic<core::ColorMode> m_colorMode{core::ColorMode::Raw};
     std::vector<core::LevelInfo> m_levels;
     core::SlideInfo m_slideInfo;

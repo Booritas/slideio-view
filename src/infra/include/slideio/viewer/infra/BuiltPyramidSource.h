@@ -1,6 +1,8 @@
 #pragma once
 
+#include "slideio/viewer/core/BuiltLevelCache.h"
 #include "slideio/viewer/core/BuiltLevels.h"
+#include "slideio/viewer/core/IBuiltLevelStore.h"
 #include "slideio/viewer/core/ISlideSource.h"
 #include "slideio/viewer/core/TileData.h"
 #include "slideio/viewer/core/TileKey.h"
@@ -66,6 +68,17 @@ public:
     BuiltPyramidSource(const BuiltPyramidSource&) = delete;
     BuiltPyramidSource& operator=(const BuiltPyramidSource&) = delete;
 
+    // Call before start(); a null store (the default) means no caching and
+    // behaviour exactly as before. With a store, each build first asks it for
+    // finished levels under the build's key (core::builtLevelCacheKeyFor) and,
+    // on a hit, reads nothing from the inner source. A build that completes
+    // with no failed rows, not cancelled and not abandoned, is saved under the
+    // same key. Both run on the worker thread: the load without the state lock,
+    // the save holding it shared -- setColorMode() and the destructor raise the
+    // cancel flag the save polls and join before they take it exclusively.
+    void setLevelStore(std::shared_ptr<core::IBuiltLevelStore> store, core::BuiltLevelCacheIdentity identity,
+                       core::BuiltLevelCacheDescription description);
+
     // Starts the build in the inner source's current colour mode, if there is
     // anything resident to build. Idempotent. Kept apart from the constructor
     // so listeners can be registered before the first band lands.
@@ -125,6 +138,12 @@ private:
     void stopWorkerLocked();
 
     void run(uint64_t generation, core::ColorMode mode);
+    // On the worker, before any band is read. True when the build is over:
+    // the store's levels were handed over, or a newer build or a cancel
+    // superseded it meanwhile. False on a miss, to build as usual.
+    bool loadFromStore(uint64_t generation, core::ColorMode mode, const core::BuiltLevelCacheKey& key);
+    // On the worker, after a clean completion has been notified.
+    void saveToStore(uint64_t generation, core::ColorMode mode, const core::BuiltLevelCacheKey& key);
     void notify(bool complete);
     bool sourceUnreliable() const;
 
@@ -138,6 +157,11 @@ private:
     int m_numChannels = 0;
     core::DataType m_dataType = core::DataType::None;
     int m_bandChunkMaxBytes;
+
+    // Set under m_controlMutex before start(); only read by the worker after.
+    std::shared_ptr<core::IBuiltLevelStore> m_store;
+    core::BuiltLevelCacheIdentity m_cacheIdentity;
+    core::BuiltLevelCacheDescription m_cacheDescription;
 
     mutable std::shared_mutex m_stateMutex;
     std::unique_ptr<core::BuiltLevelAccumulator> m_accumulator;

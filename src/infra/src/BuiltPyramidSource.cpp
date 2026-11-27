@@ -8,6 +8,8 @@
 #include <chrono>
 #include <cmath>
 #include <exception>
+#include <optional>
+#include <string>
 #include <utility>
 
 namespace slideio::viewer::infra
@@ -97,6 +99,21 @@ BuiltPyramidSource::~BuiltPyramidSource()
 {
     std::lock_guard<std::mutex> control(m_controlMutex);
     stopWorkerLocked();
+}
+
+void BuiltPyramidSource::setLevelStore(std::shared_ptr<core::IBuiltLevelStore> store,
+                                       core::BuiltLevelCacheIdentity identity,
+                                       core::BuiltLevelCacheDescription description)
+{
+    std::lock_guard<std::mutex> control(m_controlMutex);
+    if (m_started) {
+        // The worker reads these unlocked; changing them under it would race.
+        spdlog::warn("BuiltPyramidSource: level store set after start() ignored for {}", description.path);
+        return;
+    }
+    m_store = std::move(store);
+    m_cacheIdentity = std::move(identity);
+    m_cacheDescription = std::move(description);
 }
 
 void BuiltPyramidSource::start()
@@ -410,6 +427,17 @@ void BuiltPyramidSource::run(uint64_t generation, core::ColorMode mode)
         // scaled back to the slide by the same rounding tileSlideRect uses.
         const double invScale = (m_sourceLevel == 0 || source.scale <= 0.0) ? 1.0 : 1.0 / source.scale;
 
+        // No key -- no store, or a Managed build with no profile fingerprint --
+        // means neither a load nor a save: built exactly as without a store.
+        std::optional<core::BuiltLevelCacheKey> cacheKey;
+        if (m_store) {
+            cacheKey = core::builtLevelCacheKeyFor(m_cacheIdentity, m_sourceLevel, source, m_numChannels, m_dataType,
+                                                   m_residentFactors, mode);
+        }
+        if (cacheKey && loadFromStore(generation, mode, *cacheKey)) {
+            return;
+        }
+
         spdlog::info("BuiltPyramidSource: building {} resident of {} built levels from level {} ({}x{}) in mode {}: "
                      "{} bands of {} chunks, each up to {}x{} px",
                      m_residentFactors.size(), m_levels.size() - static_cast<size_t>(m_storedCount), m_sourceLevel,
@@ -494,6 +522,9 @@ void BuiltPyramidSource::run(uint64_t generation, core::ColorMode mode)
         if (!m_cancel) {
             notify(true);
         }
+        if (cacheKey) {
+            saveToStore(generation, mode, *cacheKey);
+        }
         return;
     } catch (const std::exception& e) {
         // A contract violation fed to the accumulator, or an allocation failure
@@ -517,6 +548,117 @@ void BuiltPyramidSource::run(uint64_t generation, core::ColorMode mode)
         }
     } catch (...) {
         spdlog::error("BuiltPyramidSource: could not report the stopped build in mode {}", modeName(mode));
+    }
+}
+
+bool BuiltPyramidSource::loadFromStore(uint64_t generation, core::ColorMode mode, const core::BuiltLevelCacheKey& key)
+{
+    const auto started = std::chrono::steady_clock::now();
+    std::vector<std::pair<int, int>> sizes;
+    {
+        std::shared_lock<std::shared_mutex> state(m_stateMutex);
+        if (m_generation != generation || !m_accumulator) {
+            return true; // a newer build owns the accumulator
+        }
+        for (int i = 0; i < static_cast<int>(m_residentFactors.size()); ++i) {
+            sizes.emplace_back(m_accumulator->levelWidth(i), m_accumulator->levelHeight(i));
+        }
+    }
+    const size_t pixelBytes = static_cast<size_t>(m_numChannels) * core::dataTypeSize(m_dataType);
+    const std::string name = core::builtLevelCacheKeyName(key);
+
+    // Disk I/O, unlocked: readers must not wait behind it. The store logs its
+    // own miss; a throw is a miss too, never a reason to stop the build.
+    std::optional<std::vector<std::vector<uint8_t>>> levels;
+    try {
+        levels = m_store->load(key, sizes, pixelBytes);
+    } catch (const std::exception& e) {
+        spdlog::warn("BuiltPyramidSource: level cache {} could not be read for {}: {}; building", name,
+                     m_cacheDescription.path, e.what());
+        return false;
+    } catch (...) {
+        spdlog::warn("BuiltPyramidSource: level cache {} could not be read for {}; building", name,
+                     m_cacheDescription.path);
+        return false;
+    }
+    if (!levels) {
+        return false;
+    }
+    if (m_cancel) {
+        return true; // superseded while reading; the next build owns the state
+    }
+    {
+        std::unique_lock<std::shared_mutex> state(m_stateMutex);
+        if (m_generation != generation) {
+            return true;
+        }
+        try {
+            m_accumulator->loadComplete(std::move(*levels));
+        } catch (const std::exception& e) {
+            // Touches nothing on a throw, so the build can still run.
+            spdlog::warn("BuiltPyramidSource: level cache {} for {} answered unusable levels: {}; building", name,
+                         m_cacheDescription.path, e.what());
+            return false;
+        }
+        m_complete = true;
+    }
+    const auto elapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started);
+    spdlog::info("BuiltPyramidSource: loaded built levels in mode {} from cache {} in {} ms ({})", modeName(mode),
+                 name, elapsed.count(), m_cacheDescription.path);
+    if (!m_cancel) {
+        notify(true);
+    }
+    return true;
+}
+
+void BuiltPyramidSource::saveToStore(uint64_t generation, core::ColorMode mode, const core::BuiltLevelCacheKey& key)
+{
+    if (m_cancel || sourceUnreliable()) {
+        return;
+    }
+    const auto started = std::chrono::steady_clock::now();
+    const std::string name = core::builtLevelCacheKeyName(key);
+    // Shared for the whole save: the views point into the accumulator. Readers
+    // still get through, and nobody can take it exclusively meanwhile -- this
+    // worker is the only writer while it runs, and a restart or the destructor
+    // raises m_cancel (which the store polls) and joins this thread before it
+    // takes the lock exclusively.
+    std::shared_lock<std::shared_mutex> state(m_stateMutex);
+    if (m_generation != generation || !m_accumulator || !m_complete) {
+        return;
+    }
+    if (m_accumulator->hasFailures()) {
+        spdlog::debug("BuiltPyramidSource: built levels in mode {} for {} have failed rows; not cached",
+                      modeName(mode), m_cacheDescription.path);
+        return;
+    }
+    std::vector<core::BuiltLevelView> views;
+    for (int i = 0; i < static_cast<int>(m_residentFactors.size()); ++i) {
+        const std::vector<uint8_t>& bytes = m_accumulator->levelBytes(i);
+        views.push_back(
+            core::BuiltLevelView{m_accumulator->levelWidth(i), m_accumulator->levelHeight(i), bytes.data(), bytes.size()});
+    }
+    bool saved = false;
+    try {
+        saved = m_store->save(key, m_cacheDescription, views, m_cancel);
+    } catch (const std::exception& e) {
+        spdlog::warn("BuiltPyramidSource: built levels in mode {} not saved to cache {} for {}: {}", modeName(mode),
+                     name, m_cacheDescription.path, e.what());
+        return;
+    } catch (...) {
+        spdlog::warn("BuiltPyramidSource: built levels in mode {} not saved to cache {} for {}", modeName(mode), name,
+                     m_cacheDescription.path);
+        return;
+    }
+    const auto elapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started);
+    if (saved) {
+        spdlog::info("BuiltPyramidSource: saved built levels in mode {} to cache {} in {} ms ({})", modeName(mode),
+                     name, elapsed.count(), m_cacheDescription.path);
+    } else {
+        spdlog::info("BuiltPyramidSource: built levels in mode {} not saved to cache {} ({}){}", modeName(mode), name,
+                     m_cacheDescription.path, m_cancel ? ": cancelled" : "");
     }
 }
 

@@ -1,7 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "slideio/viewer/infra/BuiltPyramidSource.h"
+#include "slideio/viewer/core/BuiltLevelCache.h"
 #include "slideio/viewer/core/BuiltLevels.h"
+#include "slideio/viewer/core/IBuiltLevelStore.h"
 #include "slideio/viewer/core/ISlideSource.h"
 #include "slideio/viewer/core/TileData.h"
 #include "slideio/viewer/core/TileKey.h"
@@ -16,12 +18,15 @@
 #include <condition_variable>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using namespace slideio::viewer::core;
@@ -1132,4 +1137,355 @@ TEST_CASE("a throwing listener neither stops the build nor reaches the thread", 
     CHECK(fake->calls().size() == 6);
     CHECK_FALSE(source.smallestBuiltLevel().isEmpty());
     CHECK(log.count("listener boom") == 7); // six bands and the completion
+}
+
+// ---------------------------------------------------------------------------
+// The level store (built-level disk cache, spec 2026-11-27 §5.3).
+// ---------------------------------------------------------------------------
+
+namespace
+{
+
+// Keeps saved rasters in memory by key name, records every call, and can hold
+// a save until the cancel flag it was handed is raised.
+class MemoryStore : public IBuiltLevelStore
+{
+public:
+    std::optional<std::vector<std::vector<uint8_t>>> load(const BuiltLevelCacheKey& key,
+                                                          const std::vector<std::pair<int, int>>& levelSizes,
+                                                          size_t pixelBytes) override
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        ++m_loads;
+        const auto it = m_entries.find(builtLevelCacheKeyName(key));
+        if (it == m_entries.end() || it->second.key != key || it->second.levels.size() != levelSizes.size()) {
+            return std::nullopt;
+        }
+        for (size_t i = 0; i < levelSizes.size(); ++i) {
+            const size_t expected = static_cast<size_t>(levelSizes[i].first)
+                * static_cast<size_t>(levelSizes[i].second) * pixelBytes;
+            if (it->second.levels[i].size() != expected) {
+                return std::nullopt;
+            }
+        }
+        ++m_hits;
+        return it->second.levels;
+    }
+
+    bool save(const BuiltLevelCacheKey& key, const BuiltLevelCacheDescription& description,
+              const std::vector<BuiltLevelView>& levels, const std::atomic<bool>& cancel) override
+    {
+        bool block = false;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            ++m_saves;
+            m_description = description;
+            block = m_blockSaves;
+            m_inSave = true;
+        }
+        m_cv.notify_all();
+        if (block) {
+            // Holds until the caller cancels, polling as the real store does
+            // between blocks; gives up after kWait so a broken test cannot hang.
+            const auto deadline = std::chrono::steady_clock::now() + kWait;
+            while (!cancel && std::chrono::steady_clock::now() < deadline) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_inSave = false;
+        if (cancel) {
+            ++m_cancelledSaves;
+            m_cv.notify_all();
+            return false;
+        }
+        Entry entry;
+        entry.key = key;
+        for (const BuiltLevelView& view : levels) {
+            entry.levels.emplace_back(view.data, view.data + view.size);
+        }
+        m_entries[builtLevelCacheKeyName(key)] = std::move(entry);
+        ++m_completedSaves;
+        m_cv.notify_all();
+        return true;
+    }
+
+    void blockSaves()
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_blockSaves = true;
+    }
+
+    bool waitForCompletedSaves(int n)
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_cv.wait_for(lock, kWait, [this, n] { return m_completedSaves >= n; });
+    }
+
+    bool waitUntilInSave()
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_cv.wait_for(lock, kWait, [this] { return m_inSave; });
+    }
+
+    int loads() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_loads;
+    }
+    int hits() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_hits;
+    }
+    int saves() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_saves;
+    }
+    int cancelledSaves() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_cancelledSaves;
+    }
+    size_t entryCount() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_entries.size();
+    }
+    std::string savedPath() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_description.path;
+    }
+    std::vector<BuiltLevelCacheKey> savedKeys() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        std::vector<BuiltLevelCacheKey> keys;
+        for (const auto& entry : m_entries) {
+            keys.push_back(entry.second.key);
+        }
+        return keys;
+    }
+
+private:
+    struct Entry
+    {
+        BuiltLevelCacheKey key;
+        std::vector<std::vector<uint8_t>> levels;
+    };
+
+    mutable std::mutex m_mutex;
+    std::condition_variable m_cv;
+    std::map<std::string, Entry> m_entries;
+    BuiltLevelCacheDescription m_description;
+    bool m_blockSaves = false;
+    bool m_inSave = false;
+    int m_loads = 0;
+    int m_hits = 0;
+    int m_saves = 0;
+    int m_cancelledSaves = 0;
+    int m_completedSaves = 0;
+};
+
+BuiltLevelCacheIdentity cacheIdentity(const std::string& fingerprint = "0123456789abcdef")
+{
+    BuiltLevelCacheIdentity identity;
+    identity.slideId = "slide-under-test";
+    identity.sceneIndex = 0;
+    identity.fileSize = 123456;
+    identity.fileModifiedMs = 1700000000000;
+    identity.managedProfileFingerprint = fingerprint;
+    identity.managedRenditionTag = "sRGB/Perceptual";
+    identity.slideioVersion = "test";
+    return identity;
+}
+
+BuiltLevelCacheDescription cacheDescription()
+{
+    BuiltLevelCacheDescription description;
+    description.path = "D:/slides/under-test.tif";
+    description.fileName = "under-test.tif";
+    description.driverId = "GDAL";
+    return description;
+}
+
+// Every resident tile of the mode is ready in b and byte-equal to a's.
+void requireSameResidentTiles(BuiltPyramidSource& a, BuiltPyramidSource& b, ColorMode mode)
+{
+    int compared = 0;
+    for (const LevelInfo& level : a.levels()) {
+        if (!level.resident) {
+            continue;
+        }
+        for (int row = 0; row < level.tilesY; ++row) {
+            for (int column = 0; column < level.tilesX; ++column) {
+                const TileKey key(level.level, column, row, 0, 0, mode);
+                REQUIRE(b.isTileReady(key));
+                const TileData ta = a.readTile(key);
+                const TileData tb = b.readTile(key);
+                REQUIRE_FALSE(ta.isPending());
+                REQUIRE_FALSE(ta.isError());
+                REQUIRE_FALSE(tb.isPending());
+                REQUIRE_FALSE(tb.isError());
+                REQUIRE(ta.width() == tb.width());
+                REQUIRE(ta.height() == tb.height());
+                REQUIRE(ta.buffer() == tb.buffer());
+                ++compared;
+            }
+        }
+    }
+    REQUIRE(compared > 0);
+}
+
+} // namespace
+
+TEST_CASE("a clean build is saved once, then a second source hits without a band read",
+          "[infra][BuiltPyramidSource][cache]")
+{
+    LogCapture log;
+    auto store = std::make_shared<MemoryStore>();
+
+    auto fakeA = std::make_shared<FakeSource>();
+    BuiltPyramidSource a(fakeA);
+    a.setLevelStore(store, cacheIdentity(), cacheDescription());
+    Progress progressA;
+    progressA.attach(a);
+    a.start();
+    REQUIRE(progressA.waitForCompletes(1));
+    REQUIRE(store->waitForCompletedSaves(1));
+    CHECK(store->saves() == 1);
+    CHECK(store->savedPath() == "D:/slides/under-test.tif");
+
+    auto fakeB = std::make_shared<FakeSource>();
+    auto b = std::make_unique<BuiltPyramidSource>(fakeB);
+    b->setLevelStore(store, cacheIdentity(), cacheDescription());
+    Progress progressB;
+    progressB.attach(*b);
+    b->start();
+    REQUIRE(progressB.waitForCompletes(1));
+
+    CHECK(fakeB->calls().empty());
+    CHECK(store->hits() == 1);
+    CHECK_FALSE(b->builtOverviewPending());
+    CHECK(b->smallestBuiltLevel().byteSize() == static_cast<size_t>(1025) * 750);
+    requireSameResidentTiles(a, *b, ColorMode::Raw);
+
+    b.reset(); // joins: nothing further can be notified or saved
+    CHECK(progressB.eventCount() == 1);
+    CHECK(store->saves() == 1); // a hit is not saved again
+    CHECK(log.count("from cache") == 1);
+    // Both lines name the slide: the save and the hit.
+    CHECK(log.count("D:/slides/under-test.tif") >= 2);
+}
+
+TEST_CASE("a build with a failed chunk is not saved", "[infra][BuiltPyramidSource][cache]")
+{
+    auto store = std::make_shared<MemoryStore>();
+    auto fake = std::make_shared<FakeSource>();
+    fake->failChunkAt(0, 0);
+    auto source = std::make_unique<BuiltPyramidSource>(fake);
+    source->setLevelStore(store, cacheIdentity(), cacheDescription());
+    Progress progress;
+    progress.attach(*source);
+    source->start();
+    REQUIRE(progress.waitForCompletes(1));
+    source.reset();
+
+    CHECK(store->loads() == 1);
+    CHECK(store->saves() == 0);
+}
+
+TEST_CASE("an abandoned build is not saved", "[infra][BuiltPyramidSource][cache]")
+{
+    auto store = std::make_shared<MemoryStore>();
+    auto fake = std::make_shared<FakeSource>();
+    auto source = std::make_unique<BuiltPyramidSource>(fake, kBuiltLevelBudgetBytes, 1'000'000);
+    source->setLevelStore(store, cacheIdentity(), cacheDescription());
+    Progress progress;
+    progress.attach(*source);
+
+    fake->blockReads();
+    source->start();
+    REQUIRE(fake->waitUntilBlocked());
+    fake->markUnreliable(0);
+    fake->release();
+    REQUIRE(progress.waitForCompletes(1));
+    source.reset();
+
+    CHECK(store->loads() == 1);
+    CHECK(store->saves() == 0);
+}
+
+TEST_CASE("each colour mode has its own entry", "[infra][BuiltPyramidSource][cache]")
+{
+    auto store = std::make_shared<MemoryStore>();
+    auto fake = std::make_shared<FakeSource>();
+    BuiltPyramidSource source(fake);
+    source.setLevelStore(store, cacheIdentity(), cacheDescription());
+    Progress progress;
+    progress.attach(source);
+    source.start();
+    REQUIRE(progress.waitForCompletes(1));
+    REQUIRE(store->waitForCompletedSaves(1));
+
+    source.setColorMode(ColorMode::Managed);
+    REQUIRE(progress.waitForCompletes(2));
+    REQUIRE(store->waitForCompletedSaves(2));
+
+    const auto keys = store->savedKeys();
+    REQUIRE(keys.size() == 2);
+    CHECK(builtLevelCacheKeyName(keys[0]) != builtLevelCacheKeyName(keys[1]));
+    const bool rawThenManaged = keys[0].colorMode == ColorMode::Raw && keys[1].colorMode == ColorMode::Managed;
+    const bool managedThenRaw = keys[0].colorMode == ColorMode::Managed && keys[1].colorMode == ColorMode::Raw;
+    CHECK((rawThenManaged || managedThenRaw));
+
+    auto fresh = std::make_shared<FakeSource>();
+    fresh->setColorMode(ColorMode::Managed);
+    BuiltPyramidSource second(fresh);
+    second.setLevelStore(store, cacheIdentity(), cacheDescription());
+    Progress secondProgress;
+    secondProgress.attach(second);
+    second.start();
+    REQUIRE(secondProgress.waitForCompletes(1));
+    CHECK(fresh->calls().empty());
+    CHECK(store->hits() == 1);
+    requireSameResidentTiles(source, second, ColorMode::Managed);
+}
+
+TEST_CASE("managed without a fingerprint is not cached", "[infra][BuiltPyramidSource][cache]")
+{
+    auto store = std::make_shared<MemoryStore>();
+    auto fake = std::make_shared<FakeSource>();
+    fake->setColorMode(ColorMode::Managed);
+    auto source = std::make_unique<BuiltPyramidSource>(fake);
+    source->setLevelStore(store, cacheIdentity(""), cacheDescription());
+    Progress progress;
+    progress.attach(*source);
+    source->start();
+    REQUIRE(progress.waitForCompletes(1));
+    source.reset();
+
+    CHECK_FALSE(fake->calls().empty()); // built as before
+    CHECK(store->loads() == 0);
+    CHECK(store->saves() == 0);
+}
+
+TEST_CASE("destruction during a save returns promptly and leaves no entry", "[infra][BuiltPyramidSource][cache]")
+{
+    auto store = std::make_shared<MemoryStore>();
+    store->blockSaves();
+    auto fake = std::make_shared<FakeSource>();
+    auto source = std::make_unique<BuiltPyramidSource>(fake);
+    source->setLevelStore(store, cacheIdentity(), cacheDescription());
+    source->start();
+    REQUIRE(store->waitUntilInSave());
+
+    const auto before = std::chrono::steady_clock::now();
+    source.reset();
+    const auto elapsed = std::chrono::steady_clock::now() - before;
+
+    CHECK(elapsed < std::chrono::seconds(2));
+    CHECK(store->cancelledSaves() == 1);
+    CHECK(store->entryCount() == 0);
 }
