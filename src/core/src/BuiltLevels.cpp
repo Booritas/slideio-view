@@ -170,4 +170,18 @@ std::vector<TileKey> readyStandIns(const std::vector<LevelInfo>& levels, const T
     return out;
 }
 
+bool levelReadsConcurrently(const LevelInfo& level)
+{
+    if (!level.nativelyTiled) {
+        return false;
+    }
+    // One tile as large as the level: SlideIO's sign of a striped level.
+    return !(level.tileWidth >= level.width && level.tileHeight >= level.height);
+}
+
+int builtPassReadersFor(const LevelInfo& source, int requested)
+{
+    return levelReadsConcurrently(source) ? std::max(1, requested) : 1;
+}
+
 } // namespace slideio::viewer::core

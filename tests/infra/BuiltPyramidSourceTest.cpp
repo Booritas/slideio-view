@@ -111,6 +111,10 @@ public:
         m_level.tilesY = (height + 255) / 256;
     }
 
+    // The level is stored whole: its 256-px grid is one the adapter imposed.
+    // Call before a BuiltPyramidSource is made over this fake.
+    void markNotNativelyTiled() { m_level.nativelyTiled = false; }
+
     SlideInfo slideInfo() const override
     {
         SlideInfo info;
@@ -1800,6 +1804,19 @@ TEST_CASE("the default reader count is half the cores, between one and four",
 {
     const int hc = static_cast<int>(std::thread::hardware_concurrency());
     CHECK(BuiltPyramidSource::defaultBuiltPassReaders() == std::min(4, std::max(1, hc / 2)));
+}
+
+TEST_CASE("a source level decoded whole is read by one reader", "[infra][BuiltPyramidSource][parallel]")
+{
+    // Such reads run one at a time per file in SlideIO; four readers would only
+    // queue four whole-level decodes ahead of the visible tiles and a cancel.
+    LogCapture log;
+    auto fake = std::make_shared<FakeSource>();
+    fake->markNotNativelyTiled();
+    const BuildResult built = buildWith(fake, 4, 300'000);
+    CHECK(errorTiles(built) == 0);
+    CHECK(log.count("with 1 reader(s)") == 1);
+    CHECK(log.count("with 4 reader(s)") == 0);
 }
 
 TEST_CASE("four readers build the same bytes as one", "[infra][BuiltPyramidSource][parallel]")

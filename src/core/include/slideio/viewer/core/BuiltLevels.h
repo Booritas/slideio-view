@@ -70,4 +70,17 @@ TileSlideRect tileSlideRect(const LevelInfo& level, int column, int row, int sli
 std::vector<TileKey> readyStandIns(const std::vector<LevelInfo>& levels, const TileKey& key,
                                    const std::function<bool(const TileKey&)>& isReady);
 
+/// Whether reads of `level` can run in parallel to any effect. False for a
+/// level the driver decodes whole on every read: one with no tile size of its
+/// own (`nativelyTiled` false), or one reported as a single tile covering the
+/// whole level, which is how SlideIO's GDAL driver marks a striped level. Such
+/// reads are serialised per file (SlideIO's striped-decode mutex), so extra
+/// readers only queue more whole-level decodes ahead of the visible tiles and
+/// of a cancel.
+bool levelReadsConcurrently(const LevelInfo& level);
+
+/// The reader threads for the built-level pass over `source`: `requested`
+/// when its reads can run in parallel, otherwise 1. Never below 1.
+int builtPassReadersFor(const LevelInfo& source, int requested);
+
 } // namespace slideio::viewer::core

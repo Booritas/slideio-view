@@ -603,7 +603,10 @@ void BuiltPyramidSource::run(uint64_t generation, core::ColorMode mode)
         }
 
         const int totalChunks = bands * chunksPerBand;
-        const int readers = std::max(1, std::min(m_readers, totalChunks));
+        // One reader for a level decoded whole on every read: SlideIO runs such
+        // reads one at a time per file, so more readers would only queue more
+        // whole-level decodes ahead of the visible tiles and of a cancel.
+        const int readers = std::max(1, std::min(core::builtPassReadersFor(source, m_readers), totalChunks));
         spdlog::info("BuiltPyramidSource: building {} resident of {} built levels from level {} ({}x{}) in mode {}: "
                      "{} bands of {} chunks, each up to {}x{} px, with {} reader(s)",
                      m_residentFactors.size(), m_levels.size() - static_cast<size_t>(m_storedCount), m_sourceLevel,

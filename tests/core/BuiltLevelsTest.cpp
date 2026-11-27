@@ -283,3 +283,33 @@ TEST_CASE("no descent below the finest resident level", "[core][BuiltLevels]")
     CHECK(readyStandIns(standInLevels(), TileKey(4, 0, 0), [](const TileKey&) { return true; }).empty());
     CHECK(readyStandIns(standInLevels(), TileKey(-1, 0, 0), [](const TileKey&) { return true; }).empty());
 }
+
+TEST_CASE("a striped or untiled source level is read by one thread", "[core][BuiltLevels]")
+{
+    LevelInfo tiled;
+    tiled.width = 63803;
+    tiled.height = 44997;
+    tiled.tileWidth = 512;
+    tiled.tileHeight = 512;
+    CHECK(levelReadsConcurrently(tiled));
+    CHECK(builtPassReadersFor(tiled, 4) == 4);
+    CHECK(builtPassReadersFor(tiled, 0) == 1);
+
+    // SlideIO's GDAL driver reports a striped level as one tile the size of the level.
+    LevelInfo striped = tiled;
+    striped.tileWidth = tiled.width;
+    striped.tileHeight = tiled.height;
+    CHECK_FALSE(levelReadsConcurrently(striped));
+    CHECK(builtPassReadersFor(striped, 4) == 1);
+
+    // No tile size of its own: the adapter imposed a grid on a level decoded whole.
+    LevelInfo untiled = tiled;
+    untiled.nativelyTiled = false;
+    CHECK_FALSE(levelReadsConcurrently(untiled));
+    CHECK(builtPassReadersFor(untiled, 4) == 1);
+
+    // A tiled level one tile wide but many tiles tall is still read tile by tile.
+    LevelInfo column = tiled;
+    column.width = 512;
+    CHECK(levelReadsConcurrently(column));
+}

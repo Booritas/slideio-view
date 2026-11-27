@@ -133,3 +133,8 @@ over the slot ring is enough), whether readers are `std::thread`s owned by
 Note: on a source whose reads serialise (e.g. a striped GDAL TIFF, per-file mutex in
 SlideIO), 4 readers queue up to 4 chunk reads ahead of the user's tiles, and a
 close/toggle join can wait up to 4 chunk reads.
+Since the review of 2026-11-27, a source level decoded whole on every read --
+not natively tiled, or reported as one tile the size of the level, which is how
+SlideIO marks a striped level -- is read by one reader
+(`core::builtPassReadersFor`), so this applies only to a tiled source whose
+reads serialise for some other reason.
