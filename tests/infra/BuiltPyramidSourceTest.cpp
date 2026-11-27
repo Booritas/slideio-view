@@ -15,6 +15,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -48,6 +49,41 @@ struct BlockCall
     int t = 0;
     ColorMode mode = ColorMode::Raw;
     bool liveOverload = false;
+};
+
+// The fakes' addOnLevelMarkedUnreliable: keeps the listeners and tells them
+// when a test marks a level, on the test's own thread -- as SlideIOAdapter
+// tells them on whichever thread read the bad tile.
+class UnreliableNotifier
+{
+public:
+    void add(std::function<void(int)> listener)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_listeners.push_back(std::move(listener));
+    }
+
+    void mark(int level)
+    {
+        std::vector<std::function<void(int)>> listeners;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            listeners = m_listeners;
+        }
+        for (const auto& listener : listeners) {
+            listener(level);
+        }
+    }
+
+    size_t count() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_listeners.size();
+    }
+
+private:
+    mutable std::mutex m_mutex;
+    std::vector<std::function<void(int)>> m_listeners;
 };
 
 // One stored level, tile 256, one Byte channel, pixel (x*7 + y*3) & 0xFF.
@@ -184,6 +220,13 @@ public:
         return m_tileReads;
     }
 
+    void addOnLevelMarkedUnreliable(std::function<void(int)> listener) override
+    {
+        m_unreliable.add(std::move(listener));
+    }
+    void markUnreliable(int level) { m_unreliable.mark(level); }
+    size_t unreliableListeners() const { return m_unreliable.count(); }
+
 private:
     TileData serve(int x, int y, int w, int h, int tw, int th, int z, int t, ColorMode mode, bool live)
     {
@@ -235,6 +278,7 @@ private:
     int m_shrinkY = -1;
     std::vector<BlockCall> m_calls;
     std::vector<TileKey> m_tileReads;
+    UnreliableNotifier m_unreliable;
 };
 
 // A slide of 8200x6010 whose coarsest stored level is 4100x3000. The two axis
@@ -308,7 +352,15 @@ public:
         return m_calls;
     }
 
+    void addOnLevelMarkedUnreliable(std::function<void(int)> listener) override
+    {
+        m_unreliable.add(std::move(listener));
+    }
+    void markUnreliable(int level) { m_unreliable.mark(level); }
+
 private:
+    UnreliableNotifier m_unreliable;
+
     TileData serve(int x, int y, int w, int h, int tw, int th, int z, int t, ColorMode mode, bool live)
     {
         {
@@ -639,6 +691,7 @@ TEST_CASE("keys outside the pyramid are error tiles", "[infra][BuiltPyramidSourc
 
 TEST_CASE("a failed band yields error tiles and the build completes", "[infra][BuiltPyramidSource]")
 {
+    LogCapture log;
     auto fake = std::make_shared<FakeSource>();
     fake->failBandAt(512); // source rows 512..1023 = level-1 rows 256..511
     BuiltPyramidSource source(fake);
@@ -654,6 +707,11 @@ TEST_CASE("a failed band yields error tiles and the build completes", "[infra][B
     CHECK(source.readTile(failed).isError());
     CHECK_FALSE(source.readTile(TileKey(1, 0, 2)).isError());
     CHECK(source.readTile(TileKey(2, 0, 0)).isError()); // its rows average the failed ones
+    // Failed rows are zeros; the minimap would show them as a black stripe, so
+    // no overview at all is offered -- and the reason is logged once.
+    CHECK(source.smallestBuiltLevel().isEmpty());
+    CHECK(source.smallestBuiltLevel().isEmpty());
+    CHECK(log.count("overview withheld because") == 1);
 }
 
 TEST_CASE("a mode change rebuilds in the new mode", "[infra][BuiltPyramidSource]")
@@ -898,4 +956,141 @@ TEST_CASE("a wrong-sized read is a failed chunk and the build completes", "[infr
     CHECK_FALSE(source.readTile(TileKey(1, 0, 1)).isError());
     CHECK(source.readTile(TileKey(1, 0, 2)).isError());
     CHECK_FALSE(source.readTile(TileKey(1, 0, 3)).isError());
+}
+
+TEST_CASE("a band chunk is a whole number of source tiles within the byte cap", "[infra][BuiltPyramidSource]")
+{
+    CHECK(BuiltPyramidSource::kDefaultBandChunkMaxBytes == 4 * 1024 * 1024);
+    // 512-row bands of one byte: a 256-wide tile is 131072 bytes, so 1 MB fits 7.
+    CHECK(BuiltPyramidSource::bandChunkWidth(4100, 256, 512, 1'000'000) == 7 * 256);
+    // One tile alone over the cap: still one tile, never less.
+    CHECK(BuiltPyramidSource::bandChunkWidth(4100, 256, 512, 1000) == 256);
+    // Never wider than the level.
+    CHECK(BuiltPyramidSource::bandChunkWidth(100, 256, 512, 4 * 1024 * 1024) == 100);
+    CHECK(BuiltPyramidSource::bandChunkWidth(4100, 256, 512, 4 * 1024 * 1024) == 4100);
+    // RGB 4096-row bands: one 256-wide tile is 3 MiB, so a 4 MiB cap holds exactly one.
+    CHECK(BuiltPyramidSource::bandChunkWidth(65000, 256, 4096 * 3, 4 * 1024 * 1024) == 256);
+    // An unknown tile width is taken as 256.
+    CHECK(BuiltPyramidSource::bandChunkWidth(4100, 0, 512, 1'000'000) == 7 * 256);
+
+    for (const int cap : {1'000'000, 1000}) {
+        auto fake = std::make_shared<FakeSource>();
+        BuiltPyramidSource source(fake, kBuiltLevelBudgetBytes, cap);
+        Progress progress;
+        progress.attach(source);
+        source.start();
+        REQUIRE(progress.waitForCompletes(1));
+
+        const auto calls = fake->calls();
+        REQUIRE_FALSE(calls.empty());
+        for (const BlockCall& c : calls) {
+            CHECK(c.x % 256 == 0);
+            const bool last = c.x + c.w == 4100;
+            if (!last) {
+                CHECK(c.w % 256 == 0);
+            }
+            const size_t bytes = static_cast<size_t>(c.w) * static_cast<size_t>(c.h);
+            if (cap >= 256 * 512) {
+                CHECK(bytes <= static_cast<size_t>(cap));
+            } else {
+                CHECK(c.w <= 256); // one tile alone exceeds the cap
+            }
+        }
+        CHECK(calls.size() == (cap == 1000 ? 6u * 17u : 6u * 3u));
+    }
+}
+
+TEST_CASE("the source level marked unreliable mid-build abandons the build", "[infra][BuiltPyramidSource]")
+{
+    LogCapture log;
+    auto fake = std::make_shared<FakeSource>();
+    BuiltPyramidSource source(fake, kBuiltLevelBudgetBytes, 1'000'000);
+    CHECK(fake->unreliableListeners() == 1); // subscribed at construction, before start()
+    Progress progress;
+    progress.attach(source);
+
+    fake->blockReads();
+    source.start();
+    REQUIRE(fake->waitUntilBlocked());
+    const TileKey firstBand(1, 0, 0);
+    CHECK_FALSE(source.isTileReady(firstBand));
+
+    // Told on this thread, while the worker is inside a read: only a flag.
+    fake->markUnreliable(0);
+    fake->markUnreliable(0);
+    CHECK_FALSE(source.builtOverviewPending());
+    // Already answered before the worker notices: nothing waits on a tile.
+    CHECK(source.isTileReady(firstBand));
+    CHECK(source.readTile(firstBand).isError());
+
+    fake->release();
+    // The abandoned build still says it is over, so the UI requests again.
+    REQUIRE(progress.waitForCompletes(1));
+
+    // The one read in flight, and no further one; its pixels are not used.
+    CHECK(fake->calls().size() == 1);
+    CHECK_FALSE(source.builtOverviewPending());
+    CHECK(source.smallestBuiltLevel().isEmpty());
+    for (const TileKey& key : {TileKey(1, 0, 0), TileKey(1, 3, 4), TileKey(2, 0, 0),
+                               TileKey(1, 0, 0, 0, 0, ColorMode::Managed)}) {
+        CHECK(source.isTileReady(key));
+        CHECK(source.readTile(key).isError());
+    }
+    CHECK(log.count("was marked unreliable") == 1);
+
+    // A colour toggle does not rebuild from the distrusted level.
+    fake->clearCalls();
+    source.setColorMode(ColorMode::Managed);
+    CHECK(fake->calls().empty());
+    CHECK(source.readTile(TileKey(1, 0, 0, 0, 0, ColorMode::Managed)).isError());
+    CHECK_FALSE(source.builtOverviewPending());
+}
+
+TEST_CASE("the source level marked unreliable before start reads nothing", "[infra][BuiltPyramidSource]")
+{
+    auto fake = std::make_shared<FakeSource>();
+    BuiltPyramidSource source(fake);
+    fake->markUnreliable(0);
+    source.start();
+    CHECK_FALSE(source.builtOverviewPending());
+    CHECK(source.isTileReady(TileKey(1, 0, 0)));
+    CHECK(source.readTile(TileKey(1, 0, 0)).isError());
+    CHECK(source.smallestBuiltLevel().isEmpty());
+    CHECK(fake->calls().empty());
+}
+
+TEST_CASE("marking a level other than the source level has no effect", "[infra][BuiltPyramidSource]")
+{
+    auto fake = std::make_shared<TwoLevelFake>(); // builds from stored level 1
+    BuiltPyramidSource source(fake, kBuiltLevelBudgetBytes, 1'000'000);
+    Progress progress;
+    progress.attach(source);
+    fake->markUnreliable(0);
+    CHECK(source.builtOverviewPending());
+    source.start();
+    REQUIRE(progress.waitForCompletes(1));
+
+    CHECK(fake->calls().size() == 18);
+    CHECK_FALSE(source.builtOverviewPending());
+    CHECK_FALSE(source.smallestBuiltLevel().isEmpty());
+    const TileData tile = source.readTile(TileKey(2, 0, 0));
+    CHECK_FALSE(tile.isError());
+    CHECK_FALSE(tile.isPending());
+}
+
+TEST_CASE("a throwing listener neither stops the build nor reaches the thread", "[infra][BuiltPyramidSource]")
+{
+    LogCapture log;
+    auto fake = std::make_shared<FakeSource>();
+    BuiltPyramidSource source(fake);
+    source.addOnBuiltRowsReady([](bool) { throw std::runtime_error("listener boom"); });
+    Progress progress;
+    progress.attach(source);
+    source.start();
+    REQUIRE(progress.waitForCompletes(1));
+
+    CHECK_FALSE(source.builtOverviewPending());
+    CHECK(fake->calls().size() == 6);
+    CHECK_FALSE(source.smallestBuiltLevel().isEmpty());
+    CHECK(log.count("listener boom") == 7); // six bands and the completion
 }

@@ -55,6 +55,42 @@ BuiltPyramidSource::BuiltPyramidSource(std::shared_ptr<core::ISlideSource> inner
         }
         m_levels.push_back(level);
     }
+    if (m_residentFactors.empty()) {
+        return;
+    }
+    // The build reads the source level through readBlock, which has none of
+    // readTile's routing around an unreliable level, so a level the inner
+    // source distrusts must not be averaged in. Subscribed before start(): a
+    // level marked earlier is reported at once. The listener only raises a
+    // shared flag -- it runs on whichever thread read the bad tile, possibly
+    // after this object is gone, so it may neither touch `this` nor join.
+    auto flag = m_sourceUnreliable;
+    const int sourceLevel = m_sourceLevel;
+    m_inner->addOnLevelMarkedUnreliable([flag, sourceLevel](int level) {
+        if (level != sourceLevel || flag->exchange(true)) {
+            return;
+        }
+        spdlog::warn("BuiltPyramidSource: source level {} was marked unreliable; built levels abandoned, "
+                     "their unbuilt tiles read as errors",
+                     level);
+    });
+}
+
+bool BuiltPyramidSource::sourceUnreliable() const
+{
+    return m_sourceUnreliable->load();
+}
+
+int BuiltPyramidSource::bandChunkWidth(int levelWidth, int tileWidth, size_t bytesPerColumn, size_t maxBytes)
+{
+    if (levelWidth <= 0) {
+        return 0;
+    }
+    const size_t tile = static_cast<size_t>(tileWidth > 0 ? tileWidth : 256);
+    const size_t tileBytes = std::max<size_t>(1, tile * std::max<size_t>(1, bytesPerColumn));
+    const size_t tiles = std::max<size_t>(1, maxBytes / tileBytes);
+    const size_t width = std::min(tiles * tile, static_cast<size_t>(levelWidth));
+    return static_cast<int>(width);
 }
 
 BuiltPyramidSource::~BuiltPyramidSource()
@@ -80,13 +116,32 @@ bool BuiltPyramidSource::hasBuiltLevels() const
 
 core::TileData BuiltPyramidSource::smallestBuiltLevel() const
 {
+    if (sourceUnreliable()) {
+        return {};
+    }
     std::shared_lock<std::shared_mutex> state(m_stateMutex);
     if (!m_complete || !m_accumulator) {
         return {};
     }
     const int coarsest = static_cast<int>(m_residentFactors.size()) - 1;
-    return m_accumulator->extract(coarsest, 0, 0, m_accumulator->levelWidth(coarsest),
-                                  m_accumulator->levelHeight(coarsest));
+    const int height = m_accumulator->levelHeight(coarsest);
+    // A failed row holds zeros, which the minimap would paint as a black
+    // stripe across the slide. No overview beats a wrong one.
+    int failedRows = 0;
+    for (int y = 0; y < height; ++y) {
+        if (m_accumulator->regionState(coarsest, y, y + 1) == core::BuiltRegionState::Failed) {
+            ++failedRows;
+        }
+    }
+    if (failedRows > 0) {
+        if (!m_withheldLogged.exchange(true)) {
+            spdlog::info("BuiltPyramidSource: overview withheld because {} of {} rows of the smallest built "
+                         "level failed",
+                         failedRows, height);
+        }
+        return {};
+    }
+    return m_accumulator->extract(coarsest, 0, 0, m_accumulator->levelWidth(coarsest), height);
 }
 
 core::SlideInfo BuiltPyramidSource::slideInfo() const
@@ -113,12 +168,15 @@ int BuiltPyramidSource::residentIndexOf(int level) const
 BuiltPyramidSource::ResidentAnswer BuiltPyramidSource::residentAnswerLocked(const core::TileKey& key,
                                                                            const core::TileSlideRect& rect) const
 {
+    // A pending tile of a build abandoned for an unreliable source level will
+    // never be filled: answer it as failed so nothing waits on it.
+    const ResidentAnswer pending = sourceUnreliable() ? ResidentAnswer::Failed : ResidentAnswer::Pending;
     if (!m_accumulator) {
         // Before start(), or after a build whose rasters could not be allocated.
-        return m_complete ? ResidentAnswer::Failed : ResidentAnswer::Pending;
+        return m_complete ? ResidentAnswer::Failed : pending;
     }
     if (key.colorMode() != m_buildMode) {
-        return ResidentAnswer::Pending; // never served from the other rendition
+        return pending; // never served from the other rendition
     }
     switch (m_accumulator->regionState(residentIndexOf(key.level()), rect.levelY, rect.levelY + rect.tileH)) {
     case core::BuiltRegionState::Ready:
@@ -128,7 +186,9 @@ BuiltPyramidSource::ResidentAnswer BuiltPyramidSource::residentAnswerLocked(cons
     case core::BuiltRegionState::Pending:
         break;
     }
-    return ResidentAnswer::Pending;
+    // A complete build left these rows unfilled only if it stopped on an
+    // exception; they will never arrive either.
+    return m_complete ? ResidentAnswer::Failed : pending;
 }
 
 core::TileData BuiltPyramidSource::readTile(const core::TileKey& key)
@@ -205,7 +265,7 @@ void BuiltPyramidSource::addOnBuiltRowsReady(std::function<void(bool complete)> 
 
 bool BuiltPyramidSource::builtOverviewPending() const
 {
-    if (!hasBuiltLevels()) {
+    if (!hasBuiltLevels() || sourceUnreliable()) {
         return false;
     }
     std::shared_lock<std::shared_mutex> state(m_stateMutex);
@@ -275,8 +335,14 @@ void BuiltPyramidSource::launchLocked(core::ColorMode mode)
         generation = ++m_generation;
         m_buildMode = mode;
         m_complete = false;
+        m_withheldLogged = false;
         // Free the old rasters before allocating new ones: never two builds' worth.
         m_accumulator.reset();
+        if (sourceUnreliable()) {
+            // Nothing to build from; every resident tile already reads as an error.
+            spdlog::debug("BuiltPyramidSource: no build in mode {}: the source level is unreliable", modeName(mode));
+            return;
+        }
         const core::LevelInfo& source = m_levels[static_cast<size_t>(m_sourceLevel)];
         try {
             m_accumulator = std::make_unique<core::BuiltLevelAccumulator>(source.width, source.height, m_numChannels,
@@ -299,35 +365,64 @@ void BuiltPyramidSource::notify(bool complete)
         std::lock_guard<std::mutex> lock(m_listenersMutex);
         listeners = m_listeners;
     }
+    // A throwing listener must neither stop the build nor, escaping the
+    // worker's std::thread, terminate the application.
     for (const auto& listener : listeners) {
-        listener(complete);
+        try {
+            listener(complete);
+        } catch (const std::exception& e) {
+            spdlog::warn("BuiltPyramidSource: a built-rows listener threw: {}", e.what());
+        } catch (...) {
+            spdlog::warn("BuiltPyramidSource: a built-rows listener threw");
+        }
     }
 }
 
 void BuiltPyramidSource::run(uint64_t generation, core::ColorMode mode)
 {
+    // A build abandoned for an unreliable source level still reports that it
+    // is over, so the UI requests its visible tiles again -- error tiles now --
+    // and stops waiting for an overview.
+    const auto abandon = [this, mode](int y) {
+        spdlog::info("BuiltPyramidSource: build in mode {} abandoned at row {}: the source level is unreliable",
+                     modeName(mode), y);
+        if (!m_cancel) {
+            notify(true);
+        }
+    };
     try {
         const core::LevelInfo& source = m_levels[static_cast<size_t>(m_sourceLevel)];
         const int tileHeight = source.tileHeight > 0 ? source.tileHeight : 256;
         const int bandHeight = m_residentFactors.front() * tileHeight;
         const size_t pixelBytes = static_cast<size_t>(m_numChannels) * core::dataTypeSize(m_dataType);
-        const size_t bandRowBytes = static_cast<size_t>(bandHeight) * pixelBytes;
-        const int chunkWidth = static_cast<int>(std::clamp<size_t>(
-            static_cast<size_t>(m_bandChunkMaxBytes) / bandRowBytes, 1, static_cast<size_t>(source.width)));
+        const size_t bandColumnBytes = static_cast<size_t>(bandHeight) * pixelBytes;
+        // Whole source tiles per chunk: a chunk edge inside a tile would decode
+        // that tile twice, once for each chunk it straddles.
+        const int chunkWidth = bandChunkWidth(source.width, source.tileWidth, bandColumnBytes,
+                                              static_cast<size_t>(m_bandChunkMaxBytes));
+        const int chunksPerBand = (source.width + chunkWidth - 1) / chunkWidth;
+        const int bands = (source.height + bandHeight - 1) / bandHeight;
         // Level 0's coordinates are slide coordinates; a coarser source level is
         // scaled back to the slide by the same rounding tileSlideRect uses.
         const double invScale = (m_sourceLevel == 0 || source.scale <= 0.0) ? 1.0 : 1.0 / source.scale;
 
-        spdlog::info("BuiltPyramidSource: building {} levels from level {} ({}x{}) in mode {}",
-                     m_residentFactors.size(), m_sourceLevel, source.width, source.height, modeName(mode));
+        spdlog::info("BuiltPyramidSource: building {} resident of {} built levels from level {} ({}x{}) in mode {}: "
+                     "{} bands of {} chunks, each up to {}x{} px",
+                     m_residentFactors.size(), m_levels.size() - static_cast<size_t>(m_storedCount), m_sourceLevel,
+                     source.width, source.height, modeName(mode), bands, chunksPerBand, chunkWidth, bandHeight);
         const auto started = std::chrono::steady_clock::now();
         bool warned = false;
+        long long chunksRead = 0;
 
         for (int y = 0; y < source.height; y += bandHeight) {
             const int h = std::min(bandHeight, source.height - y);
             for (int x = 0; x < source.width; x += chunkWidth) {
                 if (m_cancel) {
                     spdlog::debug("BuiltPyramidSource: build in mode {} cancelled at row {}", modeName(mode), y);
+                    return;
+                }
+                if (sourceUnreliable()) {
+                    abandon(y);
                     return;
                 }
                 const int w = std::min(chunkWidth, source.width - x);
@@ -356,6 +451,13 @@ void BuiltPyramidSource::run(uint64_t generation, core::ColorMode mode)
                         }
                     }
                 }
+                ++chunksRead;
+                if (sourceUnreliable()) {
+                    // Marked while this chunk was in flight: its pixels came
+                    // from the distrusted level, so they are not averaged in.
+                    abandon(y);
+                    return;
+                }
 
                 std::unique_lock<std::shared_mutex> state(m_stateMutex);
                 if (m_generation != generation) {
@@ -383,15 +485,34 @@ void BuiltPyramidSource::run(uint64_t generation, core::ColorMode mode)
         }
         const auto elapsed =
             std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started);
-        spdlog::info("BuiltPyramidSource: built levels in mode {} complete in {} ms", modeName(mode),
-                     elapsed.count());
+        spdlog::info("BuiltPyramidSource: built levels in mode {} complete in {} ms ({} chunks read)",
+                     modeName(mode), elapsed.count(), chunksRead);
         if (!m_cancel) {
             notify(true);
         }
+        return;
     } catch (const std::exception& e) {
         // Only a contract violation fed to the accumulator lands here; nothing
         // may escape a std::thread.
         spdlog::error("BuiltPyramidSource: build in mode {} stopped: {}", modeName(mode), e.what());
+    } catch (...) {
+        spdlog::error("BuiltPyramidSource: build in mode {} stopped", modeName(mode));
+    }
+    // A stopped build is over: complete, so builtOverviewPending() does not stay
+    // true forever and the rows it never reached read as errors, not pending.
+    try {
+        {
+            std::unique_lock<std::shared_mutex> state(m_stateMutex);
+            if (m_generation != generation) {
+                return;
+            }
+            m_complete = true;
+        }
+        if (!m_cancel) {
+            notify(true);
+        }
+    } catch (...) {
+        spdlog::error("BuiltPyramidSource: could not report the stopped build in mode {}", modeName(mode));
     }
 }
 

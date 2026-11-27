@@ -39,13 +39,28 @@ namespace slideio::viewer::infra
 // readers. The worker never holds it across an inner read and nobody holds it
 // across a listener call. Listeners run on the worker thread and must not call
 // setColorMode() or destroy this object from there (both join that thread).
+//
+// A band is read in chunks whose width is a whole number of the source level's
+// tiles, as many as keep one chunk within bandChunkMaxBytes (at least one tile),
+// so no source tile is decoded twice and the one read a close or a colour toggle
+// waits for stays short.
+//
+// The source level marked unreliable by the inner source (a corrupt tile-offset
+// table, found by whichever thread read the tile) abandons the build: the
+// notification only raises a flag, the worker stops at its next chunk without
+// accumulating the one in flight, and every resident tile not already built is
+// answered as an error tile -- ready, so nothing waits on it. No overview is
+// ever published for such a source.
 class BuiltPyramidSource : public core::ISlideSource
 {
 public:
-    // Plans the built levels; does not start the worker.
+    static constexpr int kDefaultBandChunkMaxBytes = 4 * 1024 * 1024;
+
+    // Plans the built levels and subscribes to the inner source's unreliable-
+    // level notifications; does not start the worker.
     explicit BuiltPyramidSource(std::shared_ptr<core::ISlideSource> inner,
                                 size_t budgetBytes = core::kBuiltLevelBudgetBytes,
-                                int bandChunkMaxBytes = 64 * 1024 * 1024);
+                                int bandChunkMaxBytes = kDefaultBandChunkMaxBytes);
     ~BuiltPyramidSource() override;
 
     BuiltPyramidSource(const BuiltPyramidSource&) = delete;
@@ -59,8 +74,16 @@ public:
     bool hasBuiltLevels() const;
 
     // The coarsest resident level's whole raster once the build is complete,
-    // else an empty tile.
+    // else an empty tile. Also empty when any of its rows failed -- a minimap
+    // with black stripes is worse than none -- or when the source level was
+    // marked unreliable.
     core::TileData smallestBuiltLevel() const;
+
+    // The width of one band chunk for a source level of the given width and
+    // tile width, at bytesPerColumn bytes per chunk column: the largest whole
+    // number of tiles within maxBytes, at least one tile, never wider than the
+    // level. Public so the rule can be tested directly.
+    static int bandChunkWidth(int levelWidth, int tileWidth, size_t bytesPerColumn, size_t maxBytes);
 
     core::SlideInfo slideInfo() const override;
     std::vector<core::LevelInfo> levels() const override;
@@ -103,6 +126,7 @@ private:
 
     void run(uint64_t generation, core::ColorMode mode);
     void notify(bool complete);
+    bool sourceUnreliable() const;
 
     std::shared_ptr<core::ISlideSource> m_inner;
     std::vector<core::LevelInfo> m_levels; // stored then built; fixed after construction
@@ -128,6 +152,14 @@ private:
 
     std::mutex m_listenersMutex;
     std::vector<std::function<void(bool)>> m_listeners;
+
+    // Raised, from any thread, when the inner source marks the source level
+    // unreliable. Shared with the listener registered on the inner source, which
+    // cannot be unregistered and may outlive this object; the listener touches
+    // nothing else, so it takes no lock and joins nothing.
+    std::shared_ptr<std::atomic<bool>> m_sourceUnreliable = std::make_shared<std::atomic<bool>>(false);
+    // One info line per build when the overview is withheld for failed rows.
+    mutable std::atomic<bool> m_withheldLogged{false};
 };
 
 } // namespace slideio::viewer::infra
