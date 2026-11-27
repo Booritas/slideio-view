@@ -644,8 +644,8 @@ void BuiltPyramidSource::saveToStore(uint64_t generation, core::ColorMode mode, 
     std::vector<core::BuiltLevelView> views;
     for (int i = 0; i < static_cast<int>(m_residentFactors.size()); ++i) {
         const std::vector<uint8_t>& bytes = m_accumulator->levelBytes(i);
-        views.push_back(
-            core::BuiltLevelView{m_accumulator->levelWidth(i), m_accumulator->levelHeight(i), bytes.data(), bytes.size()});
+        views.push_back(core::BuiltLevelView{m_accumulator->levelWidth(i), m_accumulator->levelHeight(i),
+                                             bytes.data(), bytes.size()});
     }
     bool saved = false;
     try {

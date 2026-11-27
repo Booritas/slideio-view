@@ -186,7 +186,8 @@ bool isCacheTemporaryName(std::string_view name)
     if (name.size() <= prefix) {
         return false;
     }
-    return isCacheKeyName(name.substr(0, kKeyNameLength)) && name.substr(kKeyNameLength, kTempMarker.size()) == kTempMarker;
+    return isCacheKeyName(name.substr(0, kKeyNameLength))
+           && name.substr(kKeyNameLength, kTempMarker.size()) == kTempMarker;
 }
 
 std::vector<std::string> expiredCacheEntries(const std::vector<CacheEntryFacts>& entries, int64_t nowSeconds,

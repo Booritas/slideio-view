@@ -469,7 +469,8 @@ bool BuiltLevelDiskCache::save(const core::BuiltLevelCacheKey& key, const core::
 
         QJsonArray levelsJson;
         for (const auto& l : levels) {
-            const size_t pixels = static_cast<size_t>(std::max(l.width, 0)) * static_cast<size_t>(std::max(l.height, 0));
+            const size_t pixels =
+                static_cast<size_t>(std::max(l.width, 0)) * static_cast<size_t>(std::max(l.height, 0));
             if (pixels == 0 || l.data == nullptr || l.size == 0 || l.size % pixels != 0) {
                 return fail(QStringLiteral("a level has an inconsistent size"));
             }
@@ -492,7 +493,8 @@ bool BuiltLevelDiskCache::save(const core::BuiltLevelCacheKey& key, const core::
         desc.insert(QStringLiteral("pixelSizeXUm"), description.pixelSizeXUm);
         desc.insert(QStringLiteral("pixelSizeYUm"), description.pixelSizeYUm);
         desc.insert(QStringLiteral("fileSize"), QString::number(static_cast<qulonglong>(description.fileSize)));
-        desc.insert(QStringLiteral("fileModifiedMs"), QString::number(static_cast<qlonglong>(description.fileModifiedMs)));
+        desc.insert(QStringLiteral("fileModifiedMs"),
+                    QString::number(static_cast<qlonglong>(description.fileModifiedMs)));
         desc.insert(QStringLiteral("writtenAt"),
                     QString::fromStdString(core::formatIso8601Utc(std::chrono::system_clock::now())));
 
