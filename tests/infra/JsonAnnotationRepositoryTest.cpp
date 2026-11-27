@@ -486,3 +486,47 @@ TEST_CASE("an unusable slide id is refused rather than locked",
     REQUIRE(result.status == LockStatus::Unavailable);
     REQUIRE_FALSE(result.message.empty());
 }
+
+TEST_CASE("stored files are found by the slide path they record, under any key",
+          "[infra][JsonAnnotationRepository]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    JsonAnnotationRepository repository(dir.path().toStdString());
+
+    // The same file, saved under two identities -- as before and after a
+    // SlideIO upgrade changed its scene layout -- and an unrelated slide.
+    AnnotationDocument old0 = makeDocument("1111111111111111", 0);
+    old0.slide.path = "D:/slides/case 7.tif";
+    AnnotationDocument old2 = makeDocument("1111111111111111", 2);
+    old2.slide.path = "D:/slides/case 7.tif";
+    AnnotationDocument other = makeDocument("2222222222222222", 0);
+    other.slide.path = "D:/slides/case 8.tif";
+    REQUIRE(repository.save(old0).status == SaveStatus::Saved);
+    REQUIRE(repository.save(old2).status == SaveStatus::Saved);
+    REQUIRE(repository.save(other).status == SaveStatus::Saved);
+    // Not an annotation file, and one whose header cannot be read: both ignored.
+    {
+        QFile junk(dir.path() + "/annotations/notes.txt");
+        REQUIRE(junk.open(QIODevice::WriteOnly));
+        junk.write("D:/slides/case 7.tif");
+        QFile broken(dir.path() + "/annotations/3333333333333333.s0.annotations.json");
+        REQUIRE(broken.open(QIODevice::WriteOnly));
+        broken.write("{ not json");
+    }
+
+    const auto found = repository.filesNamingSlidePath("D:/slides/case 7.tif");
+    REQUIRE(found.size() == 2);
+    CHECK(found[0].header.slideId == "1111111111111111");
+    CHECK(found[0].header.sceneIndex == 0);
+    CHECK(found[1].header.sceneIndex == 2);
+    CHECK(QFileInfo::exists(QString::fromStdString(found[0].filePath)));
+
+    CHECK(repository.filesNamingSlidePath("D:/slides/case 9.tif").empty());
+    CHECK(repository.filesNamingSlidePath("").empty());
+
+#ifdef Q_OS_WIN
+    // The shell's backslashes and another case name the same file on Windows.
+    CHECK(repository.filesNamingSlidePath(R"(d:\SLIDES\case 7.tif)").size() == 2);
+#endif
+}

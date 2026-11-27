@@ -1268,3 +1268,45 @@ TEST_CASE("a version 3 file is still refused", "[core][AnnotationSerialization][
     text.replace(text.find(v1), v1.size(), "\"schemaVersion\": 3");
     CHECK(parseAnnotationDocument(text).error == ParseError::UnsupportedFutureVersion);
 }
+
+TEST_CASE("the file header is read from the head of a saved file", "[core][AnnotationSerialization]")
+{
+    AnnotationDocument document = makeDocument();
+    document.sceneIndex = 3;
+    const std::string json = serializeAnnotationDocument(document);
+    REQUIRE_FALSE(json.empty());
+
+    SECTION("the whole file")
+    {
+        const auto header = peekAnnotationFileHeader(json);
+        REQUIRE(header.has_value());
+        CHECK(header->slideId == "a3f8c2e1b4d50697");
+        CHECK(header->sceneIndex == 3);
+        CHECK(header->path == "D:/data/pathology/case001_HE.svs");
+        CHECK(header->fileName == "case001_HE.svs");
+    }
+    SECTION("only the first bytes, cut inside the annotations")
+    {
+        const size_t cut = json.find("\"annotations\"") + 20;
+        REQUIRE(cut < json.size());
+        const auto header = peekAnnotationFileHeader(std::string_view(json).substr(0, cut));
+        REQUIRE(header.has_value());
+        CHECK(header->path == "D:/data/pathology/case001_HE.svs");
+    }
+}
+
+TEST_CASE("a file whose header cannot be read has none", "[core][AnnotationSerialization]")
+{
+    CHECK_FALSE(peekAnnotationFileHeader("").has_value());
+    CHECK_FALSE(peekAnnotationFileHeader("not json").has_value());
+    CHECK_FALSE(peekAnnotationFileHeader(R"({"sceneIndex": 0})").has_value());
+    // The writer always puts the header first; a file that moved it below
+    // its annotations is not recognised rather than read in full.
+    CHECK_FALSE(
+        peekAnnotationFileHeader(R"({"annotations": [], "slideId": "x", "sceneIndex": 0})").has_value());
+    // A header with no slide block still names its key.
+    const auto bare = peekAnnotationFileHeader(R"({"schemaVersion": 1, "slideId": "x", "sceneIndex": 2})");
+    REQUIRE(bare.has_value());
+    CHECK(bare->sceneIndex == 2);
+    CHECK(bare->path.empty());
+}

@@ -985,3 +985,120 @@ ParseResult parseAnnotationDocument(std::string_view text)
 }
 
 } // namespace slideio::viewer::core
+
+namespace slideio::viewer::core
+{
+
+namespace
+{
+
+/// Collects the header fields and stops the parse once they are read, or at
+/// the first top-level array (layers, annotations), which the writer puts
+/// after them -- so a prefix of the file is enough.
+class HeaderSax final : public nlohmann::json_sax<json>
+{
+public:
+    AnnotationFileHeader header;
+    bool haveSlideId = false;
+    bool haveSceneIndex = false;
+
+    bool null() override { return true; }
+    bool boolean(bool) override { return true; }
+    bool number_integer(number_integer_t value) override { return sceneIndexValue(static_cast<long long>(value)); }
+    bool number_unsigned(number_unsigned_t value) override
+    {
+        return value <= static_cast<number_unsigned_t>(std::numeric_limits<int>::max())
+                   ? sceneIndexValue(static_cast<long long>(value))
+                   : true;
+    }
+    bool number_float(number_float_t, const string_t&) override { return true; }
+    bool binary(binary_t&) override { return true; }
+
+    bool string(string_t& value) override
+    {
+        if (m_depth == 1 && m_key == "slideId") {
+            header.slideId = value;
+            haveSlideId = true;
+        } else if (m_depth == 2 && m_inSlide && m_key == "path") {
+            header.path = value;
+            m_havePath = true;
+        } else if (m_depth == 2 && m_inSlide && m_key == "fileName") {
+            header.fileName = value;
+            m_haveFileName = true;
+        }
+        return !complete();
+    }
+
+    bool start_object(std::size_t) override
+    {
+        ++m_depth;
+        m_inSlide = m_depth == 2 && m_key == "slide";
+        return true;
+    }
+    bool end_object() override
+    {
+        if (m_depth == 2) {
+            m_inSlide = false;
+        }
+        --m_depth;
+        return true;
+    }
+    bool start_array(std::size_t) override
+    {
+        // Top-level arrays come after the header; stop rather than read on.
+        if (m_depth == 1) {
+            return false;
+        }
+        ++m_depth;
+        return true;
+    }
+    bool end_array() override
+    {
+        --m_depth;
+        return true;
+    }
+    bool key(string_t& value) override
+    {
+        m_key = value;
+        return true;
+    }
+    bool parse_error(std::size_t, const std::string&, const nlohmann::detail::exception&) override
+    {
+        return false; // a truncated prefix ends here, with what was read so far
+    }
+
+private:
+    bool sceneIndexValue(long long value)
+    {
+        if (m_depth == 1 && m_key == "sceneIndex" && value >= 0 && value <= std::numeric_limits<int>::max()) {
+            header.sceneIndex = static_cast<int>(value);
+            haveSceneIndex = true;
+        }
+        return !complete();
+    }
+    bool complete() const { return haveSlideId && haveSceneIndex && m_havePath && m_haveFileName; }
+
+    int m_depth = 0;
+    std::string m_key;
+    bool m_inSlide = false;
+    bool m_havePath = false;
+    bool m_haveFileName = false;
+};
+
+} // namespace
+
+std::optional<AnnotationFileHeader> peekAnnotationFileHeader(std::string_view text)
+{
+    try {
+        HeaderSax sax;
+        json::sax_parse(text.begin(), text.end(), &sax, nlohmann::detail::input_format_t::json, false);
+        if (!sax.haveSlideId || !sax.haveSceneIndex) {
+            return std::nullopt;
+        }
+        return sax.header;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+} // namespace slideio::viewer::core

@@ -87,6 +87,7 @@
 #include <QPushButton>
 #include <QRegion>
 #include <QScreen>
+#include <QSet>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QStatusBar>
@@ -359,6 +360,9 @@ struct MainWindow::Impl
     /// that already captured the old slide's key.
     bool slideLoadInFlight = false;
     bool saveFailureReported = false;
+    /// Slide paths already told, this session, that their annotations are
+    /// stored under another identity: once is information, every reopen is noise.
+    QSet<QString> otherIdentityNoticeShown;
 
     void buildAnnotationPersistence();
     void updateUndoActions();
@@ -1912,6 +1916,40 @@ void MainWindow::Impl::buildAnnotationPersistence()
                                 "were discarded.\n\n%1\n\n%2")
                                  .arg(message, QDir::toNativeSeparators(path)));
                      });
+
+    QObject::connect(
+        annotationPersistence.get(), &app::AnnotationPersistenceService::annotationsUnderOtherIdentity, owner,
+        [this](const QString& slidePath, const QStringList& files) {
+            // An empty slide here reads as lost clinical work, so the user is
+            // told -- once per path per session -- that the files exist and
+            // were left alone. Logged every time, for the support question.
+            spdlog::warn("No annotations for '{}' under its current identity; {} file(s) record this path "
+                         "under another: {}",
+                         slidePath.toStdString(), files.size(), files.join(QStringLiteral(", ")).toStdString());
+            if (otherIdentityNoticeShown.contains(slidePath)) {
+                return;
+            }
+            otherIdentityNoticeShown.insert(slidePath);
+            constexpr int kListed = 5;
+            QStringList shown;
+            for (int i = 0; i < files.size() && i < kListed; ++i) {
+                shown.append(QDir::toNativeSeparators(files[i]));
+            }
+            if (files.size() > kListed) {
+                shown.append(tr("... and %n more", nullptr, static_cast<int>(files.size()) - kListed));
+            }
+            QMessageBox::information(
+                owner, tr("Earlier annotations found for this file"),
+                tr("No annotations are saved for this slide as it is identified now, but the annotation "
+                   "folder holds %n file(s) saved for a slide at this same path under a different "
+                   "identity:\n\n%1\n\nThis usually means this version reads the file's scenes differently "
+                   "from the version that saved them -- a pyramidal TIFF that used to open as several "
+                   "scenes now opens as one -- or that the file at this path was replaced. They were not "
+                   "loaded, because their coordinates may belong to another scene. Nothing was changed "
+                   "or deleted.",
+                   nullptr, static_cast<int>(files.size()))
+                    .arg(shown.join(QLatin1Char('\n'))));
+        });
 
     QObject::connect(annotationPersistence.get(),
                      &app::AnnotationPersistenceService::lockedByAnother, owner,

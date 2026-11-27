@@ -70,6 +70,23 @@ void AnnotationPersistenceService::setSaveFailureResolver(SaveFailureResolver re
     m_saveFailureResolver = std::move(resolver);
 }
 
+void AnnotationPersistenceService::reportOtherIdentities(const core::AnnotationKey& key,
+                                                         const core::SlideProvenance& provenance)
+{
+    QStringList files;
+    for (const core::StoredAnnotationFile& stored : m_repository.filesNamingSlidePath(provenance.path)) {
+        const core::AnnotationKey storedKey{stored.header.slideId, stored.header.sceneIndex};
+        // Another scene of the SAME identity is not a lost file; only another
+        // slide ID is. The open scene's own key cannot be here: it was NotFound.
+        if (storedKey.slideId != key.slideId) {
+            files.append(QString::fromStdString(stored.filePath));
+        }
+    }
+    if (!files.isEmpty()) {
+        emit annotationsUnderOtherIdentity(QString::fromStdString(provenance.path), files);
+    }
+}
+
 void AnnotationPersistenceService::beginSlide(const core::AnnotationKey& key,
                                               const core::SlideProvenance& provenance)
 {
@@ -121,6 +138,7 @@ void AnnotationPersistenceService::beginSlide(const core::AnnotationKey& key,
         // two instances would otherwise both start from empty and whichever
         // saved second would silently erase the other's work.
         setActive(!m_lockedByAnother);
+        reportOtherIdentities(key, provenance);
         return;
 
     case core::LoadStatus::Unreadable:
