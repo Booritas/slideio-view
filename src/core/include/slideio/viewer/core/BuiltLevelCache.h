@@ -17,7 +17,8 @@ namespace slideio::viewer::core
 // arithmetic or planBuiltLevels changes: the SlideIO semver string in the key
 // does not move with a submodule commit, so this is what invalidates entries
 // whose pixels a new build would compute differently.
-constexpr int kBuiltLevelCacheFormatVersion = 1;
+// 2: extern/slideio moved to 43d1d380 (GDAL pyramidal TIFFs, concurrent reads).
+constexpr int kBuiltLevelCacheFormatVersion = 2;
 constexpr int64_t kCacheTemporaryMaxAgeSeconds = 86400;
 
 /// Everything that decides whether a stored build may stand in for a fresh one.
