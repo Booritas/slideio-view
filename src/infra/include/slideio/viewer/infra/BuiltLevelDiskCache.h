@@ -24,7 +24,7 @@ public:
 
     std::optional<std::vector<std::vector<uint8_t>>> load(const core::BuiltLevelCacheKey& key,
                                                           const std::vector<std::pair<int, int>>& levelSizes,
-                                                          size_t pixelBytes) override;
+                                                          size_t pixelBytes, const std::atomic<bool>& cancel) override;
 
     bool save(const core::BuiltLevelCacheKey& key, const core::BuiltLevelCacheDescription& description,
               const std::vector<core::BuiltLevelView>& levels, const std::atomic<bool>& cancel) override;

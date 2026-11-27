@@ -83,8 +83,8 @@ const std::array<uint32_t, 256>& crcTable()
 
 bool operator==(const BuiltLevelCacheKey& a, const BuiltLevelCacheKey& b)
 {
-    return a.slideId == b.slideId && a.sceneIndex == b.sceneIndex && a.fileSize == b.fileSize &&
-           a.fileModifiedMs == b.fileModifiedMs && a.sourceLevel == b.sourceLevel &&
+    return a.slideId == b.slideId && a.driverId == b.driverId && a.sceneIndex == b.sceneIndex &&
+           a.fileSize == b.fileSize && a.fileModifiedMs == b.fileModifiedMs && a.sourceLevel == b.sourceLevel &&
            a.sourceWidth == b.sourceWidth && a.sourceHeight == b.sourceHeight && a.numChannels == b.numChannels &&
            a.dataType == b.dataType && a.residentFactors == b.residentFactors && a.colorMode == b.colorMode &&
            a.profileFingerprint == b.profileFingerprint && a.renditionTag == b.renditionTag &&
@@ -106,6 +106,7 @@ std::optional<BuiltLevelCacheKey> builtLevelCacheKeyFor(const BuiltLevelCacheIde
     }
     BuiltLevelCacheKey key;
     key.slideId = identity.slideId;
+    key.driverId = identity.driverId;
     key.sceneIndex = identity.sceneIndex;
     key.fileSize = identity.fileSize;
     key.fileModifiedMs = identity.fileModifiedMs;
@@ -129,6 +130,7 @@ std::string builtLevelCacheKeyName(const BuiltLevelCacheKey& key)
 {
     std::string s;
     appendString(s, key.slideId);
+    appendString(s, key.driverId);
     appendInt(s, key.sceneIndex);
     appendU64(s, key.fileSize);
     appendInt(s, key.fileModifiedMs);

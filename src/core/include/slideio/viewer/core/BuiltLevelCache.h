@@ -13,6 +13,10 @@
 namespace slideio::viewer::core
 {
 
+// Bump whenever the extern/slideio pin changes, or BuiltLevelAccumulator's
+// arithmetic or planBuiltLevels changes: the SlideIO semver string in the key
+// does not move with a submodule commit, so this is what invalidates entries
+// whose pixels a new build would compute differently.
 constexpr int kBuiltLevelCacheFormatVersion = 1;
 constexpr int64_t kCacheTemporaryMaxAgeSeconds = 86400;
 
@@ -22,6 +26,7 @@ constexpr int64_t kCacheTemporaryMaxAgeSeconds = 86400;
 struct BuiltLevelCacheKey
 {
     std::string slideId;
+    std::string driverId; // a file forced through another driver can decode differently
     int sceneIndex = 0;
     uint64_t fileSize = 0;
     int64_t fileModifiedMs = 0;
@@ -45,6 +50,7 @@ bool operator!=(const BuiltLevelCacheKey& a, const BuiltLevelCacheKey& b);
 struct BuiltLevelCacheIdentity
 {
     std::string slideId;
+    std::string driverId;
     int sceneIndex = 0;
     uint64_t fileSize = 0;
     int64_t fileModifiedMs = 0;

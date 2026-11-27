@@ -76,6 +76,7 @@ QJsonObject keyToJson(const core::BuiltLevelCacheKey& key)
     }
     QJsonObject o;
     o.insert(QStringLiteral("slideId"), QString::fromStdString(key.slideId));
+    o.insert(QStringLiteral("driverId"), QString::fromStdString(key.driverId));
     o.insert(QStringLiteral("sceneIndex"), key.sceneIndex);
     o.insert(QStringLiteral("fileSize"), QString::number(static_cast<qulonglong>(key.fileSize)));
     o.insert(QStringLiteral("fileModifiedMs"), QString::number(static_cast<qlonglong>(key.fileModifiedMs)));
@@ -140,7 +141,8 @@ bool keyFromJson(const QJsonObject& o, core::BuiltLevelCacheKey& key)
 {
     int dataType = 0;
     int colorMode = 0;
-    if (!jsonString(o, "slideId", key.slideId) || !jsonInt(o, "sceneIndex", key.sceneIndex)
+    if (!jsonString(o, "slideId", key.slideId) || !jsonString(o, "driverId", key.driverId)
+        || !jsonInt(o, "sceneIndex", key.sceneIndex)
         || !jsonU64(o, "fileSize", key.fileSize) || !jsonI64(o, "fileModifiedMs", key.fileModifiedMs)
         || !jsonInt(o, "sourceLevel", key.sourceLevel) || !jsonInt(o, "sourceWidth", key.sourceWidth)
         || !jsonInt(o, "sourceHeight", key.sourceHeight) || !jsonInt(o, "numChannels", key.numChannels)
@@ -203,7 +205,8 @@ BuiltLevelDiskCache::BuiltLevelDiskCache(std::string folderUtf8, size_t blockByt
 }
 
 std::optional<std::vector<std::vector<uint8_t>>> BuiltLevelDiskCache::load(
-    const core::BuiltLevelCacheKey& key, const std::vector<std::pair<int, int>>& levelSizes, size_t pixelBytes)
+    const core::BuiltLevelCacheKey& key, const std::vector<std::pair<int, int>>& levelSizes, size_t pixelBytes,
+    const std::atomic<bool>& cancel)
 {
     const std::string name = core::builtLevelCacheKeyName(key);
     const QString dir = joinPath(m_folder, name);
@@ -212,15 +215,25 @@ std::optional<std::vector<std::vector<uint8_t>>> BuiltLevelDiskCache::load(
     using Rasters = std::optional<std::vector<std::vector<uint8_t>>>;
     std::string reason;
     bool absent = false;
+    // A cancelled read says nothing about the entry: it is neither set aside
+    // nor reported as a miss.
+    bool cancelled = false;
 
     auto miss = [&](const char* why) -> Rasters {
         reason = why;
+        return std::nullopt;
+    };
+    auto stop = [&]() -> Rasters {
+        cancelled = true;
         return std::nullopt;
     };
 
     // Every file handle lives inside this lambda, so none is open when a
     // failed entry is moved aside below.
     auto attempt = [&]() -> Rasters {
+        if (cancel.load()) {
+            return stop();
+        }
         if (!QFileInfo(dir).isDir()) {
             absent = true;
             spdlog::debug("Level cache: no entry {}", name);
@@ -289,6 +302,9 @@ std::optional<std::vector<std::vector<uint8_t>>> BuiltLevelDiskCache::load(
             std::vector<uint8_t> raster(expectedBytes[i]);
             size_t filled = 0;
             for (uint32_t b = 0; b < blockCount; ++b) {
+                if (cancel.load()) {
+                    return stop();
+                }
                 const QByteArray bh = f.read(kBlockHeaderBytes);
                 if (bh.size() != kBlockHeaderBytes) {
                     return miss("the block count is short");
@@ -302,6 +318,20 @@ std::optional<std::vector<std::vector<uint8_t>>> BuiltLevelDiskCache::load(
                 const QByteArray compressed = f.read(csize);
                 if (static_cast<uint32_t>(compressed.size()) != csize) {
                     return miss("a block is truncated");
+                }
+                // qCompress prefixes its stream with the uncompressed length,
+                // big-endian. Checked first so a corrupt prefix is a miss here
+                // rather than an allocation of that size, or a qWarning, inside
+                // qUncompress.
+                if (csize < 4) {
+                    return miss("a block is shorter than its length prefix");
+                }
+                const auto* prefix = reinterpret_cast<const uint8_t*>(compressed.constData());
+                const uint32_t declared = (static_cast<uint32_t>(prefix[0]) << 24)
+                                          | (static_cast<uint32_t>(prefix[1]) << 16)
+                                          | (static_cast<uint32_t>(prefix[2]) << 8) | static_cast<uint32_t>(prefix[3]);
+                if (declared != usize) {
+                    return miss("a block's length prefix differs from its header");
                 }
                 const QByteArray plain = qUncompress(compressed);
                 if (static_cast<uint32_t>(plain.size()) != usize) {
@@ -338,6 +368,10 @@ std::optional<std::vector<std::vector<uint8_t>>> BuiltLevelDiskCache::load(
         reason = "unknown error";
     }
     if (absent) {
+        return std::nullopt;
+    }
+    if (cancelled) {
+        spdlog::debug("Level cache: load of {} cancelled", name);
         return std::nullopt;
     }
     // Move the failed entry aside so the next save's rename can succeed; the

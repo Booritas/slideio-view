@@ -27,9 +27,12 @@ public:
 
     /// Finest first. levelSizes are the expected {width, height}; each raster
     /// must be exactly width * height * pixelBytes. nullopt on any miss (logged
-    /// once by the store). Marks the entry used.
+    /// once by the store). Marks the entry used. Polls `cancel` between blocks:
+    /// a cancelled load is nullopt, leaves the entry as it was and logs nothing
+    /// above debug.
     virtual std::optional<std::vector<std::vector<uint8_t>>> load(
-        const BuiltLevelCacheKey& key, const std::vector<std::pair<int, int>>& levelSizes, size_t pixelBytes) = 0;
+        const BuiltLevelCacheKey& key, const std::vector<std::pair<int, int>>& levelSizes, size_t pixelBytes,
+        const std::atomic<bool>& cancel) = 0;
 
     /// Returns true when an entry now exists for the key. Polls `cancel`
     /// between blocks.

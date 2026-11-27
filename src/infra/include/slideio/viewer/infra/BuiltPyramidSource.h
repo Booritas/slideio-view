@@ -75,7 +75,7 @@ public:
     // with no failed rows, not cancelled and not abandoned, is saved under the
     // same key. Both run on the worker thread: the load without the state lock,
     // the save holding it shared -- setColorMode() and the destructor raise the
-    // cancel flag the save polls and join before they take it exclusively.
+    // cancel flag both poll and join before they take it exclusively.
     void setLevelStore(std::shared_ptr<core::IBuiltLevelStore> store, core::BuiltLevelCacheIdentity identity,
                        core::BuiltLevelCacheDescription description);
 

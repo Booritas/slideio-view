@@ -1147,15 +1147,35 @@ namespace
 {
 
 // Keeps saved rasters in memory by key name, records every call, and can hold
-// a save until the cancel flag it was handed is raised.
+// a save or a load until the cancel flag it was handed is raised.
 class MemoryStore : public IBuiltLevelStore
 {
 public:
     std::optional<std::vector<std::vector<uint8_t>>> load(const BuiltLevelCacheKey& key,
                                                           const std::vector<std::pair<int, int>>& levelSizes,
-                                                          size_t pixelBytes) override
+                                                          size_t pixelBytes, const std::atomic<bool>& cancel) override
     {
+        bool block = false;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            block = m_blockLoads;
+            m_inLoad = true;
+        }
+        m_cv.notify_all();
+        if (block) {
+            // Polls as the real store does between blocks; gives up after kWait.
+            const auto deadline = std::chrono::steady_clock::now() + kWait;
+            while (!cancel && std::chrono::steady_clock::now() < deadline) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
         std::lock_guard<std::mutex> lock(m_mutex);
+        m_inLoad = false;
+        if (cancel) {
+            ++m_cancelledLoads;
+        }
+        // A cancelled load still answers what it holds, so a test can tell that
+        // the source itself refuses to install levels read after a cancel.
         ++m_loads;
         const auto it = m_entries.find(builtLevelCacheKeyName(key));
         if (it == m_entries.end() || it->second.key != key || it->second.levels.size() != levelSizes.size()) {
@@ -1194,6 +1214,11 @@ public:
         }
         std::lock_guard<std::mutex> lock(m_mutex);
         m_inSave = false;
+        if (m_failSaves) {
+            ++m_failedSaves;
+            m_cv.notify_all();
+            return false;
+        }
         if (cancel) {
             ++m_cancelledSaves;
             m_cv.notify_all();
@@ -1214,6 +1239,37 @@ public:
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_blockSaves = true;
+    }
+
+    // Every save fails as a full disk would: false, not cancelled.
+    void failSaves()
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_failSaves = true;
+    }
+
+    bool waitForFailedSaves(int n)
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_cv.wait_for(lock, kWait, [this, n] { return m_failedSaves >= n; });
+    }
+
+    void blockLoads()
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_blockLoads = true;
+    }
+
+    bool waitUntilInLoad()
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_cv.wait_for(lock, kWait, [this] { return m_inLoad; });
+    }
+
+    int cancelledLoads() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_cancelledLoads;
     }
 
     bool waitForCompletedSaves(int n)
@@ -1281,6 +1337,11 @@ private:
     BuiltLevelCacheDescription m_description;
     bool m_blockSaves = false;
     bool m_inSave = false;
+    bool m_failSaves = false;
+    int m_failedSaves = 0;
+    bool m_blockLoads = false;
+    bool m_inLoad = false;
+    int m_cancelledLoads = 0;
     int m_loads = 0;
     int m_hits = 0;
     int m_saves = 0;
@@ -1488,4 +1549,57 @@ TEST_CASE("destruction during a save returns promptly and leaves no entry", "[in
     CHECK(elapsed < std::chrono::seconds(2));
     CHECK(store->cancelledSaves() == 1);
     CHECK(store->entryCount() == 0);
+}
+
+TEST_CASE("destruction during a load returns promptly and installs nothing", "[infra][BuiltPyramidSource][cache]")
+{
+    auto store = std::make_shared<MemoryStore>();
+    {
+        // Prime the store, so the blocked load below would be a hit.
+        auto fake = std::make_shared<FakeSource>();
+        BuiltPyramidSource primer(fake);
+        primer.setLevelStore(store, cacheIdentity(), cacheDescription());
+        Progress progress;
+        progress.attach(primer);
+        primer.start();
+        REQUIRE(progress.waitForCompletes(1));
+        REQUIRE(store->waitForCompletedSaves(1));
+    }
+
+    store->blockLoads();
+    auto fake = std::make_shared<FakeSource>();
+    auto source = std::make_unique<BuiltPyramidSource>(fake);
+    source->setLevelStore(store, cacheIdentity(), cacheDescription());
+    Progress progress;
+    progress.attach(*source);
+    source->start();
+    REQUIRE(store->waitUntilInLoad());
+
+    const auto before = std::chrono::steady_clock::now();
+    source.reset();
+    const auto elapsed = std::chrono::steady_clock::now() - before;
+
+    CHECK(elapsed < std::chrono::seconds(2));
+    CHECK(store->cancelledLoads() == 1);
+    CHECK(store->hits() == 1); // the store answered, the source did not install it
+    CHECK(progress.eventCount() == 0);
+    CHECK(fake->calls().empty());
+}
+
+TEST_CASE("a failed save leaves the store's line as the only one at info", "[infra][BuiltPyramidSource][cache]")
+{
+    LogCapture log;
+    auto store = std::make_shared<MemoryStore>();
+    store->failSaves();
+    auto fake = std::make_shared<FakeSource>();
+    auto source = std::make_unique<BuiltPyramidSource>(fake);
+    source->setLevelStore(store, cacheIdentity(), cacheDescription());
+    Progress progress;
+    progress.attach(*source);
+    source->start();
+    REQUIRE(progress.waitForCompletes(1));
+    REQUIRE(store->waitForFailedSaves(1));
+    source.reset(); // joins, so the source has logged whatever it logs
+
+    CHECK(log.count("not saved") == 0);
 }

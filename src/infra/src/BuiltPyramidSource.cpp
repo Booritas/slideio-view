@@ -571,7 +571,7 @@ bool BuiltPyramidSource::loadFromStore(uint64_t generation, core::ColorMode mode
     // own miss; a throw is a miss too, never a reason to stop the build.
     std::optional<std::vector<std::vector<uint8_t>>> levels;
     try {
-        levels = m_store->load(key, sizes, pixelBytes);
+        levels = m_store->load(key, sizes, pixelBytes, m_cancel);
     } catch (const std::exception& e) {
         spdlog::warn("BuiltPyramidSource: level cache {} could not be read for {}: {}; building", name,
                      m_cacheDescription.path, e.what());
@@ -582,7 +582,8 @@ bool BuiltPyramidSource::loadFromStore(uint64_t generation, core::ColorMode mode
         return false;
     }
     if (!levels) {
-        return false;
+        // A load cut short by a cancel is not a miss: there is nothing to build for.
+        return m_cancel.load();
     }
     if (m_cancel) {
         return true; // superseded while reading; the next build owns the state
@@ -657,7 +658,8 @@ void BuiltPyramidSource::saveToStore(uint64_t generation, core::ColorMode mode, 
         spdlog::info("BuiltPyramidSource: saved built levels in mode {} to cache {} in {} ms ({})", modeName(mode),
                      name, elapsed.count(), m_cacheDescription.path);
     } else {
-        spdlog::info("BuiltPyramidSource: built levels in mode {} not saved to cache {} ({}){}", modeName(mode), name,
+        // Debug: the store already logged a failure, and a cancel is not one.
+        spdlog::debug("BuiltPyramidSource: built levels in mode {} not saved to cache {} ({}){}", modeName(mode), name,
                      m_cacheDescription.path, m_cancel ? ": cancelled" : "");
     }
 }

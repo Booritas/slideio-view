@@ -15,6 +15,7 @@ BuiltLevelCacheKey baseKey()
 {
     BuiltLevelCacheKey k;
     k.slideId = "0123456789abcdef";
+    k.driverId = "GDAL";
     k.sceneIndex = 1;
     k.fileSize = 123456789;
     k.fileModifiedMs = 1700000000000;
@@ -63,6 +64,7 @@ TEST_CASE("builtLevelCacheKeyName changes with every key field", "[BuiltLevelCac
         CHECK(!(k == base));
     };
     check("slideId", [](auto& k) { k.slideId = "fedcba9876543210"; });
+    check("driverId", [](auto& k) { k.driverId = "SVS"; });
     check("sceneIndex", [](auto& k) { k.sceneIndex = 2; });
     check("fileSize", [](auto& k) { k.fileSize += 1; });
     check("fileModifiedMs", [](auto& k) { k.fileModifiedMs += 1; });
@@ -96,6 +98,7 @@ TEST_CASE("builtLevelCacheKeyFor fills the key from the identity", "[BuiltLevelC
 {
     BuiltLevelCacheIdentity id;
     id.slideId = "slide";
+    id.driverId = "OMETIFF";
     id.sceneIndex = 2;
     id.fileSize = 99;
     id.fileModifiedMs = 77;
@@ -114,6 +117,7 @@ TEST_CASE("builtLevelCacheKeyFor fills the key from the identity", "[BuiltLevelC
         CHECK(key->renditionTag.empty());
         CHECK(key->colorMode == ColorMode::Raw);
         CHECK(key->slideId == "slide");
+        CHECK(key->driverId == "OMETIFF");
         CHECK(key->sceneIndex == 2);
         CHECK(key->fileSize == 99);
         CHECK(key->fileModifiedMs == 77);

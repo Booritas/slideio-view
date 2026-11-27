@@ -24,10 +24,13 @@ using namespace slideio::viewer;
 namespace
 {
 
+const std::atomic<bool> kNoCancel{false};
+
 core::BuiltLevelCacheKey makeKey(core::DataType type, int channels)
 {
     core::BuiltLevelCacheKey key;
     key.slideId = "0123456789abcdef";
+    key.driverId = "SVS";
     key.sceneIndex = 2;
     key.fileSize = 12345678901234ULL;
     key.fileModifiedMs = 1700000000123LL;
@@ -113,7 +116,7 @@ void roundTrip(core::DataType type, int channels, size_t pixelBytes)
     const auto rasters = makeRasters(pixelBytes);
     std::atomic<bool> cancel{false};
     REQUIRE(cache.save(key, makeDescription(), rasters.views(), cancel));
-    const auto loaded = cache.load(key, rasters.sizes, pixelBytes);
+    const auto loaded = cache.load(key, rasters.sizes, pixelBytes, kNoCancel);
     REQUIRE(loaded.has_value());
     REQUIRE(*loaded == rasters.data);
 }
@@ -138,7 +141,7 @@ TEST_CASE("a non-ASCII folder round-trips", "[BuiltLevelDiskCache]")
     const auto rasters = makeRasters(3);
     std::atomic<bool> cancel{false};
     REQUIRE(cache.save(key, makeDescription(), rasters.views(), cancel));
-    const auto loaded = cache.load(key, rasters.sizes, 3);
+    const auto loaded = cache.load(key, rasters.sizes, 3, kNoCancel);
     REQUIRE(loaded.has_value());
     REQUIRE(*loaded == rasters.data);
 }
@@ -160,7 +163,7 @@ TEST_CASE("a block always holds whole rows", "[BuiltLevelDiskCache]")
     }
     std::atomic<bool> cancel{false};
     REQUIRE(cache.save(key, makeDescription(), r.views(), cancel));
-    const auto loaded = cache.load(key, r.sizes, 3);
+    const auto loaded = cache.load(key, r.sizes, 3, kNoCancel);
     REQUIRE(loaded.has_value());
     REQUIRE(*loaded == r.data);
 
@@ -186,13 +189,13 @@ TEST_CASE("each corruption is a miss", "[BuiltLevelDiskCache]")
     const auto dir = entryDir(folder, key);
 
     REQUIRE(cache.save(key, makeDescription(), rasters.views(), cancel));
-    REQUIRE(cache.load(key, rasters.sizes, 3).has_value());
+    REQUIRE(cache.load(key, rasters.sizes, 3, kNoCancel).has_value());
 
     SECTION("truncated level file")
     {
         QFile f(dir + "/level-1.bin");
         REQUIRE(f.resize(f.size() - 10));
-        REQUIRE_FALSE(cache.load(key, rasters.sizes, 3).has_value());
+        REQUIRE_FALSE(cache.load(key, rasters.sizes, 3, kNoCancel).has_value());
     }
     SECTION("flipped byte")
     {
@@ -206,7 +209,7 @@ TEST_CASE("each corruption is a miss", "[BuiltLevelDiskCache]")
         c = static_cast<char>(c ^ 0x5A);
         f.write(&c, 1);
         f.close();
-        REQUIRE_FALSE(cache.load(key, rasters.sizes, 3).has_value());
+        REQUIRE_FALSE(cache.load(key, rasters.sizes, 3, kNoCancel).has_value());
     }
     SECTION("header field changed")
     {
@@ -219,24 +222,47 @@ TEST_CASE("each corruption is a miss", "[BuiltLevelDiskCache]")
         REQUIRE(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
         f.write(text);
         f.close();
-        REQUIRE_FALSE(cache.load(key, rasters.sizes, 3).has_value());
+        REQUIRE_FALSE(cache.load(key, rasters.sizes, 3, kNoCancel).has_value());
     }
     SECTION("missing level file")
     {
         REQUIRE(QFile::remove(dir + "/level-1.bin"));
-        REQUIRE_FALSE(cache.load(key, rasters.sizes, 3).has_value());
+        REQUIRE_FALSE(cache.load(key, rasters.sizes, 3, kNoCancel).has_value());
     }
     SECTION("different slideio version")
     {
         auto other = key;
         other.slideioVersion = "2.0.1";
-        REQUIRE_FALSE(cache.load(other, rasters.sizes, 3).has_value());
+        REQUIRE_FALSE(cache.load(other, rasters.sizes, 3, kNoCancel).has_value());
+    }
+    SECTION("different driver")
+    {
+        auto other = key;
+        other.driverId = "GDAL";
+        REQUIRE_FALSE(cache.load(other, rasters.sizes, 3, kNoCancel).has_value());
+    }
+    SECTION("header driver changed")
+    {
+        QFile f(dir + "/header.json");
+        REQUIRE(f.open(QIODevice::ReadOnly));
+        QByteArray text = f.readAll();
+        f.close();
+        // The key's driverId, not the description's: QJsonObject writes its
+        // members sorted, so "description" precedes "key".
+        const int at = text.lastIndexOf("\"driverId\":\"SVS\"");
+        REQUIRE(at >= 0);
+        REQUIRE(at > text.indexOf("\"key\""));
+        text.replace(at, 16, "\"driverId\":\"NDP\"");
+        REQUIRE(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        f.write(text);
+        f.close();
+        REQUIRE_FALSE(cache.load(key, rasters.sizes, 3, kNoCancel).has_value());
     }
     SECTION("wrong expected size")
     {
         auto sizes = rasters.sizes;
         sizes[1].first += 1;
-        REQUIRE_FALSE(cache.load(key, sizes, 3).has_value());
+        REQUIRE_FALSE(cache.load(key, sizes, 3, kNoCancel).has_value());
     }
 }
 
@@ -273,7 +299,7 @@ TEST_CASE("racing saves leave one valid entry", "[BuiltLevelDiskCache]")
     const auto dirs = subdirs(folder);
     REQUIRE(dirs.size() == 1);
     REQUIRE_FALSE(dirs[0].contains(".tmp-"));
-    const auto loaded = a.load(key, rasters.sizes, 3);
+    const auto loaded = a.load(key, rasters.sizes, 3, kNoCancel);
     REQUIRE(loaded.has_value());
     REQUIRE(*loaded == rasters.data);
 }
@@ -346,7 +372,7 @@ TEST_CASE("load marks the entry used", "[BuiltLevelDiskCache]")
     const auto start = std::chrono::duration_cast<std::chrono::seconds>(
                            std::chrono::system_clock::now().time_since_epoch())
                            .count();
-    REQUIRE(cache.load(key, rasters.sizes, 3).has_value());
+    REQUIRE(cache.load(key, rasters.sizes, 3, kNoCancel).has_value());
     QFile f(lastUsed);
     REQUIRE(f.open(QIODevice::ReadOnly));
     REQUIRE(f.readAll().trimmed().toLongLong() >= start);
@@ -374,14 +400,85 @@ TEST_CASE("a corrupt entry is set aside and can be rewritten", "[BuiltLevelDiskC
         c = static_cast<char>(c ^ 0x5A);
         f.write(&c, 1);
     }
-    REQUIRE_FALSE(cache.load(key, rasters.sizes, 3).has_value());
+    REQUIRE_FALSE(cache.load(key, rasters.sizes, 3, kNoCancel).has_value());
     REQUIRE_FALSE(QDir(dir).exists());
     const QStringList dirs = subdirs(folder);
     REQUIRE(dirs.size() == 1);
     REQUIRE(dirs[0].contains(".tmp-"));
 
     REQUIRE(cache.save(key, makeDescription(), rasters.views(), cancel));
-    const auto loaded = cache.load(key, rasters.sizes, 3);
+    const auto loaded = cache.load(key, rasters.sizes, 3, kNoCancel);
     REQUIRE(loaded.has_value());
     REQUIRE(*loaded == rasters.data);
+}
+
+TEST_CASE("a cancelled load is a miss that leaves the entry in place", "[BuiltLevelDiskCache]")
+{
+    QTemporaryDir tmp;
+    REQUIRE(tmp.isValid());
+    const std::string folder = utf8(tmp.path());
+    infra::BuiltLevelDiskCache cache(folder);
+    const auto key = makeKey(core::DataType::Byte, 3);
+    const auto rasters = makeRasters(3);
+    std::atomic<bool> cancel{false};
+    REQUIRE(cache.save(key, makeDescription(), rasters.views(), cancel));
+
+    const std::atomic<bool> cancelled{true};
+    REQUIRE_FALSE(cache.load(key, rasters.sizes, 3, cancelled).has_value());
+    REQUIRE(QDir(entryDir(folder, key)).exists());
+    REQUIRE(subdirs(folder).size() == 1);
+
+    const auto loaded = cache.load(key, rasters.sizes, 3, kNoCancel);
+    REQUIRE(loaded.has_value());
+    REQUIRE(*loaded == rasters.data);
+}
+
+TEST_CASE("a block whose length prefix disagrees is a miss", "[BuiltLevelDiskCache]")
+{
+    QTemporaryDir tmp;
+    REQUIRE(tmp.isValid());
+    const std::string folder = utf8(tmp.path());
+    infra::BuiltLevelDiskCache cache(folder);
+    const auto key = makeKey(core::DataType::Byte, 3);
+    const auto rasters = makeRasters(3);
+    std::atomic<bool> cancel{false};
+    REQUIRE(cache.save(key, makeDescription(), rasters.views(), cancel));
+    const QString level0 = entryDir(folder, key) + "/level-0.bin";
+
+    // level-0.bin: a 12-byte file header, then block 0's 12-byte header
+    // (usize, csize, crc), then its qCompress stream, whose first four bytes are
+    // the big-endian uncompressed length.
+    SECTION("a huge prefix")
+    {
+        QFile f(level0);
+        REQUIRE(f.open(QIODevice::ReadWrite));
+        REQUIRE(f.seek(24));
+        const char huge[4] = {'\x7F', '\xFF', '\xFF', '\xFF'};
+        REQUIRE(f.write(huge, 4) == 4);
+        f.close();
+        REQUIRE_FALSE(cache.load(key, rasters.sizes, 3, kNoCancel).has_value());
+    }
+    SECTION("a prefix one byte off")
+    {
+        QFile f(level0);
+        REQUIRE(f.open(QIODevice::ReadWrite));
+        REQUIRE(f.seek(27));
+        char c = 0;
+        REQUIRE(f.read(&c, 1) == 1);
+        REQUIRE(f.seek(27));
+        c = static_cast<char>(c ^ 0x01);
+        REQUIRE(f.write(&c, 1) == 1);
+        f.close();
+        REQUIRE_FALSE(cache.load(key, rasters.sizes, 3, kNoCancel).has_value());
+    }
+    SECTION("a compressed size below the prefix")
+    {
+        QFile f(level0);
+        REQUIRE(f.open(QIODevice::ReadWrite));
+        REQUIRE(f.seek(16));
+        const char three[4] = {3, 0, 0, 0};
+        REQUIRE(f.write(three, 4) == 4);
+        f.close();
+        REQUIRE_FALSE(cache.load(key, rasters.sizes, 3, kNoCancel).has_value());
+    }
 }
