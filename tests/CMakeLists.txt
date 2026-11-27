@@ -75,6 +75,7 @@ add_executable(slideio-viewer-infra-tests
     infra/QSettingsAnnotationCategoryStoreTest.cpp
     infra/JsonAnnotationRepositoryTest.cpp
     infra/BuiltPyramidSourceTest.cpp
+    infra/BuiltLevelDiskCacheTest.cpp
 )
 
 target_link_libraries(slideio-viewer-infra-tests

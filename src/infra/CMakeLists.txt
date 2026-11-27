@@ -8,6 +8,7 @@ add_library(slideio-viewer-infra STATIC
     src/QSettingsAnnotationCategoryStore.cpp
     src/JsonAnnotationRepository.cpp
     src/BuiltPyramidSource.cpp
+    src/BuiltLevelDiskCache.cpp
 )
 
 target_include_directories(slideio-viewer-infra PUBLIC
