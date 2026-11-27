@@ -363,10 +363,17 @@ struct MainWindow::Impl
     void buildAnnotationPersistence();
     void updateUndoActions();
     bool openPreferences();
-    /// Hands the viewport the built-level disk cache these settings describe
-    /// (null when disabled) and, when enabled, sweeps its folder off the UI
-    /// thread. Applies to slides opened from now on.
-    void applyBuiltLevelCacheSettings(const BuiltLevelCacheSettings& settings);
+    /// This instance's built-level cache settings: read from QSettings once at
+    /// startup and changed only by this instance's Preferences OK (which also
+    /// writes them back), like AnnotationSettings' workspace -- the store is
+    /// shared by every instance and this copy is not.
+    BuiltLevelCacheSettings builtLevelCacheSettings;
+    /// Makes `settings` this instance's: hands the viewport the disk cache they
+    /// describe (null when disabled) and sweeps, off the UI thread, the
+    /// configured folder whatever `enabled` says and, when `previous` names
+    /// another folder, that one too. Applies to slides opened from now on.
+    void applyBuiltLevelCacheSettings(const BuiltLevelCacheSettings& settings,
+                                      const BuiltLevelCacheSettings* previous);
     /// Enables or disables everything that writes annotations, and says why not.
     /// Driven from two signals: ViewportWidget::annotationsAvailableChanged,
     /// which carries the better wording on an open or close, and
@@ -1966,26 +1973,34 @@ void MainWindow::Impl::buildAnnotationPersistence()
         });
 }
 
-void MainWindow::Impl::applyBuiltLevelCacheSettings(const BuiltLevelCacheSettings& settings)
+void MainWindow::Impl::applyBuiltLevelCacheSettings(const BuiltLevelCacheSettings& settings,
+                                                    const BuiltLevelCacheSettings* previous)
 {
-    if (!settings.enabled) {
+    const QStringList sweepFolders = builtLevelCacheFoldersToSweep(settings, previous);
+    builtLevelCacheSettings = settings;
+    if (settings.enabled) {
+        const std::string folder = resolveBuiltLevelCacheFolder(settings.folder).toStdString();
+        viewportWidget->setBuiltLevelStore(std::make_shared<infra::BuiltLevelDiskCache>(folder));
+        spdlog::info("MainWindow: built-level cache on, folder '{}', retention {} days", folder,
+                     settings.retentionDays);
+    } else {
         viewportWidget->setBuiltLevelStore(nullptr);
-        return;
     }
-    const std::string folder = resolveBuiltLevelCacheFolder(settings.folder).toStdString();
-    viewportWidget->setBuiltLevelStore(std::make_shared<infra::BuiltLevelDiskCache>(folder));
-    spdlog::info("MainWindow: built-level cache on, folder '{}', retention {} days", folder,
-                 settings.retentionDays);
 
+    // Retention runs whether or not the cache is on: turning it off does not
+    // delete entries, their retention does. The sweep never creates a folder.
     const int retentionDays = settings.retentionDays;
     const int64_t nowSeconds = QDateTime::currentSecsSinceEpoch();
-    QThreadPool::globalInstance()->start([folder, retentionDays, nowSeconds]() {
-        // sweep() never throws; it deletes only key-named entries and stale temporaries.
-        const int deleted = infra::BuiltLevelDiskCache::sweep(folder, retentionDays, nowSeconds);
-        if (deleted > 0) {
-            spdlog::info("built-level cache sweep removed {} entries from '{}'", deleted, folder);
-        }
-    });
+    for (const QString& sweepFolder : sweepFolders) {
+        const std::string folder = sweepFolder.toStdString();
+        QThreadPool::globalInstance()->start([folder, retentionDays, nowSeconds]() {
+            // sweep() never throws; it deletes only key-named entries and stale temporaries.
+            const int deleted = infra::BuiltLevelDiskCache::sweep(folder, retentionDays, nowSeconds);
+            if (deleted > 0) {
+                spdlog::info("built-level cache sweep removed {} entries from '{}'", deleted, folder);
+            }
+        });
+    }
 }
 
 bool MainWindow::Impl::openPreferences()
@@ -1994,13 +2009,10 @@ bool MainWindow::Impl::openPreferences()
     for (const std::string& category : categoryStore->categories()) {
         currentCategories.append(QString::fromStdString(category));
     }
-    BuiltLevelCacheSettings currentCacheSettings;
-    {
-        QSettings settings;
-        currentCacheSettings = loadBuiltLevelCacheSettings(settings);
-    }
+    // This instance's copy, not the shared store, which another instance may
+    // have changed since (spec §5.1).
     PreferencesDialog dialog(annotationSettings->workspaceDirectory(),
-                             annotationSettings->userName(), currentCategories, currentCacheSettings, owner);
+                             annotationSettings->userName(), currentCategories, builtLevelCacheSettings, owner);
     if (dialog.exec() != QDialog::Accepted) {
         return false;
     }
@@ -2025,7 +2037,8 @@ bool MainWindow::Impl::openPreferences()
         QSettings settings;
         saveBuiltLevelCacheSettings(settings, cacheSettings);
     }
-    applyBuiltLevelCacheSettings(cacheSettings);
+    const BuiltLevelCacheSettings previousCacheSettings = builtLevelCacheSettings;
+    applyBuiltLevelCacheSettings(cacheSettings, &previousCacheSettings);
 
     const QString entered = dialog.workspaceDirectory();
     // Resolve the entry before comparing: a cleared field means "use the
@@ -2755,7 +2768,8 @@ MainWindow::MainWindow(QWidget* parent)
     setCentralWidget(m_impl->viewportWidget);
     {
         QSettings settings;
-        m_impl->applyBuiltLevelCacheSettings(loadBuiltLevelCacheSettings(settings));
+        // The only read of the store: this instance keeps its own copy from here.
+        m_impl->applyBuiltLevelCacheSettings(loadBuiltLevelCacheSettings(settings), nullptr);
     }
 
     // Create overlay widgets as children of the viewport

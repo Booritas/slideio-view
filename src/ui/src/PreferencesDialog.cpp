@@ -55,8 +55,9 @@ PreferencesDialog::PreferencesDialog(const QString& workspaceDirectory, const QS
     auto* cacheGroup = new QGroupBox(tr("Built level cache"), this);
     cacheGroup->setToolTip(
         tr("Speeds up reopening large slides that have no stored overview. Entries hold image pixels and "
-           "the slide's file path; keep the folder on local, access-controlled storage."));
-    m_cacheEnabledBox = new QCheckBox(tr("Keep built levels on disk"), cacheGroup);
+           "the slide's file path; keep the folder on local, access-controlled storage. Turning the cache off "
+           "does not delete entries; they are deleted when their retention runs out."));
+    m_cacheEnabledBox = new QCheckBox(tr("Cache built levels on disk"), cacheGroup);
     m_cacheEnabledBox->setChecked(cacheSettings.enabled);
     m_cacheFolderEdit = new QLineEdit(cacheSettings.folder, cacheGroup);
     m_cacheFolderEdit->setPlaceholderText(defaultBuiltLevelCacheFolder());
@@ -75,7 +76,7 @@ PreferencesDialog::PreferencesDialog(const QString& workspaceDirectory, const QS
     auto* cacheForm = new QFormLayout(cacheGroup);
     cacheForm->addRow(m_cacheEnabledBox);
     cacheForm->addRow(tr("Folder:"), cacheFolderRow);
-    cacheForm->addRow(tr("Keep for"), m_cacheDaysSpin);
+    cacheForm->addRow(tr("Keep for:"), m_cacheDaysSpin);
     updateCacheControls();
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);

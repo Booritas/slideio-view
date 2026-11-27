@@ -4,6 +4,7 @@
 
 #include <QSettings>
 #include <QString>
+#include <QStringList>
 #include <QTemporaryDir>
 
 using namespace slideio::viewer::ui;
@@ -70,4 +71,43 @@ TEST_CASE("save then load round-trips under the levelCache keys", "[ui][BuiltLev
     REQUIRE(loaded.enabled);
     REQUIRE(loaded.folder == folder);
     REQUIRE(loaded.retentionDays == 7);
+}
+
+TEST_CASE("the configured folder is swept whether or not the cache is on", "[ui][BuiltLevelCacheSettings]")
+{
+    const BuiltLevelCacheSettings off{false, QStringLiteral("D:/cache"), 30};
+    REQUIRE(builtLevelCacheFoldersToSweep(off, nullptr) == QStringList{QStringLiteral("D:/cache")});
+
+    const BuiltLevelCacheSettings offDefault{false, QString(), 30};
+    REQUIRE(builtLevelCacheFoldersToSweep(offDefault, nullptr) == QStringList{defaultBuiltLevelCacheFolder()});
+}
+
+TEST_CASE("a changed folder sweeps the previous one too", "[ui][BuiltLevelCacheSettings]")
+{
+    const BuiltLevelCacheSettings before{true, QStringLiteral("D:/old"), 30};
+    const BuiltLevelCacheSettings after{false, QStringLiteral("D:/new"), 30};
+    REQUIRE(builtLevelCacheFoldersToSweep(after, &before)
+            == QStringList{QStringLiteral("D:/new"), QStringLiteral("D:/old")});
+}
+
+TEST_CASE("an unchanged resolved folder is swept once", "[ui][BuiltLevelCacheSettings]")
+{
+    SECTION("same text")
+    {
+        const BuiltLevelCacheSettings before{true, QStringLiteral("D:/cache"), 30};
+        const BuiltLevelCacheSettings after{true, QStringLiteral("D:/cache"), 7};
+        REQUIRE(builtLevelCacheFoldersToSweep(after, &before) == QStringList{QStringLiteral("D:/cache")});
+    }
+    SECTION("blank and the default spelled out")
+    {
+        const BuiltLevelCacheSettings before{true, QString(), 30};
+        const BuiltLevelCacheSettings after{true, defaultBuiltLevelCacheFolder(), 30};
+        REQUIRE(builtLevelCacheFoldersToSweep(after, &before).size() == 1);
+    }
+    SECTION("a trailing separator")
+    {
+        const BuiltLevelCacheSettings before{true, QStringLiteral("D:/cache/"), 30};
+        const BuiltLevelCacheSettings after{true, QStringLiteral("D:/cache"), 30};
+        REQUIRE(builtLevelCacheFoldersToSweep(after, &before) == QStringList{QStringLiteral("D:/cache")});
+    }
 }

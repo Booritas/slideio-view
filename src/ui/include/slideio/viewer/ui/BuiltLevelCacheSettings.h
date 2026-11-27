@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 
 class QSettings;
 
@@ -33,5 +34,13 @@ int clampCacheRetentionDays(int days);
 BuiltLevelCacheSettings loadBuiltLevelCacheSettings(QSettings& settings);
 
 void saveBuiltLevelCacheSettings(QSettings& settings, const BuiltLevelCacheSettings& value);
+
+/// The folders a sweep should visit after `next` takes effect: its resolved
+/// folder whatever `enabled` says -- turning the cache off does not delete
+/// entries, their retention does -- and, when `previous` is given and resolves
+/// to another folder, that one too, so entries left behind by a folder change
+/// still expire. Paths are cleaned; on Windows the comparison ignores case.
+QStringList builtLevelCacheFoldersToSweep(const BuiltLevelCacheSettings& next,
+                                          const BuiltLevelCacheSettings* previous);
 
 } // namespace slideio::viewer::ui

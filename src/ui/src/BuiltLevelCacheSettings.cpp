@@ -1,5 +1,6 @@
 #include "slideio/viewer/ui/BuiltLevelCacheSettings.h"
 
+#include <QDir>
 #include <QSettings>
 #include <QStandardPaths>
 
@@ -49,6 +50,23 @@ void saveBuiltLevelCacheSettings(QSettings& settings, const BuiltLevelCacheSetti
     settings.setValue(kEnabledKey, value.enabled);
     settings.setValue(kFolderKey, value.folder);
     settings.setValue(kRetentionKey, clampCacheRetentionDays(value.retentionDays));
+}
+
+QStringList builtLevelCacheFoldersToSweep(const BuiltLevelCacheSettings& next, const BuiltLevelCacheSettings* previous)
+{
+#ifdef Q_OS_WIN
+    constexpr Qt::CaseSensitivity kPathCase = Qt::CaseInsensitive;
+#else
+    constexpr Qt::CaseSensitivity kPathCase = Qt::CaseSensitive;
+#endif
+    QStringList folders{QDir::cleanPath(resolveBuiltLevelCacheFolder(next.folder))};
+    if (previous != nullptr) {
+        const QString before = QDir::cleanPath(resolveBuiltLevelCacheFolder(previous->folder));
+        if (before.compare(folders.front(), kPathCase) != 0) {
+            folders.append(before);
+        }
+    }
+    return folders;
 }
 
 } // namespace slideio::viewer::ui
