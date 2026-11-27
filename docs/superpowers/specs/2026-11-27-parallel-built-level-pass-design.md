@@ -103,8 +103,10 @@ Anti-goals
   (released by the test on cancel) returns within 2 s and leaves nothing running.
 - Unreliable mid-build with 4 readers: abandoned exactly as with 1 (no overview,
   unbuilt tiles read as errors).
-- All existing BuiltPyramidSource tests pass unchanged (they run with the
-  default reader count).
+- Three pre-existing tests were pinned to readers=1, because their assertions
+  encode one-read-at-a-time ordering; the rest pass unchanged at the default
+  reader count. A new 4-reader mode-change test covers a colour-mode toggle
+  during a parallel build.
 
 ## 6. Manual check (group AP)
 
@@ -124,6 +126,10 @@ over the slot ring is enough), whether readers are `std::thread`s owned by
 
 | Check | Result |
 |-------|--------|
-| AP1 build time and responsiveness on `PIT_01_00248_01.tiff` | not run |
-| AP2 close mid-build | not run |
-| AP3 colour-management toggle mid-build | not run |
+| AP1 build time and responsiveness on `PIT_01_00248_01.tiff` | pass (controller, 2026-11-27): PIT_01_00248_01.tiff, cache off, 4 readers on a 24-thread machine: 22 598 ms vs 60 290 ms single-reader baseline (2.7x); responsiveness during the build not judged (no GUI input on the shared desktop) |
+| AP2 close mid-build | not run (needs GUI input) |
+| AP3 colour-management toggle mid-build | not run (needs GUI input) |
+
+Note: on a source whose reads serialise (e.g. a striped GDAL TIFF, per-file mutex in
+SlideIO), 4 readers queue up to 4 chunk reads ahead of the user's tiles, and a
+close/toggle join can wait up to 4 chunk reads.

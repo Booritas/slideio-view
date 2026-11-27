@@ -23,7 +23,7 @@
 
 ## Review Focus
 
-1. **A reader throws something other than std::exception, or `run()` throws between spawning and joining readers** — must never leave a joinable `std::thread` (that is `std::terminate`). Pinned in Task 1 (exception during feed test).
+1. **A reader throws something other than std::exception, or `run()` throws between spawning and joining readers** — must never leave a joinable `std::thread` (that is `std::terminate`). Covered structurally: the reader pool is a std::optional on run()'s stack, destroyed during unwinding before the catch; the reader-side non-std throw is tested.
 2. **Close while every reader is blocked inside `readBlock`** — the destructor must return once the reads return, with no reader left waiting on the window forever. Pinned in Task 1.
 3. **The last band narrower than the window / a slide with fewer chunks than readers** — readers must exit cleanly. Pinned in Task 1 (tiny slide test).
 4. **Unreliable marked while several chunks are in flight** — none of them fed. Pinned in Task 1.

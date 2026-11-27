@@ -1915,7 +1915,8 @@ TEST_CASE("destroying during blocked reads returns promptly", "[infra][BuiltPyra
         destroyed = true;
     });
     // The destructor should be in its join when the reads return; no latch can
-    // observe that; releasing early lets readers start more reads before the cancel lands, which the bound below allows.
+    // observe that; releasing early lets readers start more reads before the
+    // cancel lands, which the bound below allows.
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     fake->release();
     destroyer.join();
@@ -1923,7 +1924,9 @@ TEST_CASE("destroying during blocked reads returns promptly", "[infra][BuiltPyra
     CHECK(destroyed.load());
     CHECK(elapsed < std::chrono::seconds(2));
     CHECK(callbacks.load() == 0);
-    // The four reads in flight plus at most the window (2 x 4) claimed before the cancel landed.
+    // Normally the cancel lands while all four readers are inside reads (count
+    // 4); <= 8 tolerates a cancel landing after the release but before the
+    // worker takes chunk 0, when readers may claim up to the window (8) more.
     CHECK(fake->calls().size() <= 8);
 }
 
