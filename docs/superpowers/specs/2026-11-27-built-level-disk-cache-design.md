@@ -311,3 +311,18 @@ default) and round trip through a temporary `QSettings`.
   start) and the header's exact JSON layout (nlohmann is core-PRIVATE; infra may
   use Qt's JSON).
 - Whether `lastUsed` is a separate small file or the header's modification time.
+
+## 10. Results
+
+| Check | Result | Notes |
+| --- | --- | --- |
+| AO1 | pass (smoke, 2026-11-27) | cache off, a scratch-installed build opened PIT_01_00248_01.tiff, no cache log lines, no level-cache folder created |
+| AO2 | not run | |
+| AO3 | not run | |
+| AO4 | not run | |
+| AO5 | not run | |
+| AO6 | not run | |
+| AO7 | not run | |
+| AO8 | not run | |
+| AO9 | not run | |
+| AO10 | not run | |
