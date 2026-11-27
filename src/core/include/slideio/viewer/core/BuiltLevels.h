@@ -36,6 +36,9 @@ BuiltLevelPlan planBuiltLevels(const std::vector<LevelInfo>& stored, const Slide
 /// Index of the last level that is stored in the file, or -1.
 int coarsestStoredLevelIndex(const std::vector<LevelInfo>& levels);
 
+/// True when any level is one the viewer builds rather than the file stores.
+bool hasBuiltLevels(const std::vector<LevelInfo>& levels);
+
 /// One tile expressed in level pixels and in slide pixels.
 struct TileSlideRect
 {

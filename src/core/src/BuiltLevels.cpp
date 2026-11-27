@@ -16,6 +16,11 @@ int coarsestStoredLevelIndex(const std::vector<LevelInfo>& levels)
     return -1;
 }
 
+bool hasBuiltLevels(const std::vector<LevelInfo>& levels)
+{
+    return std::any_of(levels.begin(), levels.end(), [](const LevelInfo& l) { return l.built; });
+}
+
 BuiltLevelPlan planBuiltLevels(const std::vector<LevelInfo>& stored, const SlideInfo& info,
                                size_t budgetBytes, int defaultTileSize)
 {

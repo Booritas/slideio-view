@@ -130,6 +130,9 @@ public:
 
     void setChannelSettings(const std::vector<core::ChannelInfo>& channels);
     const core::SlideInfo& slideInfo() const;
+    /// True while the open slide's viewer-built levels are still being built in
+    /// the current colour mode; false with no slide or nothing to build.
+    bool builtOverviewPending() const;
 
     void setZSlice(int zIndex);
     void setTFrame(int tFrame);

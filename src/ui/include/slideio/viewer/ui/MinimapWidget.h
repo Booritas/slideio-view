@@ -32,6 +32,11 @@ public:
     // The widget then says so instead of showing an empty placeholder.
     void setOverviewAvailable(bool available);
 
+    // True while the viewer is building the overview from its own pyramid
+    // levels. With no thumbnail yet the panel then reads "Building overview..."
+    // instead of the unavailable notice. clearThumbnail() resets it to false.
+    void setOverviewBuilding(bool building);
+
 signals:
     void navigationRequested(double slideCenterX, double slideCenterY);
 
@@ -49,6 +54,7 @@ private:
 
     QImage m_thumbnail;
     bool m_overviewAvailable = true;
+    bool m_overviewBuilding = false;
     core::Viewport m_viewport;
     int m_slideWidth;
     int m_slideHeight;

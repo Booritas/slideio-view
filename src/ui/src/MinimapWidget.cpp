@@ -62,6 +62,7 @@ void MinimapWidget::clearThumbnail()
 {
     m_thumbnail = QImage();
     m_overviewAvailable = true;
+    m_overviewBuilding = false;
     update();
 }
 
@@ -71,6 +72,15 @@ void MinimapWidget::setOverviewAvailable(bool available)
         return;
     }
     m_overviewAvailable = available;
+    update();
+}
+
+void MinimapWidget::setOverviewBuilding(bool building)
+{
+    if (m_overviewBuilding == building) {
+        return;
+    }
+    m_overviewBuilding = building;
     update();
 }
 
@@ -99,7 +109,16 @@ void MinimapWidget::paintEvent(QPaintEvent* /*event*/)
                          height() - 2.0 * m_displayOffset.y());
         painter.fillRect(slideRect, QColor(80, 80, 80));
 
-        if (!m_overviewAvailable) {
+        if (m_overviewBuilding) {
+            // The overview is coming: say so rather than the unavailable notice.
+            painter.setPen(QColor(220, 220, 220));
+            QFont noticeFont = painter.font();
+            noticeFont.setPointSizeF(std::max(6.0, noticeFont.pointSizeF() - 1.0));
+            painter.setFont(noticeFont);
+            painter.drawText(slideRect.adjusted(4, 4, -4, -4),
+                             Qt::AlignCenter | Qt::TextWordWrap,
+                             QString::fromUtf8("Building overview…"));
+        } else if (!m_overviewAvailable) {
             // Say why the overview is missing rather than leaving a blank
             // rectangle the user would read as "still loading".
             painter.setPen(QColor(220, 220, 220));

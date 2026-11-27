@@ -131,6 +131,17 @@ TEST_CASE("coarsestStoredLevelIndex skips built levels", "[core][BuiltLevels]")
     CHECK(coarsestStoredLevelIndex({}) == -1);
 }
 
+TEST_CASE("hasBuiltLevels is true only when a built level is present", "[core][BuiltLevels]")
+{
+    LevelInfo stored;
+    LevelInfo built;
+    built.built = true;
+    CHECK(hasBuiltLevels({stored, built}));
+    CHECK(hasBuiltLevels({built}));
+    CHECK_FALSE(hasBuiltLevels({stored, stored}));
+    CHECK_FALSE(hasBuiltLevels({}));
+}
+
 TEST_CASE("tileSlideRect matches the adapter's arithmetic", "[core][BuiltLevels]")
 {
     LevelInfo level = storedLevel(5, 1994, 1407);

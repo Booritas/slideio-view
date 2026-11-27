@@ -577,6 +577,150 @@ QImage tileDataToQImage(const slideio::viewer::core::TileData& block,
     return out;
 }
 
+// Converts native-type pixels to the minimap's 8-bit image: the per-channel mix /
+// RGB / grayscale rules shared by the open-time thumbnail and the overview built
+// from the viewer-built pyramid levels, so the two cannot drift.
+//
+// Uses the same per-channel display ranges as the viewport's multi-channel render
+// path (each channel stretched independently), so the minimap and viewport show
+// matching colors. Falls back to the global range for single-channel rendering or
+// when per-channel ranges weren't detected. All visible channels are mixed with
+// ChannelInfo::colorR/G/B * intensity to mirror the viewport's channelShader path;
+// a naive src[0]->R / src[1]->G / src[2]->B copy would swap R and B on 3-channel
+// brightfield CZIs whose BGR planes SlideIO labels blue/green/red.
+class OverviewRenderer
+{
+public:
+    OverviewRenderer(const slideio::viewer::core::SlideInfo& info, double globalMin, double globalMax)
+        : m_numCh(info.numChannels)
+        , m_dt(info.channelDataType)
+        , m_isBrightfield(info.isBrightfield)
+        , m_globalMin(globalMin)
+        , m_globalMax(globalMax)
+    {
+        auto channelMinFor = [&](int ch) {
+            const size_t ch_z = static_cast<size_t>(ch);
+            if (m_numCh > 1 && ch < static_cast<int>(info.channels.size())
+                && info.channels[ch_z].displayRange.autoDetected) {
+                return info.channels[ch_z].displayRange.displayMin;
+            }
+            return globalMin;
+        };
+        auto channelMaxFor = [&](int ch) {
+            const size_t ch_z = static_cast<size_t>(ch);
+            if (m_numCh > 1 && ch < static_cast<int>(info.channels.size())
+                && info.channels[ch_z].displayRange.autoDetected) {
+                return info.channels[ch_z].displayRange.displayMax;
+            }
+            return globalMax;
+        };
+        m_rMin = channelMinFor(0); m_rMax = channelMaxFor(0);
+        m_gMin = channelMinFor(1); m_gMax = channelMaxFor(1);
+        m_bMin = channelMinFor(2); m_bMax = channelMaxFor(2);
+
+        m_useChannelMix = !(info.isBrightfield && m_numCh <= 1) && m_numCh >= 1;
+        if (m_useChannelMix) {
+            m_mix.resize(static_cast<size_t>(m_numCh));
+            for (int ch = 0; ch < m_numCh; ++ch) {
+                const size_t ch_z = static_cast<size_t>(ch);
+                ChannelMix& m = m_mix[ch_z];
+                m.minVal = channelMinFor(ch);
+                m.maxVal = channelMaxFor(ch);
+                if (ch < static_cast<int>(info.channels.size())) {
+                    const auto& chInfo = info.channels[ch_z];
+                    if (!chInfo.visible) continue;
+                    float intensity = std::clamp(chInfo.intensity, 0.0f, 4.0f);
+                    m.r = chInfo.colorR * intensity;
+                    m.g = chInfo.colorG * intensity;
+                    m.b = chInfo.colorB * intensity;
+                    m.active = true;
+                }
+            }
+        }
+    }
+
+    QImage::Format format() const
+    {
+        return (m_useChannelMix || m_numCh >= 3) ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
+    }
+
+    // Writes the pixel at column x of scanline `row`; srcElem is the element
+    // index of the pixel's first channel in `src`, srcCh its channel count.
+    void writePixel(uint8_t* row, int x, const uint8_t* src, size_t srcElem, int srcCh) const
+    {
+        if (m_useChannelMix) {
+            uint8_t* dst = row + x * 3;
+            float accR = 0.0f, accG = 0.0f, accB = 0.0f;
+            const int upTo = std::min(m_numCh, srcCh);
+            for (int ch = 0; ch < upTo; ++ch) {
+                const ChannelMix& m = m_mix[static_cast<size_t>(ch)];
+                if (!m.active) continue;
+                float v = static_cast<float>(mapPixelNormalized(
+                    src, srcElem + static_cast<size_t>(ch), m_dt, m.minVal, m.maxVal));
+                accR += v * m.r;
+                accG += v * m.g;
+                accB += v * m.b;
+            }
+            dst[0] = static_cast<uint8_t>(std::clamp(accR * 255.0f, 0.0f, 255.0f));
+            dst[1] = static_cast<uint8_t>(std::clamp(accG * 255.0f, 0.0f, 255.0f));
+            dst[2] = static_cast<uint8_t>(std::clamp(accB * 255.0f, 0.0f, 255.0f));
+        } else if (m_numCh >= 3) {
+            uint8_t* dst = row + x * 3;
+            dst[0] = mapPixelToUint8(src, srcElem + 0, m_dt, m_rMin, m_rMax);
+            dst[1] = mapPixelToUint8(src, srcElem + 1, m_dt, m_gMin, m_gMax);
+            dst[2] = mapPixelToUint8(src, srcElem + 2, m_dt, m_bMin, m_bMax);
+        } else {
+            row[x] = mapPixelToUint8(src, srcElem, m_dt, m_globalMin, m_globalMax);
+        }
+    }
+
+    // Renders a whole block (width x height pixels, block.numChannels() channels).
+    QImage render(const slideio::viewer::core::TileData& block) const
+    {
+        if (block.isEmpty() || block.isError()) return {};
+        const int w = block.width();
+        const int h = block.height();
+        if (w <= 0 || h <= 0) return {};
+        QImage img(w, h, format());
+        img.fill(m_isBrightfield ? Qt::white : Qt::black);
+        const uint8_t* src = block.buffer().data();
+        const int srcCh = block.numChannels();
+        for (int y = 0; y < h; ++y) {
+            uint8_t* row = img.scanLine(y);
+            for (int x = 0; x < w; ++x) {
+                writePixel(row, x, src, static_cast<size_t>((y * w + x) * srcCh), srcCh);
+            }
+        }
+        return img;
+    }
+
+private:
+    struct ChannelMix
+    {
+        double minVal = 0.0;
+        double maxVal = 1.0;
+        float r = 1.0f, g = 1.0f, b = 1.0f;  // colorR/G/B * intensity, premultiplied
+        bool active = false;
+    };
+
+    int m_numCh;
+    DataType m_dt;
+    bool m_isBrightfield;
+    double m_globalMin, m_globalMax;
+    double m_rMin = 0, m_rMax = 0, m_gMin = 0, m_gMax = 0, m_bMin = 0, m_bMax = 0;
+    bool m_useChannelMix = false;
+    std::vector<ChannelMix> m_mix;
+};
+
+// The overview of a block as the minimap shows it, from SlideInfo alone: the
+// global range is the slide's display range. (The open-time path passes its own
+// local global range to OverviewRenderer directly.)
+QImage renderOverviewImage(const slideio::viewer::core::TileData& block,
+                           const slideio::viewer::core::SlideInfo& info)
+{
+    return OverviewRenderer(info, info.displayRange.displayMin, info.displayRange.displayMax).render(block);
+}
+
 // Fallback used when readBlock fails (e.g., a single corrupted tile at the
 // pyramid level SlideIO picked taints the whole resampled read). Walks the
 // coarsest level tile-by-tile through the source, skipping individual tile
@@ -788,8 +932,7 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
     // A slide that gets built levels is one whose coarsest stored level is too
     // large to read whole cheaply; its overview comes from the build once that
     // completes, so the whole-slide readBlock below is skipped.
-    const bool hasBuiltLevels = std::any_of(pyramidLevels.begin(), pyramidLevels.end(),
-                                            [](const core::LevelInfo& l) { return l.built; });
+    const bool hasBuiltLevels = core::hasBuiltLevels(pyramidLevels);
 
     // A pyramid's coarsest level is a handful of tiles, so it gets read whole.
     // A slide with no downsampled level has only its full-resolution level:
@@ -1178,118 +1321,21 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
         return;
     }
 
-    // Thumbnail uses the same per-channel display ranges as the viewport's
-    // multi-channel render path (where each channel is stretched independently),
-    // so the minimap and viewport show matching colors. Falls back to global
-    // range for single-channel rendering or when per-channel ranges weren't
-    // detected.
-    auto channelMinFor = [&](int ch) {
-        const size_t ch_z = static_cast<size_t>(ch);
-        if (numCh > 1 && ch < static_cast<int>(slideInfo.channels.size())
-            && slideInfo.channels[ch_z].displayRange.autoDetected) {
-            return slideInfo.channels[ch_z].displayRange.displayMin;
-        }
-        return globalMin;
-    };
-    auto channelMaxFor = [&](int ch) {
-        const size_t ch_z = static_cast<size_t>(ch);
-        if (numCh > 1 && ch < static_cast<int>(slideInfo.channels.size())
-            && slideInfo.channels[ch_z].displayRange.autoDetected) {
-            return slideInfo.channels[ch_z].displayRange.displayMax;
-        }
-        return globalMax;
-    };
-    double rMin = channelMinFor(0), rMax = channelMaxFor(0);
-    double gMin = channelMinFor(1), gMax = channelMaxFor(1);
-    double bMin = channelMinFor(2), bMax = channelMaxFor(2);
-
-    // Mix all visible channels using ChannelInfo::colorR/G/B * intensity to
-    // mirror the viewport's channelShader path (which is taken whenever the
-    // viewport does not use its single-channel-brightfield fast path). This
-    // matters for 3-channel brightfield CZIs where SlideIO labels the BGR
-    // planes with channel colors blue/green/red — a naive src[0]→R / src[1]→G
-    // / src[2]→B copy would swap R and B and the minimap would not match the
-    // viewport.
-    const bool useChannelMix = !(slideInfo.isBrightfield && numCh <= 1) && numCh >= 1;
-    struct ChannelMix
-    {
-        double minVal = 0.0;
-        double maxVal = 1.0;
-        float r = 1.0f, g = 1.0f, b = 1.0f;  // colorR/G/B * intensity, premultiplied
-        bool active = false;
-    };
-    std::vector<ChannelMix> mix;
-    if (useChannelMix) {
-        mix.resize(static_cast<size_t>(numCh));
-        for (int ch = 0; ch < numCh; ++ch) {
-            const size_t ch_z = static_cast<size_t>(ch);
-            ChannelMix& m = mix[ch_z];
-            m.minVal = channelMinFor(ch);
-            m.maxVal = channelMaxFor(ch);
-            if (ch < static_cast<int>(slideInfo.channels.size())) {
-                const auto& chInfo = slideInfo.channels[ch_z];
-                if (!chInfo.visible) continue;
-                float intensity = std::clamp(chInfo.intensity, 0.0f, 4.0f);
-                m.r = chInfo.colorR * intensity;
-                m.g = chInfo.colorG * intensity;
-                m.b = chInfo.colorB * intensity;
-                m.active = true;
-            }
-        }
-    }
-
-    auto writeMixedPixel = [&](uint8_t* dst, const uint8_t* src, size_t srcElem, int srcCh) {
-        float accR = 0.0f, accG = 0.0f, accB = 0.0f;
-        const int upTo = std::min(numCh, srcCh);
-        for (int ch = 0; ch < upTo; ++ch) {
-            const ChannelMix& m = mix[static_cast<size_t>(ch)];
-            if (!m.active) continue;
-            float v = static_cast<float>(mapPixelNormalized(
-                src, srcElem + static_cast<size_t>(ch), dt, m.minVal, m.maxVal));
-            accR += v * m.r;
-            accG += v * m.g;
-            accB += v * m.b;
-        }
-        dst[0] = static_cast<uint8_t>(std::clamp(accR * 255.0f, 0.0f, 255.0f));
-        dst[1] = static_cast<uint8_t>(std::clamp(accG * 255.0f, 0.0f, 255.0f));
-        dst[2] = static_cast<uint8_t>(std::clamp(accB * 255.0f, 0.0f, 255.0f));
-    };
-
-    // Pass 2: build the thumbnail QImage. Read the whole slide resampled to
-    // the target thumbnail resolution via SlideIO (it picks the best pyramid
-    // level internally). This gives a sharp thumbnail even when the coarsest
-    // pyramid level itself is very small (e.g., 200x160) — much sharper than
-    // upscaling from the coarsest tiles.
-    QImage::Format imgFmt = (useChannelMix || numCh >= 3)
-        ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
-    QImage thumbImg(thumbW, thumbH, imgFmt);
-    thumbImg.fill(slideInfo.isBrightfield ? Qt::white : Qt::black);
+    // The thumbnail is converted by the same OverviewRenderer the built-level
+    // overview uses, so the two cannot drift. globalMin/globalMax are locals of
+    // this function (not always equal to slideInfo.displayRange), hence passed.
+    const OverviewRenderer renderer(slideInfo, globalMin, globalMax);
 
     // blockData was read above (before display-range autodetection so its
-    // contents can serve as a fallback source for the min/max scan).
+    // contents can serve as a fallback source for the min/max scan). Read as
+    // the whole slide resampled to the target thumbnail resolution via SlideIO
+    // (it picks the best pyramid level internally), which is sharper than
+    // upscaling from very small coarsest tiles.
     if (blockUsable) {
-        const uint8_t* src = blockData.buffer().data();
-        int srcCh = blockData.numChannels();
-        for (int y = 0; y < thumbH; ++y) {
-            uint8_t* dst = thumbImg.scanLine(y);
-            for (int x = 0; x < thumbW; ++x) {
-                size_t srcElem = static_cast<size_t>((y * thumbW + x) * srcCh);
-                if (useChannelMix) {
-                    writeMixedPixel(dst + x * 3, src, srcElem, srcCh);
-                } else if (numCh >= 3) {
-                    int dstIdx = x * 3;
-                    dst[dstIdx + 0] = mapPixelToUint8(src, srcElem + 0, dt, rMin, rMax);
-                    dst[dstIdx + 1] = mapPixelToUint8(src, srcElem + 1, dt, gMin, gMax);
-                    dst[dstIdx + 2] = mapPixelToUint8(src, srcElem + 2, dt, bMin, bMax);
-                } else {
-                    dst[x] = mapPixelToUint8(src, srcElem, dt, globalMin, globalMax);
-                }
-            }
-        }
-        thumbnailOut = thumbImg;
+        thumbnailOut = renderer.render(blockData);
     } else {
         // Fallback: assemble from the coarsest tiles we already have
-        QImage levelImg(coarseLvl.width, coarseLvl.height, imgFmt);
+        QImage levelImg(coarseLvl.width, coarseLvl.height, renderer.format());
         levelImg.fill(slideInfo.isBrightfield ? Qt::white : Qt::black);
         int tileIdx = 0;
         for (int r = 0; r < coarseLvl.tilesY; ++r) {
@@ -1306,16 +1352,7 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
                     uint8_t* dst = levelImg.scanLine(tileY0 + y);
                     for (int x = 0; x < tw && (tileX0 + x) < coarseLvl.width; ++x) {
                         size_t srcElem = static_cast<size_t>((y * tw + x) * tCh);
-                        if (useChannelMix) {
-                            writeMixedPixel(dst + (tileX0 + x) * 3, src, srcElem, tCh);
-                        } else if (numCh >= 3) {
-                            int dstIdx = (tileX0 + x) * 3;
-                            dst[dstIdx + 0] = mapPixelToUint8(src, srcElem + 0, dt, rMin, rMax);
-                            dst[dstIdx + 1] = mapPixelToUint8(src, srcElem + 1, dt, gMin, gMax);
-                            dst[dstIdx + 2] = mapPixelToUint8(src, srcElem + 2, dt, bMin, bMax);
-                        } else {
-                            dst[tileX0 + x] = mapPixelToUint8(src, srcElem, dt, globalMin, globalMax);
-                        }
+                        renderer.writePixel(dst, tileX0 + x, src, srcElem, tCh);
                     }
                 }
             }
@@ -4568,9 +4605,34 @@ void ViewportWidget::setColorMode(core::ColorMode mode)
 
 void ViewportWidget::onBuiltLevelsComplete()
 {
-    // Deliberately empty for now: the overview built from the smallest built
-    // level, and the builtOverviewReady emission, are rendered here once the
-    // minimap side lands (spec 2026-11-27 section 5.5).
+    // The overview of a slide with built levels is its smallest built level,
+    // rendered here with the channel settings the viewport holds now, so edits
+    // made since the open apply (spec 2026-11-27 section 5.5). A colour-mode
+    // toggle restarts the build and lands here again on its completion; the
+    // minimap is deliberately not cleared on the toggle -- the old overview
+    // stays until this re-emission replaces it.
+    const auto built = std::dynamic_pointer_cast<infra::BuiltPyramidSource>(m_impl->slideSource);
+    if (!built) {
+        return;
+    }
+    const core::TileData raster = built->smallestBuiltLevel();
+    if (raster.isEmpty() || raster.isError()) {
+        return;
+    }
+    QImage img = renderOverviewImage(raster, m_impl->slideInfo);
+    if (img.isNull()) {
+        return;
+    }
+    constexpr int kMaxThumbDim = 1000;
+    if (img.width() > kMaxThumbDim || img.height() > kMaxThumbDim) {
+        img = img.scaled(kMaxThumbDim, kMaxThumbDim, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+    emit builtOverviewReady(img);
+}
+
+bool ViewportWidget::builtOverviewPending() const
+{
+    return m_impl->slideSource && m_impl->slideSource->builtOverviewPending();
 }
 
 core::ColorProfileInfo ViewportWidget::activeColorProfileInfo() const

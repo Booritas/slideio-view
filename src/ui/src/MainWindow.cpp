@@ -1315,6 +1315,16 @@ struct MainWindow::Impl
                 // level, so tell the minimap to explain the empty panel
                 // rather than leaving a blank grey rectangle.
                 minimapWidget->setOverviewAvailable(info.overviewAvailable);
+                // A slide with viewer-built levels opens with no thumbnail and
+                // gets one when the build completes; until then say so.
+                minimapWidget->setOverviewBuilding(viewportWidget->builtOverviewPending());
+            });
+
+        QObject::connect(viewportWidget, &ViewportWidget::builtOverviewReady, owner,
+            [this](const QImage& overview) {
+                minimapWidget->setThumbnail(overview);
+                minimapWidget->setOverviewAvailable(true);
+                minimapWidget->setOverviewBuilding(false);
             });
 
         QObject::connect(viewportWidget, &ViewportWidget::thumbnailReady, owner,
