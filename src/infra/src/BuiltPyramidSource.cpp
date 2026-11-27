@@ -133,9 +133,12 @@ bool BuiltPyramidSource::hasBuiltLevels() const
 
 core::TileData BuiltPyramidSource::smallestBuiltLevel() const
 {
-    if (sourceUnreliable()) {
-        return {};
-    }
+    // No sourceUnreliable() test here, deliberately. The flag abandons a build
+    // still reading the source; levels that FINISHED -- built in full, or
+    // loaded from the cache, which only ever holds a build with no failed read
+    // -- came from reads that all succeeded, and their tiles keep being served
+    // as Ready. Withholding their overview would leave the minimap disagreeing
+    // with the slide. An abandoned build never completes, so it is withheld below.
     std::shared_lock<std::shared_mutex> state(m_stateMutex);
     if (!m_complete || !m_accumulator) {
         return {};

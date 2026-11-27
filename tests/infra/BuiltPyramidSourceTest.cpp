@@ -1478,6 +1478,44 @@ TEST_CASE("an abandoned build is not saved", "[infra][BuiltPyramidSource][cache]
     CHECK(store->saves() == 0);
 }
 
+TEST_CASE("finished levels keep their overview when the source is marked unreliable later",
+          "[infra][BuiltPyramidSource][cache]")
+{
+    // One rule for finished levels, built or loaded: the tiles stay Ready, so
+    // the overview is published too and the minimap agrees with the slide.
+    auto store = std::make_shared<MemoryStore>();
+    auto fakeA = std::make_shared<FakeSource>();
+    BuiltPyramidSource a(fakeA);
+    a.setLevelStore(store, cacheIdentity(), cacheDescription());
+    Progress progressA;
+    progressA.attach(a);
+    a.start();
+    REQUIRE(progressA.waitForCompletes(1));
+    REQUIRE(store->waitForCompletedSaves(1));
+
+    SECTION("a completed build")
+    {
+        fakeA->markUnreliable(0);
+        CHECK_FALSE(a.readTile(TileKey(2, 0, 0)).isError());
+        CHECK(a.smallestBuiltLevel().byteSize() == static_cast<size_t>(1025) * 750);
+    }
+    SECTION("a cache hit")
+    {
+        auto fakeB = std::make_shared<FakeSource>();
+        BuiltPyramidSource b(fakeB);
+        b.setLevelStore(store, cacheIdentity(), cacheDescription());
+        Progress progressB;
+        progressB.attach(b);
+        b.start();
+        REQUIRE(progressB.waitForCompletes(1));
+        REQUIRE(store->hits() == 1);
+
+        fakeB->markUnreliable(0);
+        CHECK_FALSE(b.readTile(TileKey(2, 0, 0)).isError());
+        CHECK(b.smallestBuiltLevel().byteSize() == static_cast<size_t>(1025) * 750);
+    }
+}
+
 TEST_CASE("each colour mode has its own entry", "[infra][BuiltPyramidSource][cache]")
 {
     auto store = std::make_shared<MemoryStore>();
