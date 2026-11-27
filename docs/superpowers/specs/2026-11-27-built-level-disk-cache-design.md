@@ -62,8 +62,9 @@ Anti-goals — what would make this a failure even if it works:
   colour rendition or profile.
 - **A cache that changes the pixels.** Built levels are exact box averages; the
   cache must be lossless.
-- **Writing identifying information to disk without need.** Slides can be
-  patient-linked; see §6.
+- **A cache whose entries nobody can trace back to a slide.** An entry names
+  the slide it came from (§5.2), so a person inspecting the folder can tell
+  what is in it; see §6.
 - **Making the open slower or fragile** when the cache is off, missing, corrupt,
   full or unwritable. Every cache failure degrades to building, with one log line.
 
@@ -147,8 +148,17 @@ verbatim in the entry's header and **compared field by field on load**; any
 difference is a miss. The hash only names the directory; the header comparison
 is what prevents a collision from showing the wrong slide.
 
-No file path, file name or other text from the slide is part of the key or the
-header (§6).
+The header also **describes** the slide, for whoever inspects the folder and
+for the log lines that report a hit, miss or save: the opened path and file
+name, the driver ID, the scene index and name, the slide's level-0 size,
+magnification and pixel size, the file size and modification time in readable
+form, and when the entry was written. These descriptive fields are **not** part
+of the key and are **not** compared on load, so a slide that was moved or
+renamed still hits; the comparison is over the key fields above only. The
+slide's raw metadata text is not copied (an OME-XML block can be megabytes and
+adds nothing a person needs to recognise the slide). The owner's decision,
+2026-11-27: the viewer runs in a secure environment, so paths and metadata need
+not be kept out of the cache.
 
 ### 5.3 The store (infra)
 
@@ -228,13 +238,19 @@ personal data under **GDPR**; the cache is data at rest that outlives the
 session. The design keeps that to what the feature needs:
 
 - **Off by default**; enabling it is a user decision in Preferences.
-- **No identifiers written**: entries carry no file path, file name, label or
-  macro image, metadata text or annotation — only hashes, geometry and pixels of
-  the built levels. Associated images are never built and never cached.
+- **What an entry holds**: the built levels' pixels, the key fields, and the
+  descriptive fields of §5.2 (path, file name, driver, scene, size,
+  calibration). It holds no label or macro image, no raw metadata text and no
+  annotation; associated images are never built and never cached.
 - **Storage limitation**: retention deletes entries after the configured number
   of days of disuse (GDPR art. 5(1)(e)); the default folder is under the user's
   own local application data, readable by that user only by default on Windows.
-- **Not encrypted — the owner's decision, 2026-11-27.**
+- **Not encrypted, and paths and metadata not withheld — the owner's decisions,
+  2026-11-27**, on the grounds that the viewer is installed in a secure
+  environment. The HIPAA Security Rule's device-and-media and access-control
+  safeguards (§164.310(d), §164.312(a)) and GDPR's storage limitation are then
+  met by that environment and by retention, not by the cache itself; a
+  deployment outside such an environment should revisit both decisions.
 
 ## 7. Tests
 
@@ -283,8 +299,9 @@ default) and round trip through a temporary `QSettings`.
   restart: the entry is deleted; other files in the folder are untouched.
 - AO8 Point the folder at an unwritable location: the slide opens and builds
   normally; one warning in the log; nothing else.
-- AO9 Inspect an entry: no file name, path or slide text appears in any file of
-  it.
+- AO9 Inspect an entry: its header names the opened path, file name, driver
+  and scene; move the slide file to another folder and reopen it: the entry
+  still hits, and the header keeps the path it was written with.
 - AO10 Disk usage of the example slide's entry, recorded (Raw and Managed).
 
 ## 9. Left to the builder
