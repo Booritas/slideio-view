@@ -7,6 +7,7 @@ add_library(slideio-viewer-infra STATIC
     src/QSettingsCalibrationOverrideStore.cpp
     src/QSettingsAnnotationCategoryStore.cpp
     src/JsonAnnotationRepository.cpp
+    src/BuiltPyramidSource.cpp
 )
 
 target_include_directories(slideio-viewer-infra PUBLIC

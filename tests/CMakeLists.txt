@@ -73,6 +73,7 @@ add_executable(slideio-viewer-infra-tests
     infra/QSettingsCalibrationOverrideStoreTest.cpp
     infra/QSettingsAnnotationCategoryStoreTest.cpp
     infra/JsonAnnotationRepositoryTest.cpp
+    infra/BuiltPyramidSourceTest.cpp
 )
 
 target_link_libraries(slideio-viewer-infra-tests
