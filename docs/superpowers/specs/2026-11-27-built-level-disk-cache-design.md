@@ -119,6 +119,9 @@ read and written through the application's `QSettings` under `levelCache/`
 pure function so ui-tests reach them. Like `AnnotationSettings`' workspace, the
 instance reads the store once at startup and changes only through the
 Preferences dialog; a change applies to the **next** slide opened.
+`MainWindow` keeps that copy as a member: the dialog is fed the member, not a
+fresh read of the shared store, and its OK updates the member and writes the
+store.
 
 ### 5.2 The cache key (core, pure)
 
@@ -126,6 +129,8 @@ An entry is identified by a key computed from everything that determines its
 pixels:
 
 - the existing slide ID, the scene index;
+- the driver ID the slide was opened through, since a file opened through a
+  forced different driver can decode differently;
 - the file's size **and last-modified time** (both from the file system at
   open), so a file changed in place gets a new key;
 - the source level's index, width, height, channel count and data type, and the
@@ -150,7 +155,7 @@ is what prevents a collision from showing the wrong slide.
 
 The header also **describes** the slide, for whoever inspects the folder and
 for the log lines that report a hit, miss or save: the opened path and file
-name, the driver ID, the scene index and name, the slide's level-0 size,
+name, the driver ID (also a key field), the scene index and name, the slide's level-0 size,
 magnification and pixel size, the file size and modification time in readable
 form, and when the entry was written. These descriptive fields are **not** part
 of the key and are **not** compared on load, so a slide that was moved or
@@ -178,7 +183,12 @@ file is detected rather than displayed.
   and the build runs as today. A hit fills the accumulator's resident levels as
   complete (a new accumulator entry point taking finished rasters), marks the
   build complete and notifies, exactly as a finished build does. The entry's
-  `lastUsed` (a file in the entry, or the header's mtime) is touched.
+  `lastUsed` (a file in the entry, or the header's mtime) is touched. The load
+  polls the build's cancel flag between blocks, so a close or colour toggle
+  during it does not wait for the whole read; a cancelled load is not a miss,
+  leaves the entry in place and logs nothing above debug. Before a block is
+  decompressed, its 4-byte big-endian length prefix must equal the block
+  header's uncompressed size, or the entry is a miss.
 - **Save** (worker thread, after a build completes with **no failed rows** and
   was not cancelled or abandoned): write into `<folder>/<key>.tmp-<random>/`,
   then rename to `<folder>/<key>/`. If the rename fails because another
@@ -195,7 +205,10 @@ file is detected rather than displayed.
 `core::expiredCacheEntries(entries, now, retentionDays)` decides; the sweep in
 infra applies it. An entry expires when its last use is older than the
 retention time. The sweep runs on a background thread at application start and
-whenever the settings change, enumerates only directories whose names look like
+after every Preferences OK, over the configured folder **whether or not the
+cache is enabled** (the sweep never creates a folder, so a cache that is off
+still creates nothing); when Preferences changes the folder, the previous
+folder is swept once as well. It enumerates only directories whose names look like
 keys (and `*.tmp-*` directories older than a day, left by a crash), and deletes
 those. It never deletes anything else in the folder, so pointing the cache at a
 folder with other content is safe. Deleting entries by hand while the viewer
@@ -222,8 +235,9 @@ when all of these hold, null otherwise:
   `OMETIFF`, `QPTIFF`, `SCN`, `BIF`, `CZI`, `ZVI`, `LIF`, `ND2`), so a driver
   added later is excluded until someone decides;
 - the slide ID is not empty;
-- the open produced no open-time overview (`SlideInfo::overviewAvailable` is
-  false after the open-time pass). A colour toggle restarts the build in the new mode as
+- the open produced no open-time overview: the open-time pass returned no
+  thumbnail, the same signal that decides whether a built overview is
+  published (not `SlideInfo::overviewAvailable`, which can disagree with it). A colour toggle restarts the build in the new mode as
 today; with the cache on, the restart first tries that rendition's entry, so
 toggling back and forth after both renditions are cached costs two disk loads.
 
@@ -237,7 +251,9 @@ slide may be patient-linked, so a cache entry may be **PHI under HIPAA** and
 personal data under **GDPR**; the cache is data at rest that outlives the
 session. The design keeps that to what the feature needs:
 
-- **Off by default**; enabling it is a user decision in Preferences.
+- **Off by default**; enabling it is a user decision in Preferences. Turning
+  the cache off does not delete entries; they are deleted when their retention
+  runs out.
 - **What an entry holds**: the built levels' pixels, the key fields, and the
   descriptive fields of §5.2 (path, file name, driver, scene, size,
   calibration). It holds no label or macro image, no raw metadata text and no
