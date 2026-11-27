@@ -14,8 +14,7 @@ constexpr uint64_t kFnvOffsetB = 0x9ae16a3b2f90404fULL;
 
 uint64_t fnv1a(const std::string& bytes, uint64_t hash)
 {
-    for (unsigned char c : bytes)
-    {
+    for (unsigned char c : bytes) {
         hash ^= c;
         hash *= kFnvPrime;
     }
@@ -24,8 +23,7 @@ uint64_t fnv1a(const std::string& bytes, uint64_t hash)
 
 void appendU64(std::string& out, uint64_t v)
 {
-    for (int i = 0; i < 8; ++i)
-    {
+    for (int i = 0; i < 8; ++i) {
         out.push_back(static_cast<char>((v >> (8 * i)) & 0xFF));
     }
 }
@@ -45,8 +43,7 @@ std::string hex16(uint64_t v)
 {
     static const char kDigits[] = "0123456789abcdef";
     std::string out(16, '0');
-    for (int i = 15; i >= 0; --i)
-    {
+    for (int i = 15; i >= 0; --i) {
         out[static_cast<size_t>(i)] = kDigits[v & 0xF];
         v >>= 4;
     }
@@ -65,11 +62,9 @@ const std::array<uint32_t, 256>& crcTable()
 {
     static const std::array<uint32_t, 256> table = [] {
         std::array<uint32_t, 256> t{};
-        for (uint32_t i = 0; i < 256; ++i)
-        {
+        for (uint32_t i = 0; i < 256; ++i) {
             uint32_t c = i;
-            for (int k = 0; k < 8; ++k)
-            {
+            for (int k = 0; k < 8; ++k) {
                 c = (c & 1U) ? (0xEDB88320U ^ (c >> 1)) : (c >> 1);
             }
             t[i] = c;
@@ -100,8 +95,7 @@ std::optional<BuiltLevelCacheKey> builtLevelCacheKeyFor(const BuiltLevelCacheIde
                                                         const LevelInfo& source, int numChannels, DataType dataType,
                                                         const std::vector<int>& residentFactors, ColorMode mode)
 {
-    if (mode == ColorMode::Managed && identity.managedProfileFingerprint.empty())
-    {
+    if (mode == ColorMode::Managed && identity.managedProfileFingerprint.empty()) {
         return std::nullopt;
     }
     BuiltLevelCacheKey key;
@@ -117,8 +111,7 @@ std::optional<BuiltLevelCacheKey> builtLevelCacheKeyFor(const BuiltLevelCacheIde
     key.dataType = dataType;
     key.residentFactors = residentFactors;
     key.colorMode = mode;
-    if (mode == ColorMode::Managed)
-    {
+    if (mode == ColorMode::Managed) {
         key.profileFingerprint = identity.managedProfileFingerprint;
         key.renditionTag = identity.managedRenditionTag;
     }
@@ -140,8 +133,7 @@ std::string builtLevelCacheKeyName(const BuiltLevelCacheKey& key)
     appendInt(s, key.numChannels);
     appendInt(s, static_cast<int>(key.dataType));
     appendU64(s, key.residentFactors.size());
-    for (int f : key.residentFactors)
-    {
+    for (int f : key.residentFactors) {
         appendInt(s, f);
     }
     appendInt(s, static_cast<int>(key.colorMode));
@@ -154,13 +146,11 @@ std::string builtLevelCacheKeyName(const BuiltLevelCacheKey& key)
 
 std::string colorProfileFingerprint(const std::vector<uint8_t>& bytes)
 {
-    if (bytes.empty())
-    {
+    if (bytes.empty()) {
         return {};
     }
     uint64_t hash = kFnvOffsetA;
-    for (uint8_t b : bytes)
-    {
+    for (uint8_t b : bytes) {
         hash ^= b;
         hash *= kFnvPrime;
     }
@@ -171,8 +161,7 @@ uint32_t crc32(const uint8_t* data, size_t size)
 {
     const auto& table = crcTable();
     uint32_t c = 0xFFFFFFFFU;
-    for (size_t i = 0; i < size; ++i)
-    {
+    for (size_t i = 0; i < size; ++i) {
         c = table[(c ^ data[i]) & 0xFFU] ^ (c >> 8);
     }
     return c ^ 0xFFFFFFFFU;
@@ -180,14 +169,11 @@ uint32_t crc32(const uint8_t* data, size_t size)
 
 bool isCacheKeyName(std::string_view name)
 {
-    if (name.size() != kKeyNameLength)
-    {
+    if (name.size() != kKeyNameLength) {
         return false;
     }
-    for (char c : name)
-    {
-        if (!isLowerHexChar(c))
-        {
+    for (char c : name) {
+        if (!isLowerHexChar(c)) {
             return false;
         }
     }
@@ -197,8 +183,7 @@ bool isCacheKeyName(std::string_view name)
 bool isCacheTemporaryName(std::string_view name)
 {
     const size_t prefix = kKeyNameLength + kTempMarker.size();
-    if (name.size() <= prefix)
-    {
+    if (name.size() <= prefix) {
         return false;
     }
     return isCacheKeyName(name.substr(0, kKeyNameLength)) && name.substr(kKeyNameLength, kTempMarker.size()) == kTempMarker;
@@ -209,20 +194,14 @@ std::vector<std::string> expiredCacheEntries(const std::vector<CacheEntryFacts>&
 {
     std::vector<std::string> out;
     const int64_t keyMaxAge = static_cast<int64_t>(retentionDays) * 86400;
-    for (const auto& e : entries)
-    {
+    for (const auto& e : entries) {
         const int64_t age = nowSeconds - e.lastUsedSeconds;
-        if (isCacheKeyName(e.name))
-        {
-            if (age > keyMaxAge)
-            {
+        if (isCacheKeyName(e.name)) {
+            if (age > keyMaxAge) {
                 out.push_back(e.name);
             }
-        }
-        else if (isCacheTemporaryName(e.name))
-        {
-            if (age > kCacheTemporaryMaxAgeSeconds)
-            {
+        } else if (isCacheTemporaryName(e.name)) {
+            if (age > kCacheTemporaryMaxAgeSeconds) {
                 out.push_back(e.name);
             }
         }
@@ -237,10 +216,8 @@ bool isSingleFileDriver(std::string_view driverId)
     // the file opened, so a change to a companion would serve stale levels.
     static constexpr std::string_view kDrivers[] = {"GDAL", "SVS", "PHTIFF", "NDPI", "QPTIFF", "SCN",
                                                     "BIF",  "CZI", "ZVI",    "LIF",  "ND2"};
-    for (auto d : kDrivers)
-    {
-        if (d == driverId)
-        {
+    for (auto d : kDrivers) {
+        if (d == driverId) {
             return true;
         }
     }
