@@ -25,6 +25,7 @@ add_executable(slideio-viewer-core-tests
     core/AnnotationLayerTest.cpp
     core/WorkspaceSwitchPolicyTest.cpp
     core/LevelRasterTest.cpp
+    core/BuiltLevelsTest.cpp
     core/AnnotationTest.cpp
     core/Iso8601Test.cpp
     core/AnnotationSerializationTest.cpp

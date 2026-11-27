@@ -1,0 +1,61 @@
+#pragma once
+
+#include "slideio/viewer/core/TileKey.h"
+#include "slideio/viewer/core/Types.h"
+
+#include <cstddef>
+#include <functional>
+#include <vector>
+
+namespace slideio::viewer::core
+{
+
+/// Building stops at the first level no longer than this on its longer side.
+constexpr int kBuiltTopLevelMaxSide = 2048;
+
+/// Memory the resident built levels may occupy in total.
+constexpr size_t kBuiltLevelBudgetBytes = 256ull * 1024ull * 1024ull;
+
+/// The levels to append to a slide's stored ones.
+struct BuiltLevelPlan
+{
+    /// Index of the stored level the built ones are derived from, or -1.
+    int sourceLevel = -1;
+    /// Only the appended levels, finest to coarsest, indices continuing after
+    /// the stored ones. Empty means nothing to build.
+    std::vector<LevelInfo> levels;
+};
+
+/// Plans levels of 1/2, 1/4, ... the coarsest stored level until one fits in
+/// kBuiltTopLevelMaxSide. The coarsest levels that fit the budget are marked
+/// resident; when not even the coarsest does, or the slide is a Z-stack or a
+/// T-series, the plan is empty.
+BuiltLevelPlan planBuiltLevels(const std::vector<LevelInfo>& stored, const SlideInfo& info,
+                               size_t budgetBytes = kBuiltLevelBudgetBytes, int defaultTileSize = 256);
+
+/// Index of the last level that is stored in the file, or -1.
+int coarsestStoredLevelIndex(const std::vector<LevelInfo>& levels);
+
+/// One tile expressed in level pixels and in slide pixels.
+struct TileSlideRect
+{
+    int levelX = 0;
+    int levelY = 0;
+    int tileW = 0;
+    int tileH = 0;
+    int slideX = 0;
+    int slideY = 0;
+    int slideW = 0;
+    int slideH = 0;
+    bool valid = false;
+};
+
+/// The arithmetic SlideIOAdapter::readTile uses: clipped tile size, level
+/// pixels converted by 1/scale and rounded, then clamped to the slide.
+TileSlideRect tileSlideRect(const LevelInfo& level, int column, int row, int slideWidth, int slideHeight);
+
+/// The keys for which isReady is true, in their original order.
+std::vector<TileKey> requestableTiles(const std::vector<TileKey>& keys,
+                                      const std::function<bool(const TileKey&)>& isReady);
+
+} // namespace slideio::viewer::core
