@@ -140,8 +140,16 @@ private:
             }
         } catch (...) {
             // m_read never throws; this is a failure of the machinery itself.
-            // The worker sees the chunk never arrive and stops the build.
+            // A reader that dies may hold a claimed chunk that will never be
+            // filled; the others would then fill the window and block forever.
+            // Stop them all, so take() returns false and the worker ends the
+            // build with error tiles instead of hanging.
             spdlog::error("BuiltPyramidSource: a built-level reader stopped");
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                m_stop = true;
+            }
+            m_cv.notify_all();
         }
         {
             std::lock_guard<std::mutex> lock(m_mutex);
