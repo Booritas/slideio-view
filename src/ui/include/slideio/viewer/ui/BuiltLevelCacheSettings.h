@@ -35,6 +35,13 @@ BuiltLevelCacheSettings loadBuiltLevelCacheSettings(QSettings& settings);
 
 void saveBuiltLevelCacheSettings(QSettings& settings, const BuiltLevelCacheSettings& value);
 
+/// Whether `edited` differs from `current` in anything stored: enabled, the
+/// folder as stored, or the clamped retention. Preferences writes the shared
+/// store only when it does -- every instance shares the store and each holds
+/// its own copy, so writing an untouched copy back on an OK that changed
+/// something else would revert another instance's newer choice.
+bool builtLevelCacheSettingsChanged(const BuiltLevelCacheSettings& current, const BuiltLevelCacheSettings& edited);
+
 /// The folders a sweep should visit after `next` takes effect: its resolved
 /// folder whatever `enabled` says -- turning the cache off does not delete
 /// entries, their retention does -- and, when `previous` is given and resolves

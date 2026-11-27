@@ -52,6 +52,14 @@ void saveBuiltLevelCacheSettings(QSettings& settings, const BuiltLevelCacheSetti
     settings.setValue(kRetentionKey, clampCacheRetentionDays(value.retentionDays));
 }
 
+bool builtLevelCacheSettingsChanged(const BuiltLevelCacheSettings& current, const BuiltLevelCacheSettings& edited)
+{
+    // The folder as stored, exactly: a blank entry and the default folder typed
+    // out are different stored values, and the user may mean either.
+    return current.enabled != edited.enabled || current.folder != edited.folder
+           || clampCacheRetentionDays(current.retentionDays) != clampCacheRetentionDays(edited.retentionDays);
+}
+
 QStringList builtLevelCacheFoldersToSweep(const BuiltLevelCacheSettings& next, const BuiltLevelCacheSettings* previous)
 {
 #ifdef Q_OS_WIN

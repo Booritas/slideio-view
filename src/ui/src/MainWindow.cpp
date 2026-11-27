@@ -2032,13 +2032,18 @@ bool MainWindow::Impl::openPreferences()
     annotations->setDefaultAuthor(annotationSettings->userName().toStdString());
 
     // Before the workspace switch below, which can return early.
+    // Written only when edited: the store is shared, and this instance's copy
+    // may be older than another instance's change to it, which an OK that
+    // only renamed the user must not revert.
     const BuiltLevelCacheSettings cacheSettings = dialog.builtLevelCacheSettings();
-    {
-        QSettings settings;
-        saveBuiltLevelCacheSettings(settings, cacheSettings);
+    if (builtLevelCacheSettingsChanged(builtLevelCacheSettings, cacheSettings)) {
+        {
+            QSettings settings;
+            saveBuiltLevelCacheSettings(settings, cacheSettings);
+        }
+        const BuiltLevelCacheSettings previousCacheSettings = builtLevelCacheSettings;
+        applyBuiltLevelCacheSettings(cacheSettings, &previousCacheSettings);
     }
-    const BuiltLevelCacheSettings previousCacheSettings = builtLevelCacheSettings;
-    applyBuiltLevelCacheSettings(cacheSettings, &previousCacheSettings);
 
     const QString entered = dialog.workspaceDirectory();
     // Resolve the entry before comparing: a cleared field means "use the

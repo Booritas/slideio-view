@@ -111,3 +111,39 @@ TEST_CASE("an unchanged resolved folder is swept once", "[ui][BuiltLevelCacheSet
         REQUIRE(builtLevelCacheFoldersToSweep(after, &before) == QStringList{QStringLiteral("D:/cache")});
     }
 }
+
+TEST_CASE("an untouched copy is not a change, so Preferences does not write it back",
+          "[ui][BuiltLevelCacheSettings]")
+{
+    BuiltLevelCacheSettings current;
+    current.enabled = true;
+    current.folder = "D:/cache";
+    current.retentionDays = 30;
+
+    CHECK_FALSE(builtLevelCacheSettingsChanged(current, current));
+
+    BuiltLevelCacheSettings edited = current;
+    edited.enabled = false;
+    CHECK(builtLevelCacheSettingsChanged(current, edited));
+
+    edited = current;
+    edited.folder = "E:/cache";
+    CHECK(builtLevelCacheSettingsChanged(current, edited));
+
+    edited = current;
+    edited.folder.clear(); // blank means the default folder, a different stored value
+    CHECK(builtLevelCacheSettingsChanged(current, edited));
+
+    edited = current;
+    edited.retentionDays = 7;
+    CHECK(builtLevelCacheSettingsChanged(current, edited));
+}
+
+TEST_CASE("retentions that clamp to the same value are not a change", "[ui][BuiltLevelCacheSettings]")
+{
+    BuiltLevelCacheSettings current;
+    current.retentionDays = 365;
+    BuiltLevelCacheSettings edited = current;
+    edited.retentionDays = 900;
+    CHECK_FALSE(builtLevelCacheSettingsChanged(current, edited));
+}
