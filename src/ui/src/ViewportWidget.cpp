@@ -5089,6 +5089,13 @@ void ViewportWidget::paintGL()
                 // ready finer stand-ins are drawn instead, see the brightfield
                 // loop.
                 auto tileData = m_impl->tileCache->lookup(key);
+                if (tileData && tileData->isError()) {
+                    // Permanent read failure: don't retry, don't trigger the
+                    // tilesSkipped repaint storm. Tested before isEmpty(): an
+                    // error tile has no buffer, so the empty branch would take
+                    // it, count a ready tile as skipped and repaint at 60 fps.
+                    continue;
+                }
                 if (!tileData || tileData->isEmpty()) {
                     if (m_impl->slideSource->isTileReady(key)) {
                         ++tilesSkipped;
@@ -5107,12 +5114,6 @@ void ViewportWidget::paintGL()
                         drawFluorescenceTile(standInIt->second, coordSystem.tileScreenRect(standIn, viewport));
                         ++tilesRendered;
                     }
-                    continue;
-                }
-                if (tileData->isError()) {
-                    // Permanent read failure: don't retry, don't trigger
-                    // the tilesSkipped repaint storm. Region falls through
-                    // to the clear color (white for brightfield).
                     continue;
                 }
                 m_impl->fluorescenceTextures[key] = m_impl->uploadTileChannelTextures(*tileData);
