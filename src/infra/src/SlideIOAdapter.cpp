@@ -1402,19 +1402,15 @@ const std::shared_ptr<::slideio::Scene>& SlideIOAdapter::sceneForMode(core::Colo
 
 const std::shared_ptr<::slideio::Scene>& SlideIOAdapter::activeScene() const
 {
-    // Only for reads that carry no colour mode of their own -- readBlock, which
-    // serves thumbnails and overviews and is never cached under a TileKey. Keyed
-    // reads must go through sceneForMode(key.colorMode()) instead, so that their
-    // pixels and the key they are filed under cannot disagree.
-    //
-    // This makes readBlock mode-dependent. Those surfaces are raw today only
-    // because of WHEN they run: every readBlock call site is at open time or on
-    // a temp adapter still in Raw, so no toggle can reach one. A caller that
-    // refreshed the minimap from a live adapter would need
-    // sceneForMode(ColorMode::Raw), not this.
+    // Only for queries that carry no colour mode of their own and describe the
+    // scene as the user currently sees it -- today activeColorProfileInfo().
+    // Pixel reads never use it: readTile goes through sceneForMode(key.
+    // colorMode()) and readBlock through sceneForMode(mode), the mode-less
+    // readBlock overload passing the current mode explicitly, so a read and the
+    // rendition it is filed under cannot disagree.
     //
     // Relaxed is sufficient: nothing here is ordered against other state, and a
-    // readBlock that straddles a toggle may legitimately return either rendition.
+    // query that straddles a toggle may legitimately describe either scene.
     return sceneForMode(m_colorMode.load(std::memory_order_relaxed));
 }
 

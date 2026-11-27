@@ -234,9 +234,11 @@ signals:
     void aboutToCloseSlide();
     void slideClosed();
     void thumbnailReady(const QImage& thumbnail);
-    /// The overview a slide with viewer-built levels gets once their build
-    /// completes; such a slide opens with no thumbnail (spec 2026-11-27
-    /// section 5.5). Declared here, emitted from onBuiltLevelsComplete().
+    /// The overview a slide with viewer-built levels and no open-time thumbnail
+    /// gets once their build completes (spec 2026-11-27 section 5.5). A null
+    /// image means the build ended with no overview to show -- rows failed, or
+    /// the source level was unreliable -- and the minimap stays unavailable.
+    /// Emitted from onBuiltLevelsComplete().
     void builtOverviewReady(const QImage& thumbnail);
     void errorOccurred(const std::string& message);
     void sceneThumbnailReady(int sceneIndex, bool isAuxiliary, const std::string& name, const QImage& thumbnail);

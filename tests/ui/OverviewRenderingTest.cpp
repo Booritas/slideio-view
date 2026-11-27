@@ -113,3 +113,24 @@ TEST_CASE("an empty or error block renders a null image", "[ui][OverviewRenderin
     CHECK(ui::renderOverviewImage(TileData(), info).isNull());
     CHECK(ui::renderOverviewImage(TileData::createError(4, 4), info).isNull());
 }
+
+TEST_CASE("a built overview is published only when the open produced none", "[ui][OverviewRendering]")
+{
+    using ui::shouldPublishBuiltOverview;
+    CHECK(shouldPublishBuiltOverview(false, false));
+    // An open-time thumbnail is never replaced by the built one.
+    CHECK_FALSE(shouldPublishBuiltOverview(true, false));
+    // Nothing to publish: withheld (failed rows) or never built.
+    CHECK_FALSE(shouldPublishBuiltOverview(false, true));
+    CHECK_FALSE(shouldPublishBuiltOverview(true, true));
+}
+
+TEST_CASE("the minimap says building only when the built overview is the only one coming",
+          "[ui][OverviewRendering]")
+{
+    using ui::shouldShowOverviewBuilding;
+    CHECK(shouldShowOverviewBuilding(true, false));
+    CHECK_FALSE(shouldShowOverviewBuilding(true, true));
+    CHECK_FALSE(shouldShowOverviewBuilding(false, false));
+    CHECK_FALSE(shouldShowOverviewBuilding(false, true));
+}

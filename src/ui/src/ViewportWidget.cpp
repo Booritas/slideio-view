@@ -761,11 +761,6 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
     const int coarsestLevel = core::coarsestStoredLevelIndex(pyramidLevels);
     if (coarsestLevel < 0) return;
     const auto& coarseLvl = pyramid.levelInfo(coarsestLevel);
-    // A slide that gets built levels is one whose coarsest stored level is too
-    // large to read whole cheaply; its overview comes from the build once that
-    // completes, so the whole-slide readBlock below is skipped.
-    const bool hasBuiltLevels = core::hasBuiltLevels(pyramidLevels);
-
     // A pyramid's coarsest level is a handful of tiles, so it gets read whole.
     // A slide with no downsampled level has only its full-resolution level:
     // a 82432x103936 WSI is a 322x406 grid of 256px tiles, and reading all
@@ -776,10 +771,13 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
                                                      core::kMaxCoarseScanTiles);
     // Separate, far more generous budget: thinning the scan only costs
     // precision, but refusing to read the level in full costs the overview
-    // image entirely, so that decision gets its own threshold.
-    const bool overviewAffordable = !hasBuiltLevels
-        && core::planTileSampling(coarseLvl.tilesX, coarseLvl.tilesY,
-                                  core::kMaxOverviewTiles).complete;
+    // image entirely, so that decision gets its own threshold. Decided the same
+    // whether or not the slide gets built levels: a coarsest stored level that
+    // is affordable here still gives an instant overview and a block-based
+    // display range, and the built overview then does not replace it (spec
+    // 2026-11-27 section 5.5; ui::shouldPublishBuiltOverview).
+    const bool overviewAffordable = core::planTileSampling(coarseLvl.tilesX, coarseLvl.tilesY,
+                                                           core::kMaxOverviewTiles).complete;
     if (!samplingPlan.complete) {
         spdlog::info("autodetect: coarsest level is {}x{} tiles -- scanning every {}x{} "
                      "({} of {} tiles), overviewAffordable={}",
@@ -1363,6 +1361,9 @@ struct ViewportWidget::Impl
     std::unique_ptr<ViewportController> controller;
     core::SlideInfo slideInfo;
     bool slideOpen = false;
+    // Whether the open produced a thumbnail of its own. A built overview never
+    // replaces one (spec 2026-11-27 section 5.5).
+    bool openTimeOverview = false;
     std::string currentFilePath;
     std::string currentDriverId;  // empty for auto-detect
     // The driver the *file* was opened with, recorded by openSlide, which is the
@@ -2665,6 +2666,7 @@ void ViewportWidget::closeSlide()
     }
 
     m_impl->slideOpen = false;
+    m_impl->openTimeOverview = false;
     // Belongs to the slide that was showing; there is no slide now. A stale
     // identity would be worse than none: it would let a later caller believe
     // the slide now open is the one this id was computed for.
@@ -2802,6 +2804,7 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
     m_impl->tileCache = std::move(result.tileCache);
     m_impl->pyramid = std::move(result.pyramid);
     m_impl->slideInfo = std::move(result.slideInfo);
+    m_impl->openTimeOverview = !result.thumbnail.isNull();
     if (!result.scenes.empty()) {
         m_impl->slideInfo.scenes = std::move(result.scenes);
     } else if (!carriedScenes.empty()) {
@@ -4437,22 +4440,33 @@ void ViewportWidget::setColorMode(core::ColorMode mode)
 
 void ViewportWidget::onBuiltLevelsComplete()
 {
-    // The overview of a slide with built levels is its smallest built level,
-    // rendered here with the channel settings the viewport holds now, so edits
-    // made since the open apply (spec 2026-11-27 section 5.5). A colour-mode
-    // toggle restarts the build and lands here again on its completion; the
-    // minimap is deliberately not cleared on the toggle -- the old overview
-    // stays until this re-emission replaces it.
+    // The overview of a slide with built levels and no open-time thumbnail is
+    // its smallest built level, rendered here with the channel settings the
+    // viewport holds now, so edits made since the open apply (spec 2026-11-27
+    // section 5.5). A colour-mode toggle restarts the build and lands here
+    // again on its completion; the minimap is deliberately not cleared on the
+    // toggle -- the old overview stays until this re-emission replaces it.
     const auto built = std::dynamic_pointer_cast<infra::BuiltPyramidSource>(m_impl->slideSource);
     if (!built) {
         return;
     }
-    const core::TileData raster = built->smallestBuiltLevel();
-    if (raster.isEmpty() || raster.isError()) {
+    if (m_impl->openTimeOverview) {
+        // The open already produced an overview; it stays, and the minimap
+        // was never told one was being built.
+        spdlog::debug("onBuiltLevelsComplete: nothing to publish, the open-time overview stays");
         return;
     }
-    QImage img = renderOverviewImage(raster, m_impl->slideInfo);
+    const core::TileData raster = built->smallestBuiltLevel();
+    QImage img;
+    if (shouldPublishBuiltOverview(m_impl->openTimeOverview, raster.isEmpty() || raster.isError())) {
+        img = renderOverviewImage(raster, m_impl->slideInfo);
+    }
     if (img.isNull()) {
+        // Withheld (failed rows), abandoned (unreliable source level) or not
+        // renderable: a null image ends the minimap's "building" notice and
+        // leaves it unavailable.
+        spdlog::debug("onBuiltLevelsComplete: no built overview to publish");
+        emit builtOverviewReady(QImage());
         return;
     }
     constexpr int kMaxThumbDim = 1000;
@@ -4838,13 +4852,9 @@ void ViewportWidget::paintGL()
             if (texIt != m_impl->textures.end()) {
                 texId = texIt->second;
             } else {
-                // A built tile whose rows are not accumulated yet is not a
-                // skipped tile: counting it would re-arm the 16 ms repaint for
-                // the whole build. Its area shows the background until the
-                // build's progress callback requests it (spec 2026-11-27 5.4).
-                if (!m_impl->slideSource->isTileReady(key)) {
-                    continue;
-                }
+                // The cache first: a built tile cached earlier in this mode is
+                // drawn even while a rebuild for the other mode has its rows
+                // pending again (Raw -> Managed -> Raw).
                 auto tileData = m_impl->tileCache->lookup(key);
                 if (tileData && !tileData->isEmpty() && !tileData->isError()) {
                     texId = m_impl->uploadTileTexture(*tileData);
@@ -4855,7 +4865,14 @@ void ViewportWidget::paintGL()
                     // to the clear color (white for brightfield).
                     continue;
                 } else {
-                    ++tilesSkipped;
+                    // A built tile whose rows are not accumulated yet is not a
+                    // skipped tile: counting it would re-arm the 16 ms repaint
+                    // for the whole build. Its area shows the background until
+                    // the build's progress callback requests it (spec
+                    // 2026-11-27 5.4).
+                    if (m_impl->slideSource->isTileReady(key)) {
+                        ++tilesSkipped;
+                    }
                     continue;
                 }
             }
@@ -5021,13 +5038,13 @@ void ViewportWidget::paintGL()
 
             auto texIt = m_impl->fluorescenceTextures.find(key);
             if (texIt == m_impl->fluorescenceTextures.end()) {
-                // Not-ready built tile: not skipped, see the brightfield loop.
-                if (!m_impl->slideSource->isTileReady(key)) {
-                    continue;
-                }
+                // Cache first; a not-ready built tile is not skipped, see the
+                // brightfield loop.
                 auto tileData = m_impl->tileCache->lookup(key);
                 if (!tileData || tileData->isEmpty()) {
-                    ++tilesSkipped;
+                    if (m_impl->slideSource->isTileReady(key)) {
+                        ++tilesSkipped;
+                    }
                     continue;
                 }
                 if (tileData->isError()) {

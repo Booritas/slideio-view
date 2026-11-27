@@ -95,8 +95,9 @@ private:
     // Managed is asked for and one was built at open, otherwise the raw scene.
     const std::shared_ptr<::slideio::Scene>& sceneForMode(core::ColorMode mode) const;
 
-    // The scene that serves reads carrying no colour mode of their own
-    // (readBlock): whichever mode the adapter is currently set to.
+    // The scene of whichever mode the adapter is currently set to, for queries
+    // that carry no mode of their own (activeColorProfileInfo). Pixel reads
+    // always name their mode and go through sceneForMode().
     const std::shared_ptr<::slideio::Scene>& activeScene() const;
 
     std::string m_filePath;

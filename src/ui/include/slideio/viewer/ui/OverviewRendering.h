@@ -68,4 +68,14 @@ private:
 /// global range is the slide's display range.
 QImage renderOverviewImage(const core::TileData& block, const core::SlideInfo& info);
 
+/// Whether a completed build publishes its smallest level as the minimap's
+/// overview: only when the open produced no overview of its own -- an open-time
+/// thumbnail is never replaced -- and the build left one to publish (spec
+/// 2026-11-27 section 5.5).
+bool shouldPublishBuiltOverview(bool openTimeOverviewAvailable, bool builtLevelEmpty);
+
+/// Whether the minimap says an overview is being built: a build is pending and
+/// the open produced no overview, so the built one is the only one coming.
+bool shouldShowOverviewBuilding(bool builtOverviewPending, bool openTimeOverviewAvailable);
+
 } // namespace slideio::viewer::ui

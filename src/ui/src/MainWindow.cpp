@@ -46,6 +46,7 @@
 #include "slideio/viewer/ui/LayersPanelPolicy.h"
 #include "slideio/viewer/ui/MetadataPanel.h"
 #include "slideio/viewer/ui/MinimapWidget.h"
+#include "slideio/viewer/ui/OverviewRendering.h"
 #include "slideio/viewer/ui/PreferencesDialog.h"
 #include "slideio/viewer/ui/StatusBarManager.h"
 #include "slideio/viewer/ui/ViewportController.h"
@@ -1315,16 +1316,23 @@ struct MainWindow::Impl
                 // level, so tell the minimap to explain the empty panel
                 // rather than leaving a blank grey rectangle.
                 minimapWidget->setOverviewAvailable(info.overviewAvailable);
-                // A slide with viewer-built levels opens with no thumbnail and
-                // gets one when the build completes; until then say so.
-                minimapWidget->setOverviewBuilding(viewportWidget->builtOverviewPending());
+                // A slide with viewer-built levels and no open-time overview
+                // gets one when the build completes; until then say so. One
+                // that already has an overview keeps it, so nothing is coming.
+                minimapWidget->setOverviewBuilding(
+                    shouldShowOverviewBuilding(viewportWidget->builtOverviewPending(), info.overviewAvailable));
             });
 
         QObject::connect(viewportWidget, &ViewportWidget::builtOverviewReady, owner,
             [this](const QImage& overview) {
+                minimapWidget->setOverviewBuilding(false);
+                if (overview.isNull()) {
+                    // The build ended with nothing to show: the minimap keeps
+                    // whatever it had, unavailable notice included.
+                    return;
+                }
                 minimapWidget->setThumbnail(overview);
                 minimapWidget->setOverviewAvailable(true);
-                minimapWidget->setOverviewBuilding(false);
             });
 
         QObject::connect(viewportWidget, &ViewportWidget::thumbnailReady, owner,

@@ -142,4 +142,14 @@ QImage renderOverviewImage(const core::TileData& block, const core::SlideInfo& i
     return OverviewRenderer(info, info.displayRange.displayMin, info.displayRange.displayMax).render(block);
 }
 
+bool shouldPublishBuiltOverview(bool openTimeOverviewAvailable, bool builtLevelEmpty)
+{
+    return !openTimeOverviewAvailable && !builtLevelEmpty;
+}
+
+bool shouldShowOverviewBuilding(bool builtOverviewPending, bool openTimeOverviewAvailable)
+{
+    return builtOverviewPending && !openTimeOverviewAvailable;
+}
+
 } // namespace slideio::viewer::ui
