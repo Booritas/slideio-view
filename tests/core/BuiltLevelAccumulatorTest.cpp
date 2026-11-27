@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
 #include <vector>
 
 using namespace slideio::viewer::core;
@@ -219,4 +220,99 @@ TEST_CASE("a failed band marks its rows failed and leaves neighbours ready", "[c
     REQUIRE(acc.regionState(1, 1, 2) == BuiltRegionState::Failed); // mixes band 0 and the failed band
     REQUIRE(acc.regionState(1, 2, 3) == BuiltRegionState::Failed);
     REQUIRE(acc.regionState(1, 3, 5) == BuiltRegionState::Ready);
+}
+
+TEST_CASE("the constructor rejects an out-of-contract configuration", "[core][BuiltLevelAccumulator]")
+{
+    using Acc = BuiltLevelAccumulator;
+    REQUIRE_THROWS_AS(Acc(0, 4, 1, DataType::Byte, {2}), std::invalid_argument);
+    REQUIRE_THROWS_AS(Acc(4, -1, 1, DataType::Byte, {2}), std::invalid_argument);
+    REQUIRE_THROWS_AS(Acc(4, 4, 0, DataType::Byte, {2}), std::invalid_argument);
+    REQUIRE_THROWS_AS(Acc(4, 4, 1, DataType::Byte, {}), std::invalid_argument);
+    REQUIRE_THROWS_AS(Acc(4, 4, 1, DataType::Byte, {0}), std::invalid_argument);
+    REQUIRE_THROWS_AS(Acc(4, 4, 1, DataType::Byte, {-2}), std::invalid_argument);
+    REQUIRE_THROWS_AS(Acc(4, 4, 1, DataType::Byte, {3}), std::invalid_argument);
+    REQUIRE_THROWS_AS(Acc(4, 4, 1, DataType::Byte, {4, 2}), std::invalid_argument);
+    REQUIRE_THROWS_AS(Acc(4, 4, 1, DataType::Byte, {2, 2}), std::invalid_argument);
+    REQUIRE_NOTHROW(Acc(4, 4, 1, DataType::Byte, {2, 8}));
+}
+
+TEST_CASE("a data type with no codec is rejected", "[core][BuiltLevelAccumulator]")
+{
+    REQUIRE_THROWS_AS(BuiltLevelAccumulator(4, 4, 1, DataType::Unknown, {2}), std::invalid_argument);
+    REQUIRE_THROWS_AS(BuiltLevelAccumulator(4, 4, 1, DataType::None, {2}), std::invalid_argument);
+}
+
+TEST_CASE("chunks outside the contract are rejected", "[core][BuiltLevelAccumulator]")
+{
+    const auto px = pattern(8, 8, 1);
+    BuiltLevelAccumulator acc(8, 8, 1, DataType::Byte, {2});
+
+    SECTION("null pixels") { REQUIRE_THROWS_AS(acc.addChunk(0, 0, 8, 4, nullptr), std::invalid_argument); }
+    SECTION("empty size")
+    {
+        REQUIRE_THROWS_AS(acc.addChunk(0, 0, 0, 4, px.data()), std::invalid_argument);
+        REQUIRE_THROWS_AS(acc.addChunk(0, 0, 8, 0, px.data()), std::invalid_argument);
+    }
+    SECTION("beyond the source")
+    {
+        REQUIRE_THROWS_AS(acc.addChunk(0, 0, 9, 4, px.data()), std::invalid_argument);
+        REQUIRE_THROWS_AS(acc.addChunk(0, 0, 8, 10, px.data()), std::invalid_argument);
+    }
+    SECTION("band not starting at the expected row")
+    {
+        REQUIRE_THROWS_AS(acc.addChunk(0, 2, 8, 4, px.data()), std::invalid_argument);
+    }
+    SECTION("non-last band height not a multiple of the factor")
+    {
+        REQUIRE_THROWS_AS(acc.addChunk(0, 0, 8, 3, px.data()), std::invalid_argument);
+    }
+    SECTION("chunk placement and band consistency")
+    {
+        acc.addChunk(0, 0, 4, 4, px.data());
+        REQUIRE_THROWS_AS(acc.addChunk(0, 0, 4, 4, px.data()), std::invalid_argument);  // overlap
+        REQUIRE_THROWS_AS(acc.addChunk(6, 0, 2, 4, px.data()), std::invalid_argument);  // gap
+        REQUIRE_THROWS_AS(acc.addChunk(4, 0, 4, 6, px.data()), std::invalid_argument);  // different h
+        REQUIRE_THROWS_AS(acc.addChunk(4, 2, 4, 4, px.data()), std::invalid_argument);  // different y
+        REQUIRE_THROWS_AS(acc.addChunk(4, 0, 5, 4, px.data()), std::invalid_argument);  // past the width
+        REQUIRE_THROWS_AS(acc.failChunk(0, 0, 4, 4), std::invalid_argument);            // overlap, failChunk too
+    }
+    SECTION("a chunk after complete()")
+    {
+        acc.addChunk(0, 0, 8, 8, px.data());
+        REQUIRE(acc.complete());
+        REQUIRE_THROWS_AS(acc.addChunk(0, 0, 8, 2, px.data()), std::invalid_argument);
+        REQUIRE_THROWS_AS(acc.failChunk(0, 8, 8, 2), std::invalid_argument);
+    }
+}
+
+TEST_CASE("a rejected chunk leaves the accumulator unchanged", "[core][BuiltLevelAccumulator]")
+{
+    const auto px = pattern(8, 8, 1);
+    BuiltLevelAccumulator clean(8, 8, 1, DataType::Byte, {2, 4});
+    clean.addChunk(0, 0, 8, 8, px.data());
+
+    BuiltLevelAccumulator acc(8, 8, 1, DataType::Byte, {2, 4});
+    acc.addChunk(0, 0, 4, 4, px.data());
+    REQUIRE_THROWS_AS(acc.addChunk(0, 0, 4, 4, px.data()), std::invalid_argument);
+    REQUIRE_THROWS_AS(acc.addChunk(4, 0, 4, 8, px.data()), std::invalid_argument);
+    REQUIRE_THROWS_AS(acc.addChunk(4, 0, 6, 4, px.data()), std::invalid_argument);
+
+    // Finish band 0 with the right half of its rows, then band 1: same data as one 8x8 chunk.
+    std::vector<uint8_t> right(4 * 4), bottom(8 * 4);
+    for (int r = 0; r < 4; ++r) {
+        std::memcpy(right.data() + r * 4, px.data() + r * 8 + 4, 4);
+    }
+    // The first chunk above read px as a 4-wide chunk; rebuild the expected result the same way.
+    BuiltLevelAccumulator expected(8, 8, 1, DataType::Byte, {2, 4});
+    expected.addChunk(0, 0, 4, 4, px.data());
+    expected.addChunk(4, 0, 4, 4, right.data());
+    acc.addChunk(4, 0, 4, 4, right.data());
+    std::memcpy(bottom.data(), px.data() + 32, bottom.size());
+    expected.addChunk(0, 4, 8, 4, bottom.data());
+    acc.addChunk(0, 4, 8, 4, bottom.data());
+
+    REQUIRE(acc.complete());
+    REQUIRE(acc.extract(0, 0, 0, 4, 4).buffer() == expected.extract(0, 0, 0, 4, 4).buffer());
+    REQUIRE(acc.extract(1, 0, 0, 2, 2).buffer() == expected.extract(1, 0, 0, 2, 2).buffer());
 }

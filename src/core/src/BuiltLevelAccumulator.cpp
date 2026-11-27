@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
+#include <string>
 
 namespace slideio::viewer::core
 {
@@ -178,6 +180,27 @@ BuiltLevelAccumulator::BuiltLevelAccumulator(int sourceWidth, int sourceHeight, 
     , m_numChannels(numChannels)
     , m_dataType(dataType)
 {
+    if (sourceWidth <= 0 || sourceHeight <= 0) {
+        throw std::invalid_argument("BuiltLevelAccumulator: source size must be positive");
+    }
+    if (numChannels <= 0) {
+        throw std::invalid_argument("BuiltLevelAccumulator: numChannels must be positive");
+    }
+    if (dataTypeSize(dataType) == 0) {
+        throw std::invalid_argument("BuiltLevelAccumulator: data type has no sample size");
+    }
+    if (residentFactors.empty()) {
+        throw std::invalid_argument("BuiltLevelAccumulator: no resident factors");
+    }
+    for (size_t i = 0; i < residentFactors.size(); ++i) {
+        const int f = residentFactors[i];
+        if (f <= 0 || (f & (f - 1)) != 0) {
+            throw std::invalid_argument("BuiltLevelAccumulator: factors must be powers of two");
+        }
+        if (i > 0 && (f <= residentFactors[i - 1] || f % residentFactors[i - 1] != 0)) {
+            throw std::invalid_argument("BuiltLevelAccumulator: factors must be strictly ascending");
+        }
+    }
     const size_t pixelBytes = static_cast<size_t>(numChannels) * dataTypeSize(dataType);
     for (int factor : residentFactors) {
         Level level;
@@ -226,6 +249,38 @@ void BuiltLevelAccumulator::beginBand(int y, int h)
     m_bandCount.assign(boxRows * finest.width, 0);
 }
 
+void BuiltLevelAccumulator::validateChunk(int x, int y, int w, int h) const
+{
+    auto bad = [](const char* why) {
+        throw std::invalid_argument(std::string("BuiltLevelAccumulator: ") + why);
+    };
+    if (complete()) {
+        bad("chunk after the last band");
+    }
+    if (w <= 0 || h <= 0) {
+        bad("chunk size must be positive");
+    }
+    if (m_bandActive) {
+        if (y != m_bandY || h != m_bandHeight) {
+            bad("chunk y/h differ from the active band");
+        }
+    } else if (y != m_nextBandY) {
+        bad("band does not start at the next expected row");
+    }
+    if (x != (m_bandActive ? m_bandCovered : 0)) {
+        bad("chunks of a band must arrive left to right without gaps or overlap");
+    }
+    if (x + w > m_sourceWidth) {
+        bad("chunk extends past the source width");
+    }
+    if (y + h > m_sourceHeight) {
+        bad("chunk extends past the source height");
+    }
+    if (h % m_levels.front().factor != 0 && y + h != m_sourceHeight) {
+        bad("band height must be a multiple of the finest factor unless it is the last band");
+    }
+}
+
 void BuiltLevelAccumulator::noteCoverage(int w)
 {
     m_bandCovered += w;
@@ -236,9 +291,10 @@ void BuiltLevelAccumulator::noteCoverage(int w)
 
 void BuiltLevelAccumulator::addChunk(int x, int y, int w, int h, const uint8_t* pixels)
 {
-    if (m_levels.empty() || w <= 0 || h <= 0) {
-        return;
+    if (pixels == nullptr) {
+        throw std::invalid_argument("BuiltLevelAccumulator::addChunk: null pixels");
     }
+    validateChunk(x, y, w, h);
     beginBand(y, h);
     const int factor = m_levels.front().factor;
     const int boxesAcross = m_levels.front().width;
@@ -265,11 +321,9 @@ void BuiltLevelAccumulator::addChunk(int x, int y, int w, int h, const uint8_t* 
     noteCoverage(w);
 }
 
-void BuiltLevelAccumulator::failChunk(int /*x*/, int y, int w, int h)
+void BuiltLevelAccumulator::failChunk(int x, int y, int w, int h)
 {
-    if (m_levels.empty() || w <= 0 || h <= 0) {
-        return;
-    }
+    validateChunk(x, y, w, h);
     beginBand(y, h);
     m_bandFailed = true;
     noteCoverage(w);
@@ -304,6 +358,7 @@ void BuiltLevelAccumulator::finalizeBand()
     }
     finest.completedRows = std::max(finest.completedRows, row0 + boxRows);
     m_bandActive = false;
+    m_nextBandY = m_bandY + m_bandHeight;
     propagate();
 }
 

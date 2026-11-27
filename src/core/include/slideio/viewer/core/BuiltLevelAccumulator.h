@@ -34,7 +34,10 @@ enum class BuiltRegionState
 class BuiltLevelAccumulator
 {
 public:
-    /// `residentFactors` are ascending powers of two, e.g. {8, 16, 32}.
+    /// `residentFactors` are strictly ascending powers of two, each a multiple of
+    /// the previous, e.g. {8, 16, 32}. Throws std::invalid_argument for a
+    /// non-positive size or channel count, a data type with no sample size
+    /// (Unknown, None), or an empty or malformed factor list.
     BuiltLevelAccumulator(int sourceWidth, int sourceHeight, int numChannels, DataType dataType,
                           std::vector<int> residentFactors);
 
@@ -43,10 +46,16 @@ public:
     /// Interleaved pixels, row stride `w * numChannels * dataTypeSize`.
     /// Bands arrive in order: `y` is the current band's top and `h` a multiple
     /// of `finestFactor()` except for the last band. Chunks of one band arrive
-    /// left to right and together cover [0, sourceWidth).
+    /// left to right (x equals the width covered so far) and together cover
+    /// [0, sourceWidth); the first band starts at y = 0 and each next one where
+    /// the last ended; y/h are identical for every chunk of a band; no chunk
+    /// follows complete(). Throws std::invalid_argument, before any state is
+    /// touched, for a null pointer, w/h <= 0, a chunk outside the source, a
+    /// band whose h is not a multiple of finestFactor() unless it ends at
+    /// sourceHeight, or any ordering violation above.
     void addChunk(int x, int y, int w, int h, const uint8_t* pixels);
 
-    /// Counts as coverage and marks the band failed.
+    /// Counts as coverage and marks the band failed. Same contract and exceptions as addChunk.
     void failChunk(int x, int y, int w, int h);
 
     /// Rows [y0, y1) of resident level `residentIndex` (0 = finest), clamped to
@@ -75,6 +84,7 @@ private:
 
     void beginBand(int y, int h);
     void noteCoverage(int w);
+    void validateChunk(int x, int y, int w, int h) const;
     void finalizeBand();
     void propagate();
 
@@ -84,6 +94,7 @@ private:
     DataType m_dataType;
     std::vector<Level> m_levels;
 
+    int m_nextBandY = 0;
     bool m_bandActive = false;
     int m_bandY = 0;
     int m_bandHeight = 0;
