@@ -17,6 +17,8 @@
 #include "slideio/viewer/core/AnnotationGeometry.h"
 #include "slideio/viewer/core/BoxResize.h"
 #include "slideio/viewer/core/BuiltLevels.h"
+#include "slideio/viewer/core/BuiltLevelCache.h"
+#include "slideio/viewer/core/IBuiltLevelStore.h"
 #include "slideio/viewer/core/VertexEditing.h"
 #include "slideio/viewer/core/CoordinateSystem.h"
 #include "slideio/viewer/core/DisplayRangePolicy.h"
@@ -32,10 +34,10 @@
 #include "slideio/viewer/infra/BuiltPyramidSource.h"
 #include "slideio/viewer/infra/LruTileCache.h"
 #include "slideio/viewer/infra/SlideIOAdapter.h"
-#include "slideio/viewer/infra/SlideIOAdapter.h"
 #include "slideio/viewer/infra/TileLoadScheduler.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QFileInfo>
 #include <QFocusEvent>
 #include <QFontMetricsF>
@@ -1196,12 +1198,87 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
 
 using slideio::viewer::ui::SceneOpenResult;
 
+// The name of the scene with this index, or empty when the list has none.
+std::string sceneNameAt(const std::vector<slideio::viewer::core::SceneInfo>& scenes, int sceneIndex)
+{
+    for (const auto& scene : scenes) {
+        if (!scene.isAuxiliary && scene.index == sceneIndex) {
+            return scene.name;
+        }
+    }
+    return {};
+}
+
+// Hands the built-level disk cache to a freshly wrapped scene when caching
+// applies to it (spec 2026-11-27 built-level disk cache §4): enabled, a regular
+// file, a single-file driver, an identified slide, and no open-time overview.
+// Runs on the open's worker thread, before the build is started on the UI thread.
+void attachBuiltLevelStore(slideio::viewer::infra::BuiltPyramidSource& built,
+                           const slideio::viewer::infra::SlideIOAdapter& adapter,
+                           std::shared_ptr<slideio::viewer::core::IBuiltLevelStore> store,
+                           const std::string& filePath, int sceneIndex, const std::string& slideId,
+                           const std::string& sceneName, const slideio::viewer::core::SlideInfo& info)
+{
+    namespace core = slideio::viewer::core;
+    namespace infra = slideio::viewer::infra;
+    if (!store) {
+        return;
+    }
+    const QFileInfo file(QString::fromStdString(filePath));
+    core::BuiltLevelCacheEligibility facts;
+    facts.enabled = true;
+    facts.regularFile = file.isFile();
+    facts.driverId = info.driverId;
+    facts.slideId = slideId;
+    facts.hadOpenTimeOverview = info.overviewAvailable;
+    if (!core::builtLevelCacheApplies(facts) || !built.hasBuiltLevels()) {
+        return;
+    }
+
+    const auto fileSize = static_cast<uint64_t>(file.size());
+    const int64_t fileModifiedMs = file.lastModified().toMSecsSinceEpoch();
+
+    core::BuiltLevelCacheIdentity identity;
+    identity.slideId = slideId;
+    identity.sceneIndex = sceneIndex;
+    identity.fileSize = fileSize;
+    identity.fileModifiedMs = fileModifiedMs;
+    identity.managedRenditionTag = infra::SlideIOAdapter::managedRenditionTag();
+    // No readable rendition tag: no Managed entry may be cached (Raw still is).
+    if (!identity.managedRenditionTag.empty()) {
+        identity.managedProfileFingerprint = adapter.boundColorProfileFingerprint();
+    }
+    identity.slideioVersion = infra::slideioLibraryVersion();
+
+    core::BuiltLevelCacheDescription description;
+    description.path = filePath;
+    description.fileName = file.fileName().toStdString();
+    description.driverId = info.driverId;
+    description.sceneName = sceneName;
+    description.sceneIndex = sceneIndex;
+    description.width = info.width;
+    description.height = info.height;
+    description.magnification = info.magnification;
+    // SlideInfo carries the pixel size in metres.
+    description.pixelSizeXUm = info.resolutionX * 1e6;
+    description.pixelSizeYUm = info.resolutionY * 1e6;
+    description.fileSize = fileSize;
+    description.fileModifiedMs = fileModifiedMs;
+
+    built.setLevelStore(std::move(store), std::move(identity), std::move(description));
+}
+
 // Open a scene synchronously (intended to run on a background thread). Captures
 // any exception into result.errorMsg. statusCallback (if non-null) is invoked
 // when the adapter first decides a pyramid level is unreliable, so the loading
 // overlay can change its label to indicate the slow-but-correct fallback path.
+// slideId and sceneName describe the slide for the built-level disk cache;
+// store is the viewport's cache as it was when the open started (null: off).
 SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
                               const std::string& driverId,
+                              const std::string& slideId,
+                              const std::string& sceneName,
+                              std::shared_ptr<slideio::viewer::core::IBuiltLevelStore> store,
                               std::function<void(QString)> statusCallback = {},
                               slideio::viewer::core::SuppliedColorProfile supplied = {})
 {
@@ -1216,8 +1293,10 @@ SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
         // the result is installed, after the progress listener is registered;
         // a result discarded as stale is destroyed with no thread to join.
         // Associated images (openAuxImageSync) are never wrapped.
-        r.slideSource = std::make_shared<infra::BuiltPyramidSource>(
-            std::make_shared<infra::SlideIOAdapter>(filePath, sceneIndex, driverId, std::move(supplied)));
+        // Kept in a local so the cache identity can ask it for its bound profile.
+        auto adapter = std::make_shared<infra::SlideIOAdapter>(filePath, sceneIndex, driverId, std::move(supplied));
+        auto built = std::make_shared<infra::BuiltPyramidSource>(adapter);
+        r.slideSource = built;
         {
             r.slideInfo = r.slideSource->slideInfo();
             auto levels = r.slideSource->levels();
@@ -1236,6 +1315,9 @@ SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
         } catch (const std::exception& ex) {
             spdlog::warn("openSceneSync: thumbnail/coarse-cache pass failed: {}", ex.what());
         }
+
+        attachBuiltLevelStore(*built, *adapter, std::move(store), filePath, sceneIndex, slideId, sceneName,
+                              r.slideInfo);
 
         // Apply fallback display range if auto-detection didn't yield one. A
         // slide shown at its native range is not marked detected on purpose.
@@ -1386,6 +1468,10 @@ struct ViewportWidget::Impl
     // Snapshotted by MainWindow on the UI thread, captured by value into the
     // background open threads below.
     ColorProfilePolicy colorProfilePolicy;
+
+    // The built-level disk cache for slides opened from now on; null when off.
+    // Read only on the UI thread; each open copies it into its worker.
+    std::shared_ptr<core::IBuiltLevelStore> builtLevelStore;
 
     // Why a configured override could not be used on the slide now showing.
     // Installed from the winning open result, so a problem belonging to an
@@ -2306,7 +2392,8 @@ void ViewportWidget::openSlide(const std::string& filePath, const std::string& d
     };
 
     ColorProfilePolicy policy = m_impl->colorProfilePolicy;
-    std::thread([this, opId, filePath, driverId, statusCallback, policy]() {
+    std::thread([this, opId, filePath, driverId, statusCallback, policy,
+                 store = m_impl->builtLevelStore]() {
         // Enumerated before the scene is opened, not after: the slide's
         // identity is derived from this list, and the adapter needs the
         // profile that identity selects at construction time. The scene panel
@@ -2346,7 +2433,9 @@ void ViewportWidget::openSlide(const std::string& filePath, const std::string& d
             ? std::string{}
             : core::computeSlideId(scenesForIdentity, contentSize.value_or(0));
 
-        SceneOpenResult result = openSceneSync(filePath, 0, driverId, statusCallback, supplied);
+        const std::string sceneName = sceneNameAt(scenes, 0);
+        SceneOpenResult result =
+            openSceneSync(filePath, 0, driverId, slideId, sceneName, store, statusCallback, supplied);
         result.scenes = std::move(scenes);
         result.auxImages = std::move(auxImages);
         result.colorProfileProblem = std::move(problem);
@@ -2597,7 +2686,7 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
 
     ColorProfilePolicy policy = m_impl->colorProfilePolicy;
     std::thread([this, opId, filePath, sceneIndex, driverId, statusCallback,
-                 policy, scenesForIdentity]() {
+                 policy, scenesForIdentity, store = m_impl->builtLevelStore]() {
         const std::optional<uint64_t> contentSize = slideContentSize(filePath);
         if (!contentSize) {
             spdlog::debug("openScene: could not size '{}'; slide will not be identified", filePath);
@@ -2613,11 +2702,14 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
         const core::SuppliedColorProfile supplied =
             resolveColorProfileForOpen(policy, scenesForResolve, contentSize.value_or(0), problem);
 
-        SceneOpenResult result = openSceneSync(filePath, sceneIndex, driverId,
-                                               statusCallback, supplied);
-        result.colorProfileProblem = std::move(problem);
-        result.slideId = scenesForResolve.empty() ? std::string{}
+        // Computed before the open: the built-level cache is keyed by it.
+        std::string slideId = scenesForResolve.empty() ? std::string{}
             : core::computeSlideId(scenesForResolve, contentSize.value_or(0));
+        const std::string sceneName = sceneNameAt(scenesForIdentity, sceneIndex);
+        SceneOpenResult result = openSceneSync(filePath, sceneIndex, driverId, slideId, sceneName,
+                                               store, statusCallback, supplied);
+        result.colorProfileProblem = std::move(problem);
+        result.slideId = std::move(slideId);
         QMetaObject::invokeMethod(this,
             [this, opId, r = std::move(result)]() mutable {
                 installSceneOpenResult(opId, std::move(r));
@@ -3127,6 +3219,11 @@ void ViewportWidget::setChannelSettings(const std::vector<core::ChannelInfo>& ch
 void ViewportWidget::setColorProfilePolicy(ColorProfilePolicy policy)
 {
     m_impl->colorProfilePolicy = std::move(policy);
+}
+
+void ViewportWidget::setBuiltLevelStore(std::shared_ptr<core::IBuiltLevelStore> store)
+{
+    m_impl->builtLevelStore = std::move(store);
 }
 
 // Why a configured override could not be used on the slide now showing, if it

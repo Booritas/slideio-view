@@ -29,6 +29,7 @@ add_library(slideio-viewer-ui STATIC
     src/AnnotationPropertiesPanel.cpp
     src/AnnotationSettings.cpp
     src/AppPaths.cpp
+    src/BuiltLevelCacheSettings.cpp
     src/AssociatedImageWindow.cpp
     src/ColorProfilePolicy.cpp
     src/DriverFilters.cpp

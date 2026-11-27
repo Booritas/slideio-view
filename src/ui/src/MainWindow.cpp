@@ -12,6 +12,7 @@
 #include "slideio/viewer/core/AnnotationGeoJson.h"
 #include "slideio/viewer/core/ColorManagement.h"
 #include "slideio/viewer/core/SlideId.h"
+#include "slideio/viewer/infra/BuiltLevelDiskCache.h"
 #include "slideio/viewer/infra/JsonAnnotationRepository.h"
 #include "slideio/viewer/infra/QSettingsAnnotationCategoryStore.h"
 #include "slideio/viewer/infra/QSettingsCalibrationOverrideStore.h"
@@ -29,6 +30,7 @@
 #include "slideio/viewer/ui/AnnotationSettings.h"
 #include "slideio/viewer/ui/AppPaths.h"
 #include "slideio/viewer/ui/AssociatedImageWindow.h"
+#include "slideio/viewer/ui/BuiltLevelCacheSettings.h"
 #include "slideio/viewer/ui/ChannelMixerPanel.h"
 #include "slideio/viewer/ui/ColorProfilePolicy.h"
 #include "slideio/viewer/ui/DriverFilters.h"
@@ -59,6 +61,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QCloseEvent>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
 #include <QDragEnterEvent>
@@ -88,6 +91,7 @@
 #include <QSignalBlocker>
 #include <QStatusBar>
 #include <QTextEdit>
+#include <QThreadPool>
 #include <QTimer>
 #include <QUrl>
 
@@ -359,6 +363,10 @@ struct MainWindow::Impl
     void buildAnnotationPersistence();
     void updateUndoActions();
     bool openPreferences();
+    /// Hands the viewport the built-level disk cache these settings describe
+    /// (null when disabled) and, when enabled, sweeps its folder off the UI
+    /// thread. Applies to slides opened from now on.
+    void applyBuiltLevelCacheSettings(const BuiltLevelCacheSettings& settings);
     /// Enables or disables everything that writes annotations, and says why not.
     /// Driven from two signals: ViewportWidget::annotationsAvailableChanged,
     /// which carries the better wording on an open or close, and
@@ -1958,14 +1966,41 @@ void MainWindow::Impl::buildAnnotationPersistence()
         });
 }
 
+void MainWindow::Impl::applyBuiltLevelCacheSettings(const BuiltLevelCacheSettings& settings)
+{
+    if (!settings.enabled) {
+        viewportWidget->setBuiltLevelStore(nullptr);
+        return;
+    }
+    const std::string folder = resolveBuiltLevelCacheFolder(settings.folder).toStdString();
+    viewportWidget->setBuiltLevelStore(std::make_shared<infra::BuiltLevelDiskCache>(folder));
+    spdlog::info("MainWindow: built-level cache on, folder '{}', retention {} days", folder,
+                 settings.retentionDays);
+
+    const int retentionDays = settings.retentionDays;
+    const int64_t nowSeconds = QDateTime::currentSecsSinceEpoch();
+    QThreadPool::globalInstance()->start([folder, retentionDays, nowSeconds]() {
+        // sweep() never throws; it deletes only key-named entries and stale temporaries.
+        const int deleted = infra::BuiltLevelDiskCache::sweep(folder, retentionDays, nowSeconds);
+        if (deleted > 0) {
+            spdlog::info("built-level cache sweep removed {} entries from '{}'", deleted, folder);
+        }
+    });
+}
+
 bool MainWindow::Impl::openPreferences()
 {
     QStringList currentCategories;
     for (const std::string& category : categoryStore->categories()) {
         currentCategories.append(QString::fromStdString(category));
     }
+    BuiltLevelCacheSettings currentCacheSettings;
+    {
+        QSettings settings;
+        currentCacheSettings = loadBuiltLevelCacheSettings(settings);
+    }
     PreferencesDialog dialog(annotationSettings->workspaceDirectory(),
-                             annotationSettings->userName(), currentCategories, owner);
+                             annotationSettings->userName(), currentCategories, currentCacheSettings, owner);
     if (dialog.exec() != QDialog::Accepted) {
         return false;
     }
@@ -1983,6 +2018,14 @@ bool MainWindow::Impl::openPreferences()
 
     annotationSettings->setUserName(dialog.userName());
     annotations->setDefaultAuthor(annotationSettings->userName().toStdString());
+
+    // Before the workspace switch below, which can return early.
+    const BuiltLevelCacheSettings cacheSettings = dialog.builtLevelCacheSettings();
+    {
+        QSettings settings;
+        saveBuiltLevelCacheSettings(settings, cacheSettings);
+    }
+    applyBuiltLevelCacheSettings(cacheSettings);
 
     const QString entered = dialog.workspaceDirectory();
     // Resolve the entry before comparing: a cleared field means "use the
@@ -2710,6 +2753,10 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->annotations = std::make_unique<app::AnnotationModel>();
     m_impl->viewportWidget = new ViewportWidget(*m_impl->annotations, this);
     setCentralWidget(m_impl->viewportWidget);
+    {
+        QSettings settings;
+        m_impl->applyBuiltLevelCacheSettings(loadBuiltLevelCacheSettings(settings));
+    }
 
     // Create overlay widgets as children of the viewport
     m_impl->minimapWidget = new MinimapWidget(m_impl->viewportWidget);

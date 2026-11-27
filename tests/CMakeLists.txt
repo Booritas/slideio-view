@@ -87,6 +87,7 @@ add_test(NAME infra-tests COMMAND slideio-viewer-infra-tests)
 # UI layer tests
 add_executable(slideio-viewer-ui-tests
     ui/AboutInfoTest.cpp
+    ui/BuiltLevelCacheSettingsTest.cpp
     ui/AnnotationCountExportTest.cpp
     ui/CsvFormatTest.cpp
     ui/AnnotationMeasurementExportTest.cpp

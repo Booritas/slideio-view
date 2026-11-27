@@ -23,6 +23,7 @@ class QPainter;
 namespace slideio::viewer::core
 {
 class Annotation;
+class IBuiltLevelStore;
 }
 
 namespace slideio::viewer::app
@@ -143,6 +144,11 @@ public:
     // default, plus the per-slide overrides by slide id. Snapshotted by
     // MainWindow on the UI thread; the open threads capture it by value.
     void setColorProfilePolicy(ColorProfilePolicy policy);
+
+    // The built-level disk cache for slides opened from now on; null turns
+    // caching off. Read on the UI thread when an open starts and copied into
+    // the open's worker, so a change never reaches a slide already open.
+    void setBuiltLevelStore(std::shared_ptr<core::IBuiltLevelStore> store);
 
     // Why a configured override could not be used on the slide now showing.
     // Empty when none was configured or it was fine.
