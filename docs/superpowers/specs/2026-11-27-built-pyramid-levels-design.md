@@ -362,6 +362,36 @@ shipped code had to part. The code is the truth; these are the differences.
   2048 px therefore builds one small resident level that nothing displays as
   an overview.
 
+### 5.8 Finer stand-ins while a coarser built level fills (2026-11-27)
+
+Group AN found AN1 failing: opened zoomed out, the example slide's view stayed
+empty for 13.4 s. The fit view uses the /32 level, and one /32 tile row is 8192
+source rows, i.e. four bands, while one /8 row is a single band. §5.4's "no
+fallback" reasoning held for *coarser* levels only; a *finer* resident level is
+ready first. The owner chose to draw it.
+
+- **Rule.** A visible key at a resident built level that is not ready is
+  replaced by its 2×2 children at the next finer resident level (clipped at the
+  level's right and bottom edge); a child that is not ready is replaced by its
+  own children, down to the finest resident level, where a not-ready tile is
+  dropped (background, as before). Stored levels and virtual built levels are
+  never descended into: they are always "ready", and reading them would cost
+  full-resolution decodes. Built levels step by exactly 2 and share one tile
+  size, which is what makes a tile's children exactly 2×2.
+- **Where it lives.** A pure `core::readyStandIns(levels, key, isReady)`
+  returns, in a fixed order, the ready keys that together cover `key` as far as
+  anything ready can; it returns `{key}` when `key` is ready or not a resident
+  built level, and nothing when nothing under it is ready. The controller
+  requests the stand-ins in place of the visible keys (still only ready keys,
+  §5.4), and both paint loops draw a not-ready key's stand-ins at their own
+  screen rects; nothing is counted in `tilesSkipped` for them.
+- **What it costs.** On the example slide the first /8 row shows after one
+  band (~2.5 s on the test machine) and the view sharpens to /16 and /32 as
+  their rows complete; a fully stood-in fit view is at most 16× the tiles of
+  the final one (768 rather than 48), and only while the build runs. Those
+  textures stay uploaded for the session (the §9 debt).
+- **Check.** AN1 is re-run against this: the view starts filling within ~3 s.
+
 ## 6. Constraints
 
 - Core stays Qt-free; the plan and the accumulator are core, the thread and
