@@ -219,16 +219,24 @@ void BuiltPyramidSource::addOnLevelMarkedUnreliable(std::function<void(int)> lis
 
 void BuiltPyramidSource::setColorMode(core::ColorMode mode)
 {
-    m_inner->setColorMode(mode);
     if (!hasBuiltLevels()) {
+        m_inner->setColorMode(mode);
         return;
     }
     std::lock_guard<std::mutex> control(m_controlMutex);
+    bool differs = false;
     {
         std::shared_lock<std::shared_mutex> state(m_stateMutex);
-        if (mode == m_buildMode) {
-            return;
-        }
+        differs = mode != m_buildMode;
+    }
+    // Cancel before the inner source changes mode, so once anyone can observe
+    // the new mode the old build reads no further chunk.
+    if (differs) {
+        m_cancel = true;
+    }
+    m_inner->setColorMode(mode);
+    if (!differs) {
+        return;
     }
     stopWorkerLocked();
     if (m_started) {

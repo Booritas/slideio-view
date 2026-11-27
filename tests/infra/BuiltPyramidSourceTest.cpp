@@ -6,6 +6,10 @@
 #include "slideio/viewer/core/TileData.h"
 #include "slideio/viewer/core/TileKey.h"
 
+#include <spdlog/sinks/ostream_sink.h>
+#include <spdlog/spdlog.h>
+
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -13,6 +17,9 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <sstream>
+#include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -99,8 +106,31 @@ public:
 
     void setColorMode(ColorMode mode) override
     {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_mode = mode;
+        }
+        m_cv.notify_all();
+    }
+
+    bool waitForMode(ColorMode mode)
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_cv.wait_for(lock, kWait, [this, mode] { return m_mode == mode; });
+    }
+
+    // Every read of the band starting at y throws std::runtime_error.
+    void throwAt(int y)
+    {
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_mode = mode;
+        m_throwY = y;
+    }
+
+    // Every read of the band starting at y answers a tile one column narrower.
+    void shrinkAt(int y)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_shrinkY = y;
     }
 
     ColorMode colorMode() const override
@@ -158,10 +188,15 @@ private:
     TileData serve(int x, int y, int w, int h, int tw, int th, int z, int t, ColorMode mode, bool live)
     {
         bool fail = false;
+        bool shrink = false;
         {
             std::unique_lock<std::mutex> lock(m_mutex);
             m_calls.push_back(BlockCall{x, y, w, h, tw, th, z, t, mode, live});
             fail = (y == m_failY);
+            shrink = (y == m_shrinkY);
+            if (y == m_throwY) {
+                throw std::runtime_error("fake read failure");
+            }
             if (m_blocking) {
                 ++m_waiting;
                 m_cv.notify_all();
@@ -171,6 +206,10 @@ private:
         }
         if (fail) {
             return TileData::createError(tw, th);
+        }
+        if (shrink) {
+            std::vector<uint8_t> narrow(static_cast<size_t>(tw - 1) * static_cast<size_t>(th), 7);
+            return TileData(std::move(narrow), tw - 1, th, 1, DataType::Byte);
         }
         std::vector<uint8_t> buffer(static_cast<size_t>(tw) * static_cast<size_t>(th), 0);
         if (tw == w && th == h) {
@@ -192,8 +231,136 @@ private:
     bool m_blocking = false;
     int m_waiting = 0;
     int m_failY = -1;
+    int m_throwY = -1;
+    int m_shrinkY = -1;
     std::vector<BlockCall> m_calls;
     std::vector<TileKey> m_tileReads;
+};
+
+// A slide of 8200x6010 whose coarsest stored level is 4100x3000. The two axis
+// ratios differ, so the level's scale is the smaller (3000/6010) one, and a
+// level rect scaled back to the slide runs past the right edge and must be
+// clamped. Level-1 pixel (x, y) is (x*7 + y*3) & 0xFF; a block read maps its
+// slide rect back to level-1 coordinates with the same scale and serves those.
+class TwoLevelFake : public ISlideSource
+{
+public:
+    static constexpr int kSlideW = 8200;
+    static constexpr int kSlideH = 6010;
+    static constexpr int kLevelW = 4100;
+    static constexpr int kLevelH = 3000;
+
+    TwoLevelFake()
+    {
+        m_levels.resize(2);
+        m_levels[0].level = 0;
+        m_levels[0].width = kSlideW;
+        m_levels[0].height = kSlideH;
+        m_levels[0].scale = 1.0;
+        m_levels[1].level = 1;
+        m_levels[1].width = kLevelW;
+        m_levels[1].height = kLevelH;
+        m_levels[1].scale = scale();
+        for (LevelInfo& l : m_levels) {
+            l.tileWidth = 256;
+            l.tileHeight = 256;
+            l.tilesX = (l.width + 255) / 256;
+            l.tilesY = (l.height + 255) / 256;
+        }
+    }
+
+    static double scale()
+    {
+        return std::min(static_cast<double>(kLevelW) / kSlideW, static_cast<double>(kLevelH) / kSlideH);
+    }
+
+    static int toLevel(int slideCoord) { return static_cast<int>(std::round(slideCoord * scale())); }
+
+    SlideInfo slideInfo() const override
+    {
+        SlideInfo info;
+        info.width = kSlideW;
+        info.height = kSlideH;
+        info.numChannels = 1;
+        info.channelDataType = DataType::Byte;
+        info.numZoomLevels = 2;
+        info.levels = m_levels;
+        return info;
+    }
+
+    std::vector<LevelInfo> levels() const override { return m_levels; }
+
+    TileData readTile(const TileKey&) override { return TileData::createError(0, 0); }
+
+    TileData readBlock(int x, int y, int w, int h, int tw, int th, int z, int t) override
+    {
+        return serve(x, y, w, h, tw, th, z, t, ColorMode::Raw, true);
+    }
+
+    TileData readBlock(int x, int y, int w, int h, int tw, int th, int z, int t, ColorMode mode) override
+    {
+        return serve(x, y, w, h, tw, th, z, t, mode, false);
+    }
+
+    std::vector<BlockCall> calls() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_calls;
+    }
+
+private:
+    TileData serve(int x, int y, int w, int h, int tw, int th, int z, int t, ColorMode mode, bool live)
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_calls.push_back(BlockCall{x, y, w, h, tw, th, z, t, mode, live});
+        }
+        const int lx = toLevel(x);
+        const int ly = toLevel(y);
+        std::vector<uint8_t> buffer(static_cast<size_t>(tw) * static_cast<size_t>(th), 0);
+        for (int j = 0; j < th; ++j) {
+            for (int i = 0; i < tw; ++i) {
+                buffer[static_cast<size_t>(j) * tw + i] = sourcePixel(lx + i, ly + j);
+            }
+        }
+        return TileData(std::move(buffer), tw, th, 1, DataType::Byte);
+    }
+
+    std::vector<LevelInfo> m_levels;
+    mutable std::mutex m_mutex;
+    std::vector<BlockCall> m_calls;
+};
+
+// Captures what the default spdlog logger writes for the life of one test.
+class LogCapture
+{
+public:
+    LogCapture()
+        : m_sink(std::make_shared<spdlog::sinks::ostream_sink_mt>(m_stream))
+    {
+        spdlog::default_logger()->sinks().push_back(m_sink);
+    }
+
+    ~LogCapture()
+    {
+        auto& sinks = spdlog::default_logger()->sinks();
+        sinks.erase(std::remove(sinks.begin(), sinks.end(), m_sink), sinks.end());
+    }
+
+    int count(const std::string& needle)
+    {
+        spdlog::default_logger()->flush();
+        const std::string text = m_stream.str();
+        int n = 0;
+        for (size_t at = text.find(needle); at != std::string::npos; at = text.find(needle, at + 1)) {
+            ++n;
+        }
+        return n;
+    }
+
+private:
+    std::ostringstream m_stream;
+    std::shared_ptr<spdlog::sinks::ostream_sink_mt> m_sink;
 };
 
 // Counts addOnBuiltRowsReady calls and lets a test wait for completions.
@@ -585,4 +752,150 @@ TEST_CASE("no thread starts for a slide without resident levels", "[infra][Built
     CHECK(fake->calls().empty());
     CHECK(progress.eventCount() == 0);
     CHECK(source.smallestBuiltLevel().isEmpty());
+}
+
+TEST_CASE("a coarser source level is read at its own resolution and mapped back to the slide",
+          "[infra][BuiltPyramidSource]")
+{
+    auto fake = std::make_shared<TwoLevelFake>();
+    // 512-row bands: 1953 columns per chunk, three chunks a band.
+    BuiltPyramidSource source(fake, kBuiltLevelBudgetBytes, 1000000);
+    const auto levels = source.levels();
+    REQUIRE(levels.size() == 4);
+    REQUIRE(levels[2].builtFactor == 2);
+    REQUIRE(levels[2].resident);
+    Progress progress;
+    progress.attach(source);
+    source.start();
+    REQUIRE(progress.waitForCompletes(1));
+
+    const auto calls = fake->calls();
+    REQUIRE(calls.size() == 18);
+    std::vector<uint8_t> slideCovered(static_cast<size_t>(TwoLevelFake::kSlideW) * TwoLevelFake::kSlideH, 0);
+    std::vector<uint8_t> levelCovered(static_cast<size_t>(TwoLevelFake::kLevelW) * TwoLevelFake::kLevelH, 0);
+    for (const BlockCall& c : calls) {
+        CHECK_FALSE(c.liveOverload);
+        // Never a full-resolution read: the output is the level's, about half the slide rect.
+        CHECK(c.tw < c.w);
+        CHECK(c.th < c.h);
+        REQUIRE(c.x >= 0);
+        REQUIRE(c.y >= 0);
+        REQUIRE(c.x + c.w <= TwoLevelFake::kSlideW);
+        REQUIRE(c.y + c.h <= TwoLevelFake::kSlideH);
+        for (int y = c.y; y < c.y + c.h; ++y) {
+            for (int x = c.x; x < c.x + c.w; ++x) {
+                ++slideCovered[static_cast<size_t>(y) * TwoLevelFake::kSlideW + x];
+            }
+        }
+        // The output size is the level-1 rect this chunk stands for.
+        const int lx = TwoLevelFake::toLevel(c.x);
+        const int ly = TwoLevelFake::toLevel(c.y);
+        REQUIRE(lx + c.tw <= TwoLevelFake::kLevelW);
+        REQUIRE(ly + c.th <= TwoLevelFake::kLevelH);
+        for (int y = ly; y < ly + c.th; ++y) {
+            for (int x = lx; x < lx + c.tw; ++x) {
+                ++levelCovered[static_cast<size_t>(y) * TwoLevelFake::kLevelW + x];
+            }
+        }
+    }
+    CHECK(std::all_of(slideCovered.begin(), slideCovered.end(), [](uint8_t v) { return v == 1; }));
+    CHECK(std::all_of(levelCovered.begin(), levelCovered.end(), [](uint8_t v) { return v == 1; }));
+    // The rightmost chunks are clamped to the slide's right edge: 4100 / scale overshoots 8200.
+    CHECK(std::round(TwoLevelFake::kLevelW / TwoLevelFake::scale()) > TwoLevelFake::kSlideW);
+    const auto rightmost = std::max_element(calls.begin(), calls.end(),
+                                            [](const BlockCall& a, const BlockCall& b) { return a.x < b.x; });
+    CHECK(rightmost->x + rightmost->w == TwoLevelFake::kSlideW);
+
+    const TileData tile = source.readTile(TileKey(2, 3, 2));
+    REQUIRE_FALSE(tile.isPending());
+    REQUIRE_FALSE(tile.isError());
+    REQUIRE(tile.width() == 256);
+    REQUIRE(tile.height() == 256);
+    bool exact = true;
+    for (int j = 0; j < 256; ++j) {
+        for (int i = 0; i < 256; ++i) {
+            exact = exact
+                && tile.buffer()[static_cast<size_t>(j) * 256 + i]
+                    == halfPixel(3 * 256 + i, 2 * 256 + j, TwoLevelFake::kLevelW, TwoLevelFake::kLevelH);
+        }
+    }
+    CHECK(exact);
+}
+
+TEST_CASE("a mode change while the worker is inside a read restarts cleanly", "[infra][BuiltPyramidSource]")
+{
+    auto fake = std::make_shared<FakeSource>();
+    BuiltPyramidSource source(fake);
+    Progress progress;
+    progress.attach(source);
+
+    fake->blockReads();
+    source.start(); // Raw
+    REQUIRE(fake->waitUntilBlocked());
+
+    std::thread toggler([&source] { source.setColorMode(ColorMode::Managed); });
+    // setColorMode raises the cancel flag before it forwards the mode, so once
+    // the inner source reports Managed the Raw build can read no further chunk.
+    REQUIRE(fake->waitForMode(ColorMode::Managed));
+    fake->release();
+    toggler.join(); // returns once the Raw worker is joined and the Managed one launched
+    REQUIRE(progress.waitForCompletes(1));
+
+    const auto calls = fake->calls();
+    REQUIRE(calls.size() == 7); // the one Raw read in flight, then 6 Managed bands
+    CHECK(calls[0].mode == ColorMode::Raw);
+    for (size_t i = 1; i < calls.size(); ++i) {
+        CHECK(calls[i].mode == ColorMode::Managed);
+        CHECK_FALSE(calls[i].liveOverload);
+    }
+    {
+        std::lock_guard<std::mutex> lock(progress.mutex);
+        CHECK(progress.completes == 1);
+        CHECK(progress.events.size() == 7); // only the Managed build's 6 bands and its completion
+    }
+    const TileKey raw(1, 0, 0, 0, 0, ColorMode::Raw);
+    CHECK(source.readTile(raw).isPending());
+    CHECK_FALSE(source.isTileReady(raw));
+    const TileKey managed(1, 0, 0, 0, 0, ColorMode::Managed);
+    CHECK(source.isTileReady(managed));
+    const TileData tile = source.readTile(managed);
+    CHECK_FALSE(tile.isPending());
+    CHECK_FALSE(tile.isError());
+}
+
+TEST_CASE("a read that throws fails its band, warns once and the build completes", "[infra][BuiltPyramidSource]")
+{
+    LogCapture log;
+    auto fake = std::make_shared<FakeSource>();
+    fake->throwAt(512); // all three chunks of the second band throw
+    BuiltPyramidSource source(fake, kBuiltLevelBudgetBytes, 1000000);
+    Progress progress;
+    progress.attach(source);
+    source.start();
+    REQUIRE(progress.waitForCompletes(1));
+
+    CHECK_FALSE(source.builtOverviewPending());
+    CHECK(fake->calls().size() == 18);
+    CHECK_FALSE(source.readTile(TileKey(1, 0, 0)).isError());
+    CHECK(source.isTileReady(TileKey(1, 0, 1)));
+    CHECK(source.readTile(TileKey(1, 0, 1)).isError());
+    CHECK(source.readTile(TileKey(1, 8, 1)).isError());
+    CHECK_FALSE(source.readTile(TileKey(1, 0, 2)).isError());
+    CHECK(log.count("fake read failure") == 1);
+}
+
+TEST_CASE("a wrong-sized read is a failed chunk and the build completes", "[infra][BuiltPyramidSource]")
+{
+    auto fake = std::make_shared<FakeSource>();
+    fake->shrinkAt(1024); // source rows 1024..1535 = level-1 rows 512..767
+    BuiltPyramidSource source(fake);
+    Progress progress;
+    progress.attach(source);
+    source.start();
+    REQUIRE(progress.waitForCompletes(1));
+
+    CHECK_FALSE(source.builtOverviewPending());
+    CHECK_FALSE(source.readTile(TileKey(1, 0, 1)).isError());
+    CHECK(source.readTile(TileKey(1, 0, 2)).isError());
+    CHECK_FALSE(source.readTile(TileKey(1, 0, 3)).isError());
 }
