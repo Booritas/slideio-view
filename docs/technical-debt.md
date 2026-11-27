@@ -156,3 +156,31 @@ the three below; step 3 was judged not worth its cost.*
   larger read (four times the pixels per step), or reading each band through
   the adapter's fallback arithmetic. Medium, and only worth doing once such a
   file is in hand to test against.
+
+### TD-7. A cache folder on a dead network share can freeze close and colour toggle
+
+*From the review of the built-level disk cache (2026-11-27).*
+
+- **What:** closing a slide, switching scene and toggling colour management
+  all cancel `infra::BuiltPyramidSource`'s worker and join it on the UI
+  thread (`stopWorkerLocked`). The worker polls the cancel flag between
+  blocks, but while it is inside a filesystem call of
+  `infra::BuiltLevelDiskCache` (`QFileInfo::isDir`, `QFile::open`, `mkpath`,
+  `rename`) nothing can interrupt it. When the cache folder is on an SMB
+  share that has dropped, one such call lasts until the OS gives up, and the
+  UI thread waits with it.
+- **Cost today:** only with the cache enabled (it is off by default) and its
+  folder on a network share that drops while a slide with built levels is
+  open, loading or saving. The window freezes for the SMB timeout (tens of
+  seconds) and then recovers; nothing is lost or corrupted. The Preferences
+  tooltip already asks for local storage.
+- **Why it is this way:** the worker holds `this`, so the join cannot simply
+  be skipped or the thread detached. Probing the folder before attaching the
+  store only moves the same wait onto the open and does not cover a share
+  that drops after the open.
+- **Fix:** run the store's I/O on a thread that owns nothing of the source --
+  copy the key, description and level bytes in, hand the rasters back
+  through a shared, generation-tagged slot -- so cancelling can abandon a
+  call in flight and the join no longer waits on the filesystem. A detached
+  load then has to be prevented from writing into a newer build, which the
+  generation check already does for chunks. Medium.
