@@ -41,12 +41,13 @@ separate 999×705 `readBlock` — worked.
 `extern/slideio/src/slideio/drivers/gdal/gdalscene.{hpp,cpp}` now reads a
 tiled TIFF page tile by tile through `TileComposer` and `TiffTools::readTile`
 and reports the file's tile size; three tests in `test_gdal_driver.cpp` cover
-it. Committed as `95ab634d` on SlideIO branch `feature/gdal-tiled-tiff-reads`,
-which is pushed but **not yet merged into SlideIO master**. **The viewer's
-submodule pin has not moved**: `extern/slideio` is still pinned at `e2ceb224`,
-and the builds that ran group AN had the branch checked out in the working
-tree by hand. A clean clone builds against the old GDAL path until the
-SlideIO pull request lands and the pin moves (§6). This design assumes it.
+it. Committed as `95ab634d` on SlideIO branch `feature/gdal-tiled-tiff-reads`
+and merged into SlideIO master as PR #103 (merge `90cdeb46`, together with a
+review fix, `3ed06a54`: edge tiles cropped, decoded tiles checked, one read
+lock shared per file). The viewer pins `extern/slideio` at `90cdeb46` since
+2026-11-27. Group AN ran against the branch checked out by hand, before the
+review fix; the viewer's suites and SlideIO's GDAL/TIFF tests were re-run
+green at `90cdeb46`. This design assumes it.
 
 The GDAL scene still serialises reads (`supportsConcurrentReads()` is
 false: one libtiff handle per file). One full pass over the 44 000 tiles of
