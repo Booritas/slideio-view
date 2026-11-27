@@ -80,6 +80,18 @@ public:
 
     bool complete() const;
 
+    /// Replaces every resident level with finished rasters, finest first, each exactly
+    /// levelWidth(i)*levelHeight(i)*numChannels*dataTypeSize bytes, and marks the build
+    /// complete with every row Ready. Throws std::invalid_argument, touching nothing,
+    /// for the wrong level count or any wrong size, or once any chunk has been added.
+    void loadComplete(std::vector<std::vector<uint8_t>> levels);
+
+    /// True when any row of any resident level holds a failed box.
+    bool hasFailures() const;
+
+    /// The level's whole buffer, for saving; valid until the accumulator changes.
+    const std::vector<uint8_t>& levelBytes(int residentIndex) const;
+
 private:
     /// Half-open column range [begin, end) of failed boxes in one row.
     using Span = std::pair<int, int>;

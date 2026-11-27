@@ -403,3 +403,76 @@ TEST_CASE("a rejected chunk leaves the accumulator unchanged", "[core][BuiltLeve
     REQUIRE(acc.extract(0, 0, 0, 4, 4).buffer() == expected.extract(0, 0, 0, 4, 4).buffer());
     REQUIRE(acc.extract(1, 0, 0, 2, 2).buffer() == expected.extract(1, 0, 0, 2, 2).buffer());
 }
+
+TEST_CASE("loadComplete restores what a build produced", "[core][BuiltLevelAccumulator]")
+{
+    const auto px = pattern(100, 60, 3);
+    BuiltLevelAccumulator built(100, 60, 3, DataType::Byte, {2, 4});
+    built.addChunk(0, 0, 100, 60, px.data());
+    REQUIRE(built.complete());
+    const std::vector<uint8_t> level0 = built.levelBytes(0);
+    const std::vector<uint8_t> level1 = built.levelBytes(1);
+
+    BuiltLevelAccumulator loaded(100, 60, 3, DataType::Byte, {2, 4});
+    REQUIRE_FALSE(loaded.complete());
+    loaded.loadComplete({level0, level1});
+
+    REQUIRE(loaded.complete());
+    REQUIRE_FALSE(loaded.hasFailures());
+    for (int i = 0; i < 2; ++i) {
+        REQUIRE(loaded.regionState(i, 0, loaded.levelHeight(i)) == BuiltRegionState::Ready);
+        const TileData a = built.extract(i, 0, 0, loaded.levelWidth(i), loaded.levelHeight(i));
+        const TileData b = loaded.extract(i, 0, 0, loaded.levelWidth(i), loaded.levelHeight(i));
+        REQUIRE(a.buffer() == b.buffer());
+    }
+    REQUIRE(loaded.levelBytes(0) == level0);
+    REQUIRE(loaded.levelBytes(1) == level1);
+}
+
+TEST_CASE("loadComplete rejects wrong shapes", "[core][BuiltLevelAccumulator]")
+{
+    const auto px = pattern(100, 60, 3);
+    BuiltLevelAccumulator built(100, 60, 3, DataType::Byte, {2, 4});
+    built.addChunk(0, 0, 100, 60, px.data());
+    const std::vector<uint8_t> level0 = built.levelBytes(0);
+    const std::vector<uint8_t> level1 = built.levelBytes(1);
+
+    SECTION("wrong level count")
+    {
+        BuiltLevelAccumulator acc(100, 60, 3, DataType::Byte, {2, 4});
+        REQUIRE_THROWS_AS(acc.loadComplete({level0}), std::invalid_argument);
+        REQUIRE_FALSE(acc.complete());
+    }
+    SECTION("one byte short")
+    {
+        BuiltLevelAccumulator acc(100, 60, 3, DataType::Byte, {2, 4});
+        std::vector<uint8_t> shortLevel = level1;
+        shortLevel.pop_back();
+        REQUIRE_THROWS_AS(acc.loadComplete({level0, shortLevel}), std::invalid_argument);
+        REQUIRE_FALSE(acc.complete());
+        // Nothing was touched: the first level is still the zero-filled buffer.
+        REQUIRE(acc.levelBytes(0) == std::vector<uint8_t>(level0.size(), 0));
+    }
+    SECTION("after an addChunk")
+    {
+        BuiltLevelAccumulator acc(100, 60, 3, DataType::Byte, {2, 4});
+        acc.addChunk(0, 0, 50, 60, px.data());
+        REQUIRE_THROWS_AS(acc.loadComplete({level0, level1}), std::invalid_argument);
+        REQUIRE_FALSE(acc.complete());
+    }
+}
+
+TEST_CASE("hasFailures reports a failed chunk", "[core][BuiltLevelAccumulator]")
+{
+    const auto px = pattern(16, 8, 1);
+    BuiltLevelAccumulator clean(16, 8, 1, DataType::Byte, {2, 4});
+    clean.addChunk(0, 0, 16, 8, px.data());
+    REQUIRE(clean.complete());
+    REQUIRE_FALSE(clean.hasFailures());
+
+    BuiltLevelAccumulator failed(16, 8, 1, DataType::Byte, {2, 4});
+    failed.failChunk(0, 0, 8, 8);
+    failed.addChunk(8, 0, 8, 8, px.data());
+    REQUIRE(failed.complete());
+    REQUIRE(failed.hasFailures());
+}

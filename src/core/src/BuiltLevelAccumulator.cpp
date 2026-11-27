@@ -233,6 +233,47 @@ bool BuiltLevelAccumulator::complete() const
     return !m_levels.empty() && m_levels.back().completedRows >= m_levels.back().height;
 }
 
+void BuiltLevelAccumulator::loadComplete(std::vector<std::vector<uint8_t>> levels)
+{
+    if (m_bandActive || m_nextBandY != 0) {
+        throw std::invalid_argument("BuiltLevelAccumulator::loadComplete: chunks were already added");
+    }
+    if (levels.size() != m_levels.size()) {
+        throw std::invalid_argument("BuiltLevelAccumulator::loadComplete: wrong number of levels");
+    }
+    const size_t pixelBytes = static_cast<size_t>(m_numChannels) * dataTypeSize(m_dataType);
+    for (size_t i = 0; i < levels.size(); ++i) {
+        const size_t expected = static_cast<size_t>(m_levels[i].width) * m_levels[i].height * pixelBytes;
+        if (levels[i].size() != expected) {
+            throw std::invalid_argument("BuiltLevelAccumulator::loadComplete: wrong level size");
+        }
+    }
+    for (size_t i = 0; i < levels.size(); ++i) {
+        Level& level = m_levels[i];
+        level.data = std::move(levels[i]);
+        level.completedRows = level.height;
+        level.failedSpans.assign(static_cast<size_t>(level.height), Spans{});
+    }
+    m_nextBandY = m_sourceHeight;
+}
+
+bool BuiltLevelAccumulator::hasFailures() const
+{
+    for (const Level& level : m_levels) {
+        for (const Spans& spans : level.failedSpans) {
+            if (!spans.empty()) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+const std::vector<uint8_t>& BuiltLevelAccumulator::levelBytes(int residentIndex) const
+{
+    return m_levels.at(static_cast<size_t>(residentIndex)).data;
+}
+
 void BuiltLevelAccumulator::beginBand(int y, int h)
 {
     if (m_bandActive) {
