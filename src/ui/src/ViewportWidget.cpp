@@ -4462,6 +4462,14 @@ void ViewportWidget::onBuiltLevelsComplete()
         spdlog::debug("onBuiltLevelsComplete: nothing to publish, the open-time overview stays");
         return;
     }
+    if (built->builtOverviewPending()) {
+        // A stale notice: the build that posted it was replaced -- by a
+        // colour-mode toggle -- before this queued call ran. The build now
+        // running posts its own; answering this one would end the minimap's
+        // "building" notice with nothing to show.
+        spdlog::debug("onBuiltLevelsComplete: stale notice, a newer build is still running");
+        return;
+    }
     const core::TileData raster = built->smallestBuiltLevel();
     QImage img;
     if (shouldPublishBuiltOverview(m_impl->openTimeOverview, raster.isEmpty() || raster.isError())) {
