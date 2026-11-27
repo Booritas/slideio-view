@@ -1,0 +1,222 @@
+#include <catch2/catch_test_macros.hpp>
+
+#include "slideio/viewer/core/BuiltLevelAccumulator.h"
+
+#include <cstdint>
+#include <cstring>
+#include <vector>
+
+using namespace slideio::viewer::core;
+
+namespace
+{
+
+template <typename T>
+std::vector<uint8_t> bytesOf(const std::vector<T>& v)
+{
+    std::vector<uint8_t> out(v.size() * sizeof(T));
+    std::memcpy(out.data(), v.data(), out.size());
+    return out;
+}
+
+template <typename T>
+std::vector<T> valuesOf(const TileData& t)
+{
+    std::vector<T> out(t.buffer().size() / sizeof(T));
+    std::memcpy(out.data(), t.buffer().data(), t.buffer().size());
+    return out;
+}
+
+/// Averages one 2x2 box of `T` values and returns the single resulting sample.
+template <typename T>
+T averageOf(DataType dt, const std::vector<T>& box)
+{
+    BuiltLevelAccumulator acc(2, 2, 1, dt, {2});
+    const auto bytes = bytesOf(box);
+    acc.addChunk(0, 0, 2, 2, bytes.data());
+    REQUIRE(acc.complete());
+    const TileData out = acc.extract(0, 0, 0, 1, 1);
+    REQUIRE(out.width() == 1);
+    REQUIRE(out.height() == 1);
+    return valuesOf<T>(out).at(0);
+}
+
+uint16_t toHalf(float f)
+{
+    // Only the exactly representable values used below.
+    if (f == 1.0f) return 0x3C00;
+    if (f == 2.0f) return 0x4000;
+    if (f == 2.5f) return 0x4100;
+    if (f == 3.0f) return 0x4200;
+    if (f == 4.0f) return 0x4400;
+    return 0;
+}
+
+std::vector<uint8_t> pattern(int w, int h, int channels)
+{
+    std::vector<uint8_t> v(static_cast<size_t>(w) * h * channels);
+    for (size_t i = 0; i < v.size(); ++i) {
+        v[i] = static_cast<uint8_t>((i * 37 + 11) % 251);
+    }
+    return v;
+}
+
+} // namespace
+
+TEST_CASE("factor-2 box average of a 5x3 byte image", "[core][BuiltLevelAccumulator]")
+{
+    BuiltLevelAccumulator acc(5, 3, 1, DataType::Byte, {2});
+    const std::vector<uint8_t> src = {0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 21, 22, 23, 24};
+    acc.addChunk(0, 0, 5, 3, src.data());
+
+    REQUIRE(acc.levelWidth(0) == 3);
+    REQUIRE(acc.levelHeight(0) == 2);
+    REQUIRE(acc.complete());
+    const TileData out = acc.extract(0, 0, 0, 3, 2);
+    REQUIRE(valuesOf<uint8_t>(out) == std::vector<uint8_t>{6, 10, 13, 21, 23, 24});
+}
+
+TEST_CASE("partial edge boxes average only real pixels", "[core][BuiltLevelAccumulator]")
+{
+    BuiltLevelAccumulator acc(3, 3, 1, DataType::Byte, {4});
+    const std::vector<uint8_t> src = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+    acc.addChunk(0, 0, 3, 3, src.data());
+
+    REQUIRE(acc.levelWidth(0) == 1);
+    REQUIRE(acc.levelHeight(0) == 1);
+    REQUIRE(valuesOf<uint8_t>(acc.extract(0, 0, 0, 1, 1)) == std::vector<uint8_t>{5});
+}
+
+TEST_CASE("rounding is half away from zero", "[core][BuiltLevelAccumulator]")
+{
+    auto avg = [](int16_t a, int16_t b) {
+        BuiltLevelAccumulator acc(2, 1, 1, DataType::Int16, {2});
+        const auto bytes = bytesOf(std::vector<int16_t>{a, b});
+        acc.addChunk(0, 0, 2, 1, bytes.data());
+        return valuesOf<int16_t>(acc.extract(0, 0, 0, 1, 1)).at(0);
+    };
+    REQUIRE(avg(-1, -2) == -2);
+    REQUIRE(avg(1, 2) == 2);
+}
+
+TEST_CASE("every DataType with a size averages exactly", "[core][BuiltLevelAccumulator]")
+{
+    REQUIRE(averageOf<uint8_t>(DataType::Byte, {10, 20, 30, 40}) == 25);
+    REQUIRE(averageOf<int8_t>(DataType::Int8, {-10, -20, -30, -40}) == -25);
+    REQUIRE(averageOf<uint16_t>(DataType::UInt16, {1000, 2000, 3000, 4000}) == 2500);
+    REQUIRE(averageOf<int16_t>(DataType::Int16, {-1000, -2000, 3000, 4000}) == 1000);
+    REQUIRE(averageOf<uint32_t>(DataType::UInt32, {4000000000u, 4000000000u, 4000000000u, 4000000000u})
+            == 4000000000u);
+    REQUIRE(averageOf<int32_t>(DataType::Int32, {-2000000000, -2000000000, 2000000000, 0}) == -500000000);
+    REQUIRE(averageOf<int64_t>(DataType::Int64, {-4000, -8000, 4000, 8000}) == 0);
+    REQUIRE(averageOf<float>(DataType::Float32, {1.0f, 2.0f, 3.0f, 4.0f}) == 2.5f);
+    REQUIRE(averageOf<double>(DataType::Float64, {1.0, 2.0, 3.0, 4.0}) == 2.5);
+    REQUIRE(averageOf<uint16_t>(DataType::Float16, {toHalf(1.0f), toHalf(2.0f), toHalf(3.0f), toHalf(4.0f)})
+            == toHalf(2.5f));
+
+    SECTION("UInt64 near the maximum does not overflow")
+    {
+        const uint64_t base = ~0ULL - 16383; // 2^64 - 16384: every partial double sum stays exact
+        const uint64_t mean = averageOf<uint64_t>(DataType::UInt64,
+                                                  {base, base - 16384, base - 32768, base - 49152});
+        REQUIRE(mean == base - 24576);
+    }
+
+    SECTION("channels stay separate")
+    {
+        BuiltLevelAccumulator acc(2, 2, 3, DataType::UInt16, {2});
+        const auto bytes = bytesOf(std::vector<uint16_t>{
+            100, 1000, 10000, 200, 2000, 20000, //
+            300, 3000, 30000, 400, 4000, 40000});
+        acc.addChunk(0, 0, 2, 2, bytes.data());
+        const TileData out = acc.extract(0, 0, 0, 1, 1);
+        REQUIRE(out.numChannels() == 3);
+        REQUIRE(valuesOf<uint16_t>(out) == std::vector<uint16_t>{250, 2500, 25000});
+    }
+}
+
+TEST_CASE("chunks across the width equal one full-width band", "[core][BuiltLevelAccumulator]")
+{
+    const int w = 10;
+    const int h = 4;
+    const auto src = pattern(w, h, 3);
+
+    BuiltLevelAccumulator whole(w, h, 3, DataType::Byte, {2});
+    whole.addChunk(0, 0, w, h, src.data());
+
+    BuiltLevelAccumulator pieces(w, h, 3, DataType::Byte, {2});
+    const int cuts[][2] = {{0, 3}, {3, 8}, {8, 10}};
+    for (const auto& cut : cuts) {
+        const int cw = cut[1] - cut[0];
+        std::vector<uint8_t> chunk(static_cast<size_t>(cw) * h * 3);
+        for (int r = 0; r < h; ++r) {
+            std::memcpy(chunk.data() + static_cast<size_t>(r) * cw * 3,
+                        src.data() + (static_cast<size_t>(r) * w + cut[0]) * 3, static_cast<size_t>(cw) * 3);
+        }
+        pieces.addChunk(cut[0], 0, cw, h, chunk.data());
+    }
+
+    REQUIRE(pieces.complete());
+    REQUIRE(whole.extract(0, 0, 0, 5, 2).buffer() == pieces.extract(0, 0, 0, 5, 2).buffer());
+}
+
+TEST_CASE("a coarser level is the 2x2 average of the finer one", "[core][BuiltLevelAccumulator]")
+{
+    const auto src = pattern(8, 8, 1);
+    BuiltLevelAccumulator acc(8, 8, 1, DataType::Byte, {2, 4});
+    acc.addChunk(0, 0, 8, 8, src.data());
+    REQUIRE(acc.complete());
+
+    const auto fine = valuesOf<uint8_t>(acc.extract(0, 0, 0, 4, 4));
+    const auto coarse = valuesOf<uint8_t>(acc.extract(1, 0, 0, 2, 2));
+    REQUIRE(coarse.size() == 4);
+    for (int y = 0; y < 2; ++y) {
+        for (int x = 0; x < 2; ++x) {
+            const int sum = fine[(2 * y) * 4 + 2 * x] + fine[(2 * y) * 4 + 2 * x + 1]
+                          + fine[(2 * y + 1) * 4 + 2 * x] + fine[(2 * y + 1) * 4 + 2 * x + 1];
+            REQUIRE(coarse[y * 2 + x] == static_cast<uint8_t>((sum + 2) / 4));
+        }
+    }
+}
+
+TEST_CASE("regionState follows completed bands", "[core][BuiltLevelAccumulator]")
+{
+    BuiltLevelAccumulator acc(16, 16, 1, DataType::Byte, {2, 4});
+    const auto band = pattern(16, 4, 1);
+
+    REQUIRE(acc.regionState(0, 0, 2) == BuiltRegionState::Pending);
+    acc.addChunk(0, 0, 16, 4, band.data());
+    REQUIRE(acc.regionState(0, 0, 2) == BuiltRegionState::Ready);
+    REQUIRE(acc.regionState(0, 0, 3) == BuiltRegionState::Pending);
+    REQUIRE(acc.regionState(1, 0, 1) == BuiltRegionState::Ready);
+    REQUIRE(acc.regionState(1, 0, 2) == BuiltRegionState::Pending);
+    REQUIRE(acc.regionState(0, 5, 5) == BuiltRegionState::Ready);
+    REQUIRE_FALSE(acc.complete());
+
+    for (int y = 4; y < 16; y += 4) {
+        acc.addChunk(0, y, 16, 4, band.data());
+    }
+    REQUIRE(acc.complete());
+    REQUIRE(acc.regionState(0, 0, 8) == BuiltRegionState::Ready);
+    REQUIRE(acc.regionState(1, 0, 4) == BuiltRegionState::Ready);
+}
+
+TEST_CASE("a failed band marks its rows failed and leaves neighbours ready", "[core][BuiltLevelAccumulator]")
+{
+    // Three bands of six rows: level 0 has nine rows (3 per band), level 1 has five.
+    BuiltLevelAccumulator acc(16, 18, 1, DataType::Byte, {2, 4});
+    const auto band = pattern(16, 6, 1);
+    acc.addChunk(0, 0, 16, 6, band.data());
+    acc.failChunk(0, 6, 16, 6);
+    acc.addChunk(0, 12, 16, 6, band.data());
+
+    REQUIRE(acc.complete());
+    REQUIRE(acc.regionState(0, 0, 3) == BuiltRegionState::Ready);
+    REQUIRE(acc.regionState(0, 3, 6) == BuiltRegionState::Failed);
+    REQUIRE(acc.regionState(0, 6, 9) == BuiltRegionState::Ready);
+
+    REQUIRE(acc.regionState(1, 0, 1) == BuiltRegionState::Ready);
+    REQUIRE(acc.regionState(1, 1, 2) == BuiltRegionState::Failed); // mixes band 0 and the failed band
+    REQUIRE(acc.regionState(1, 2, 3) == BuiltRegionState::Failed);
+    REQUIRE(acc.regionState(1, 3, 5) == BuiltRegionState::Ready);
+}
