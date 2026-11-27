@@ -68,9 +68,15 @@ class BuiltPyramidSource : public core::ISlideSource
 public:
     static constexpr int kDefaultBandChunkMaxBytes = 4 * 1024 * 1024;
 
-    // min(4, max(1, hardware_concurrency / 2)): enough to cut decoding several-
-    // fold, few enough to leave cores to the tile scheduler the user waits on.
+    // Strictly fewer than half of SlideIO's read handles for the file, which
+    // ContextPool::defaultMax() sizes to min(8, hardware threads), mirrored
+    // here because SlideIO does not install that header: max(1, (handles-1)/2),
+    // so 3 on 8 or more threads, 2 on 6, 1 on 4 or fewer. Each reader holds one
+    // handle for a whole chunk read, and the visible tiles share the rest; at
+    // half or more, panning during a build was starved of handles.
     static int defaultBuiltPassReaders();
+    // The same rule for a given hardware thread count (0 = unknown).
+    static int builtPassReadersForThreads(unsigned hardwareThreads);
 
     // Plans the built levels and subscribes to the inner source's unreliable-
     // level notifications; does not start the worker. readers is clamped to >= 1.

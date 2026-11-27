@@ -1799,11 +1799,23 @@ int errorTiles(const BuildResult& r)
 
 } // namespace
 
-TEST_CASE("the default reader count is half the cores, between one and four",
+TEST_CASE("the default reader count leaves more than half of SlideIO's read handles to the tiles",
           "[infra][BuiltPyramidSource][parallel]")
 {
-    const int hc = static_cast<int>(std::thread::hardware_concurrency());
-    CHECK(BuiltPyramidSource::defaultBuiltPassReaders() == std::min(4, std::max(1, hc / 2)));
+    // SlideIO's pool holds min(8, threads) handles; readers stay strictly under half.
+    for (unsigned threads = 0; threads <= 64; ++threads) {
+        INFO(threads);
+        const int handles = threads == 0 ? 1 : static_cast<int>(std::min(8u, threads));
+        const int readers = BuiltPyramidSource::builtPassReadersForThreads(threads);
+        CHECK(readers >= 1);
+        CHECK((readers == 1 || 2 * readers < handles));
+    }
+    CHECK(BuiltPyramidSource::builtPassReadersForThreads(4) == 1);
+    CHECK(BuiltPyramidSource::builtPassReadersForThreads(6) == 2);
+    CHECK(BuiltPyramidSource::builtPassReadersForThreads(8) == 3);
+    CHECK(BuiltPyramidSource::builtPassReadersForThreads(24) == 3);
+    CHECK(BuiltPyramidSource::defaultBuiltPassReaders()
+          == BuiltPyramidSource::builtPassReadersForThreads(std::thread::hardware_concurrency()));
 }
 
 TEST_CASE("a source level decoded whole is read by one reader", "[infra][BuiltPyramidSource][parallel]")

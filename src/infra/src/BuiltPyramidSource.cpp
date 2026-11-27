@@ -177,8 +177,14 @@ private:
 
 int BuiltPyramidSource::defaultBuiltPassReaders()
 {
-    const int cores = static_cast<int>(std::thread::hardware_concurrency());
-    return std::min(4, std::max(1, cores / 2));
+    return builtPassReadersForThreads(std::thread::hardware_concurrency());
+}
+
+int BuiltPyramidSource::builtPassReadersForThreads(unsigned hardwareThreads)
+{
+    // SlideIO's ContextPool::defaultMax(): min(8, threads), 1 when unknown.
+    const int handles = hardwareThreads == 0 ? 1 : static_cast<int>(std::min(8u, hardwareThreads));
+    return std::max(1, (handles - 1) / 2);
 }
 
 BuiltPyramidSource::BuiltPyramidSource(std::shared_ptr<core::ISlideSource> inner, size_t budgetBytes,

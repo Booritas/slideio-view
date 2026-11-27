@@ -63,7 +63,12 @@ Anti-goals
   `max(1, hardware_concurrency / 2)`: enough to cut decode time several-fold, few
   enough to leave cores to the tile scheduler the user is waiting on. A
   constructor parameter (default from that rule) so tests can force 1 and N.
-  **1 reader reproduces today's behaviour exactly.**
+  **1 reader reproduces today's behaviour exactly.** *Changed in review
+  (2026-11-27):* each reader holds one of SlideIO's per-file read handles
+  (`ContextPool::defaultMax()` = min(8, threads)) for a whole chunk, so the
+  default is now `max(1, (handles - 1) / 2)` -- strictly fewer than half the
+  handles, leaving the rest to the visible tiles: 3 on 8 or more threads, 2 on
+  6, 1 on 4 or fewer. AP1's 2.7x was measured with 4 readers.
 - **Window** `2 × readers` chunks claimed but not yet fed, plus the one the
   worker is feeding: window+1 = 9 chunks (9 × 4 MiB ≈ 36 MiB worst case).
 - **Chunk order** is the existing band-major, left-to-right order; chunk *k*
