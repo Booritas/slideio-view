@@ -2858,8 +2858,8 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
     // thread; there the call is dropped if the widget is gone or the source it
     // was registered on is no longer the one on screen -- a band from a slide
     // that has since been closed, or replaced by a scene switch or a colour
-    // profile reopen. Registered before start() so the first band is not
-    // missed.
+    // profile reopen. Registered here, before start() -- which waits until
+    // slideOpened below -- so the first band is not missed.
     if (auto built = std::dynamic_pointer_cast<infra::BuiltPyramidSource>(m_impl->slideSource)) {
         QPointer<ViewportWidget> self(this);
         std::weak_ptr<core::ISlideSource> registeredOn = m_impl->slideSource;
@@ -2888,7 +2888,6 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
                 },
                 Qt::QueuedConnection);
         });
-        built->start();
     }
 
     m_impl->slideOpen = true;
@@ -2974,6 +2973,13 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
         emit thumbnailReady(result.thumbnail);
     }
     emit slideOpened(result.filePath);
+    // The build starts only now: MainWindow's slideOpened handler applies the
+    // remembered colour mode, and a build started before it would be a Raw one
+    // that the switch to Managed cancels -- joining its worker on this thread --
+    // and throws away. Before start(), a mode change only moves the build's mode.
+    if (auto built = std::dynamic_pointer_cast<infra::BuiltPyramidSource>(m_impl->slideSource)) {
+        built->start();
+    }
     if (reportAvailability) {
         emit annotationsAvailableChanged(annotationsAvailable, annotationsReason);
     }
