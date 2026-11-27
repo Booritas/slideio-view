@@ -186,14 +186,64 @@ void discard(const QString& dir)
     QDir(dir).removeRecursively();
 }
 
-bool looksValid(const QString& entryDir)
+/// Walks one level file's block headers without decompressing: the magic and
+/// version are right, every block is whole, the blocks declare exactly
+/// `expectedBytes`, and nothing trails them. Catches truncation, not bit rot --
+/// load's checksums do that.
+bool levelFileIntact(const QString& path, size_t expectedBytes)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+    const QByteArray head = f.read(kFileHeaderBytes);
+    if (head.size() != kFileHeaderBytes || std::memcmp(head.constData(), kMagic, 4) != 0
+        || getU32(head.constData() + 4) != static_cast<uint32_t>(core::kBuiltLevelCacheFormatVersion)) {
+        return false;
+    }
+    const uint32_t blockCount = getU32(head.constData() + 8);
+    size_t declared = 0;
+    for (uint32_t b = 0; b < blockCount; ++b) {
+        const QByteArray bh = f.read(kBlockHeaderBytes);
+        if (bh.size() != kBlockHeaderBytes) {
+            return false;
+        }
+        const uint32_t usize = getU32(bh.constData());
+        const uint32_t csize = getU32(bh.constData() + 4);
+        if (usize > expectedBytes - declared || static_cast<qint64>(csize) > f.size() - f.pos()
+            || !f.seek(f.pos() + csize)) {
+            return false;
+        }
+        declared += usize;
+    }
+    return declared == expectedBytes && f.atEnd();
+}
+
+/// Whether the entry at `entryDir` is one this save may stand down for: its
+/// stored key is `key` and every level file is whole for `levels`. A header
+/// that merely parses is not enough -- a corrupt entry the load could not set
+/// aside has one too, and accepting it would report a save that never happened.
+bool entryEquivalent(const QString& entryDir, const core::BuiltLevelCacheKey& key,
+                     const std::vector<core::BuiltLevelView>& levels)
 {
     QFile f(entryDir + QStringLiteral("/header.json"));
     if (!f.open(QIODevice::ReadOnly)) {
         return false;
     }
     const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
-    return doc.isObject() && doc.object().contains(QStringLiteral("key"));
+    if (!doc.isObject() || !doc.object().value(QStringLiteral("key")).isObject()) {
+        return false;
+    }
+    core::BuiltLevelCacheKey stored;
+    if (!keyFromJson(doc.object().value(QStringLiteral("key")).toObject(), stored) || stored != key) {
+        return false;
+    }
+    for (size_t i = 0; i < levels.size(); ++i) {
+        if (!levelFileIntact(entryDir + QStringLiteral("/level-%1.bin").arg(i), levels[i].size)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace
@@ -516,10 +566,20 @@ bool BuiltLevelDiskCache::save(const core::BuiltLevelCacheKey& key, const core::
         if (QDir(folder).rename(tempName, QString::fromStdString(name))) {
             return true;
         }
-        if (looksValid(finalDir)) {
+        if (entryEquivalent(finalDir, key, levels)) {
             // Lost a race to an equivalent entry.
             discard(tempDir);
             tempCreated = false;
+            return true;
+        }
+        // Something unusable holds the name -- typically a corrupt entry the
+        // load could not set aside. Try once more to move it aside, then put
+        // ours in its place; if either step fails, say so rather than claim a
+        // save that left the corrupt entry where it was.
+        if (QFileInfo(finalDir).exists()
+            && QDir(folder).rename(QString::fromStdString(name), temporaryName(name))
+            && QDir(folder).rename(tempName, QString::fromStdString(name))) {
+            spdlog::info("Level cache: replaced an unusable entry {}", name);
             return true;
         }
         return fail(QStringLiteral("the entry cannot be put in place"));

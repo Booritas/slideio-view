@@ -412,6 +412,81 @@ TEST_CASE("a corrupt entry is set aside and can be rewritten", "[BuiltLevelDiskC
     REQUIRE(*loaded == rasters.data);
 }
 
+namespace
+{
+
+/// Cuts the last `bytes` off a file, as a crash mid-write or a full disk would.
+void truncateBy(const QString& path, qint64 bytes)
+{
+    QFile f(path);
+    REQUIRE(f.open(QIODevice::ReadWrite));
+    REQUIRE(f.resize(f.size() - bytes));
+}
+
+} // namespace
+
+TEST_CASE("a save over an intact equivalent entry stands down", "[BuiltLevelDiskCache]")
+{
+    QTemporaryDir tmp;
+    REQUIRE(tmp.isValid());
+    const std::string folder = utf8(tmp.path());
+    infra::BuiltLevelDiskCache cache(folder);
+    const auto key = makeKey(core::DataType::Byte, 3);
+    const auto rasters = makeRasters(3);
+    std::atomic<bool> cancel{false};
+    REQUIRE(cache.save(key, makeDescription(), rasters.views(), cancel));
+    REQUIRE(cache.save(key, makeDescription(), rasters.views(), cancel));
+    REQUIRE(subdirs(folder).size() == 1);
+    REQUIRE(cache.load(key, rasters.sizes, 3, kNoCancel).has_value());
+}
+
+TEST_CASE("a save replaces a truncated entry left in place", "[BuiltLevelDiskCache]")
+{
+    // The load sets a corrupt entry aside; when it could not, the entry is
+    // still under the final name. A header that parses is not enough to stand
+    // down for: the save must replace it, not report success over it.
+    QTemporaryDir tmp;
+    REQUIRE(tmp.isValid());
+    const std::string folder = utf8(tmp.path());
+    infra::BuiltLevelDiskCache cache(folder);
+    const auto key = makeKey(core::DataType::Byte, 3);
+    const auto rasters = makeRasters(3);
+    std::atomic<bool> cancel{false};
+    REQUIRE(cache.save(key, makeDescription(), rasters.views(), cancel));
+    truncateBy(entryDir(folder, key) + "/level-1.bin", 5);
+
+    REQUIRE(cache.save(key, makeDescription(), rasters.views(), cancel));
+    const auto loaded = cache.load(key, rasters.sizes, 3, kNoCancel);
+    REQUIRE(loaded.has_value());
+    REQUIRE(*loaded == rasters.data);
+}
+
+#ifdef Q_OS_WIN
+TEST_CASE("a save that cannot move a corrupt entry aside reports failure", "[BuiltLevelDiskCache]")
+{
+    // On Windows a directory holding an open file cannot be renamed -- the
+    // virus-scanner case the load's set-aside also meets.
+    QTemporaryDir tmp;
+    REQUIRE(tmp.isValid());
+    const std::string folder = utf8(tmp.path());
+    infra::BuiltLevelDiskCache cache(folder);
+    const auto key = makeKey(core::DataType::Byte, 3);
+    const auto rasters = makeRasters(3);
+    std::atomic<bool> cancel{false};
+    REQUIRE(cache.save(key, makeDescription(), rasters.views(), cancel));
+    const QString dir = entryDir(folder, key);
+    truncateBy(dir + "/level-0.bin", 5);
+    {
+        QFile held(dir + "/header.json");
+        REQUIRE(held.open(QIODevice::ReadOnly));
+        REQUIRE_FALSE(cache.save(key, makeDescription(), rasters.views(), cancel));
+    }
+    // Nothing temporary is left behind, and the corrupt entry is still a miss.
+    REQUIRE(subdirs(folder).size() == 1);
+    REQUIRE_FALSE(cache.load(key, rasters.sizes, 3, kNoCancel).has_value());
+}
+#endif
+
 TEST_CASE("a cancelled load is a miss that leaves the entry in place", "[BuiltLevelDiskCache]")
 {
     QTemporaryDir tmp;
