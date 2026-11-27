@@ -4,6 +4,7 @@
 #include "slideio/viewer/core/Types.h"
 
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace slideio::viewer::core
@@ -55,12 +56,20 @@ public:
     /// sourceHeight, or any ordering violation above.
     void addChunk(int x, int y, int w, int h, const uint8_t* pixels);
 
-    /// Counts as coverage and marks the band failed. Same contract and exceptions as addChunk.
+    /// Counts as coverage and marks the chunk's columns of the band failed --
+    /// only those columns: one unreadable chunk must not blank the full width
+    /// of the slide. A box a failed chunk only partly covers is failed too.
+    /// Same contract and exceptions as addChunk.
     void failChunk(int x, int y, int w, int h);
 
-    /// Rows [y0, y1) of resident level `residentIndex` (0 = finest), clamped to
-    /// the level. An empty range is Ready.
+    /// Rows [y0, y1) of resident level `residentIndex` (0 = finest), across the
+    /// whole width, clamped to the level. An empty range is Ready. Failed if any
+    /// box in the range failed.
     BuiltRegionState regionState(int residentIndex, int y0, int y1) const;
+
+    /// The box [x0, x1) x [y0, y1) of that level, clamped to it. Failed only if
+    /// a failed box lies inside it, so a tile beside a failed chunk is Ready.
+    BuiltRegionState regionState(int residentIndex, int x0, int y0, int x1, int y1) const;
 
     /// Copy of a region of that level, clipped to it. Callers check
     /// `regionState` first; an unfinished region holds whatever is in the buffer.
@@ -72,6 +81,11 @@ public:
     bool complete() const;
 
 private:
+    /// Half-open column range [begin, end) of failed boxes in one row.
+    using Span = std::pair<int, int>;
+    /// Sorted, disjoint, non-adjacent spans.
+    using Spans = std::vector<Span>;
+
     struct Level
     {
         int factor = 1;
@@ -79,8 +93,11 @@ private:
         int height = 0;
         int completedRows = 0;
         std::vector<uint8_t> data;
-        std::vector<char> rowFailed;
+        std::vector<Spans> failedSpans; // one per row; empty for a row with no failure
     };
+
+    static void addSpan(Spans& spans, int begin, int end);
+    static bool spansIntersect(const Spans& spans, int begin, int end);
 
     void beginBand(int y, int h);
     void noteCoverage(int w);
@@ -99,7 +116,7 @@ private:
     int m_bandY = 0;
     int m_bandHeight = 0;
     int m_bandCovered = 0;
-    bool m_bandFailed = false;
+    Spans m_bandFailedSpans; // finest-level box columns of the active band's failed chunks
     std::vector<double> m_bandSum;
     std::vector<uint32_t> m_bandCount;
 };

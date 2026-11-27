@@ -178,7 +178,9 @@ BuiltPyramidSource::ResidentAnswer BuiltPyramidSource::residentAnswerLocked(cons
     if (key.colorMode() != m_buildMode) {
         return pending; // never served from the other rendition
     }
-    switch (m_accumulator->regionState(residentIndexOf(key.level()), rect.levelY, rect.levelY + rect.tileH)) {
+    // The tile's own columns: a failed chunk elsewhere in its rows is not its failure.
+    switch (m_accumulator->regionState(residentIndexOf(key.level()), rect.levelX, rect.levelY,
+                                       rect.levelX + rect.tileW, rect.levelY + rect.tileH)) {
     case core::BuiltRegionState::Ready:
         return ResidentAnswer::Ready;
     case core::BuiltRegionState::Failed:

@@ -222,6 +222,93 @@ TEST_CASE("a failed band marks its rows failed and leaves neighbours ready", "[c
     REQUIRE(acc.regionState(1, 3, 5) == BuiltRegionState::Ready);
 }
 
+namespace
+{
+
+/// Columns [x0, x1) of a `w`-wide single-channel byte band of height `h`.
+std::vector<uint8_t> columnsOf(const std::vector<uint8_t>& band, int w, int h, int x0, int x1)
+{
+    std::vector<uint8_t> out;
+    for (int r = 0; r < h; ++r) {
+        out.insert(out.end(), band.begin() + r * w + x0, band.begin() + r * w + x1);
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("a failed chunk fails only its own columns", "[core][BuiltLevelAccumulator]")
+{
+    // One band of 8 rows, 16 wide: level 0 is 8x4, level 1 is 4x2.
+    const auto band = pattern(16, 8, 1);
+    BuiltLevelAccumulator acc(16, 8, 1, DataType::Byte, {2, 4});
+    const auto left = columnsOf(band, 16, 8, 0, 4);
+    const auto right = columnsOf(band, 16, 8, 10, 16);
+    acc.addChunk(0, 0, 4, 8, left.data());
+    acc.failChunk(4, 0, 6, 8); // source columns [4, 10): level-0 boxes [2, 5), level-1 boxes [1, 3)
+    acc.addChunk(10, 0, 6, 8, right.data());
+    REQUIRE(acc.complete());
+
+    REQUIRE(acc.regionState(0, 0, 0, 2, 4) == BuiltRegionState::Ready);
+    REQUIRE(acc.regionState(0, 2, 0, 3, 4) == BuiltRegionState::Failed);
+    REQUIRE(acc.regionState(0, 4, 0, 5, 4) == BuiltRegionState::Failed);
+    REQUIRE(acc.regionState(0, 5, 0, 8, 4) == BuiltRegionState::Ready);
+    REQUIRE(acc.regionState(1, 0, 0, 1, 2) == BuiltRegionState::Ready);
+    REQUIRE(acc.regionState(1, 1, 0, 3, 2) == BuiltRegionState::Failed);
+    REQUIRE(acc.regionState(1, 3, 0, 4, 2) == BuiltRegionState::Ready);
+
+    SECTION("the full-width overload still reports the failure")
+    {
+        REQUIRE(acc.regionState(0, 0, 4) == BuiltRegionState::Failed);
+        REQUIRE(acc.regionState(1, 0, 2) == BuiltRegionState::Failed);
+    }
+
+    SECTION("boxes beside the failed chunk hold the same values as an unbroken build")
+    {
+        BuiltLevelAccumulator whole(16, 8, 1, DataType::Byte, {2, 4});
+        whole.addChunk(0, 0, 16, 8, band.data());
+        REQUIRE(acc.extract(0, 0, 0, 2, 4).buffer() == whole.extract(0, 0, 0, 2, 4).buffer());
+        REQUIRE(acc.extract(0, 5, 0, 3, 4).buffer() == whole.extract(0, 5, 0, 3, 4).buffer());
+        REQUIRE(acc.extract(1, 3, 0, 1, 2).buffer() == whole.extract(1, 3, 0, 1, 2).buffer());
+    }
+}
+
+TEST_CASE("a box a failed chunk only partly covers is failed", "[core][BuiltLevelAccumulator]")
+{
+    const auto band = pattern(16, 4, 1);
+    BuiltLevelAccumulator acc(16, 4, 1, DataType::Byte, {2});
+    const auto left = columnsOf(band, 16, 4, 0, 5);
+    const auto right = columnsOf(band, 16, 4, 7, 16);
+    acc.addChunk(0, 0, 5, 4, left.data());
+    acc.failChunk(5, 0, 2, 4); // source columns 5 and 6 straddle boxes 2 and 3
+    acc.addChunk(7, 0, 9, 4, right.data());
+
+    REQUIRE(acc.regionState(0, 1, 0, 2, 2) == BuiltRegionState::Ready);
+    REQUIRE(acc.regionState(0, 2, 0, 3, 2) == BuiltRegionState::Failed);
+    REQUIRE(acc.regionState(0, 3, 0, 4, 2) == BuiltRegionState::Failed);
+    REQUIRE(acc.regionState(0, 4, 0, 8, 2) == BuiltRegionState::Ready);
+}
+
+TEST_CASE("failed chunks of later bands stay in their own columns", "[core][BuiltLevelAccumulator]")
+{
+    // Two bands of 4 rows; band 0 fails on the left, band 1 on the right. Each
+    // band is two level-0 rows and one level-1 row.
+    const auto band = pattern(16, 4, 1);
+    BuiltLevelAccumulator acc(16, 8, 1, DataType::Byte, {2, 4});
+    const auto rightOf0 = columnsOf(band, 16, 4, 8, 16);
+    const auto leftOf1 = columnsOf(band, 16, 4, 0, 8);
+    acc.failChunk(0, 0, 8, 4);
+    acc.addChunk(8, 0, 8, 4, rightOf0.data());
+    acc.addChunk(0, 4, 8, 4, leftOf1.data());
+    acc.failChunk(8, 4, 8, 4);
+    REQUIRE(acc.complete());
+
+    REQUIRE(acc.regionState(1, 0, 0, 2, 1) == BuiltRegionState::Failed);
+    REQUIRE(acc.regionState(1, 2, 0, 4, 1) == BuiltRegionState::Ready);
+    REQUIRE(acc.regionState(1, 0, 1, 2, 2) == BuiltRegionState::Ready);
+    REQUIRE(acc.regionState(1, 2, 1, 4, 2) == BuiltRegionState::Failed);
+}
+
 TEST_CASE("the constructor rejects an out-of-contract configuration", "[core][BuiltLevelAccumulator]")
 {
     using Acc = BuiltLevelAccumulator;

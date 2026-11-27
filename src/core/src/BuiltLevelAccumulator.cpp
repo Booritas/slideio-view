@@ -208,7 +208,7 @@ BuiltLevelAccumulator::BuiltLevelAccumulator(int sourceWidth, int sourceHeight, 
         level.width = std::max(1, ceilDiv(sourceWidth, factor));
         level.height = std::max(1, ceilDiv(sourceHeight, factor));
         level.data.assign(static_cast<size_t>(level.width) * level.height * pixelBytes, 0);
-        level.rowFailed.assign(static_cast<size_t>(level.height), 0);
+        level.failedSpans.assign(static_cast<size_t>(level.height), Spans{});
         m_levels.push_back(std::move(level));
     }
 }
@@ -243,7 +243,7 @@ void BuiltLevelAccumulator::beginBand(int y, int h)
     m_bandY = y;
     m_bandHeight = h;
     m_bandCovered = 0;
-    m_bandFailed = false;
+    m_bandFailedSpans.clear();
     const size_t boxRows = static_cast<size_t>(ceilDiv(h, finest.factor));
     m_bandSum.assign(boxRows * finest.width * m_numChannels, 0.0);
     m_bandCount.assign(boxRows * finest.width, 0);
@@ -325,8 +325,49 @@ void BuiltLevelAccumulator::failChunk(int x, int y, int w, int h)
 {
     validateChunk(x, y, w, h);
     beginBand(y, h);
-    m_bandFailed = true;
+    const int factor = m_levels.front().factor;
+    // A box straddling the chunk's edge averages pixels it never received, so
+    // it is failed too.
+    addSpan(m_bandFailedSpans, x / factor, ceilDiv(x + w, factor));
     noteCoverage(w);
+}
+
+void BuiltLevelAccumulator::addSpan(Spans& spans, int begin, int end)
+{
+    if (begin >= end) {
+        return;
+    }
+    Spans merged;
+    merged.reserve(spans.size() + 1);
+    bool placed = false;
+    for (const Span& s : spans) {
+        if (s.second < begin) {
+            merged.push_back(s);
+        } else if (end < s.first) {
+            if (!placed) {
+                merged.emplace_back(begin, end);
+                placed = true;
+            }
+            merged.push_back(s);
+        } else {
+            begin = std::min(begin, s.first); // overlapping or adjacent: absorb it
+            end = std::max(end, s.second);
+        }
+    }
+    if (!placed) {
+        merged.emplace_back(begin, end);
+    }
+    spans = std::move(merged);
+}
+
+bool BuiltLevelAccumulator::spansIntersect(const Spans& spans, int begin, int end)
+{
+    for (const Span& s : spans) {
+        if (s.first < end && begin < s.second) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void BuiltLevelAccumulator::finalizeBand()
@@ -339,10 +380,9 @@ void BuiltLevelAccumulator::finalizeBand()
     const size_t sampleBytes = dataTypeSize(m_dataType);
 
     for (int br = 0; br < boxRows; ++br) {
-        if (m_bandFailed) {
-            finest.rowFailed[static_cast<size_t>(row0 + br)] = 1;
-            continue; // the row stays zero
-        }
+        // Boxes of a failed chunk received no pixels and store 0; they are
+        // marked failed, so nothing reads them as data.
+        finest.failedSpans[static_cast<size_t>(row0 + br)] = m_bandFailedSpans;
         withCodec(m_dataType, [&](auto codec) {
             using Codec = decltype(codec);
             for (int bx = 0; bx < finest.width; ++bx) {
@@ -380,34 +420,34 @@ void BuiltLevelAccumulator::propagate()
             if (prev.completedRows < hi) {
                 break;
             }
-            bool failed = false;
+            // A coarse box is failed if any finer box it averages failed.
+            Spans& failed = cur.failedSpans[static_cast<size_t>(j)];
             for (int r = lo; r < hi; ++r) {
-                failed = failed || prev.rowFailed[static_cast<size_t>(r)] != 0;
+                for (const Span& s : prev.failedSpans[static_cast<size_t>(r)]) {
+                    addSpan(failed, s.first / ratio, std::min(ceilDiv(s.second, ratio), cur.width));
+                }
             }
-            if (failed) {
-                cur.rowFailed[static_cast<size_t>(j)] = 1; // the row stays zero
-            } else {
-                withCodec(m_dataType, [&](auto codec) {
-                    using Codec = decltype(codec);
-                    for (int x = 0; x < cur.width; ++x) {
-                        const int xlo = x * ratio;
-                        const int xhi = std::min(xlo + ratio, prev.width);
-                        const double n = static_cast<double>((xhi - xlo) * (hi - lo));
-                        uint8_t* dst = cur.data.data() + (static_cast<size_t>(j) * cur.width + x) * pixelBytes;
-                        for (size_t c = 0; c < channels; ++c) {
-                            double sum = 0.0;
-                            for (int r = lo; r < hi; ++r) {
-                                for (int xx = xlo; xx < xhi; ++xx) {
-                                    sum += Codec::load(prev.data.data()
-                                                       + (static_cast<size_t>(r) * prev.width + xx) * pixelBytes
-                                                       + c * sampleBytes);
-                                }
+            // Every box is averaged; a failed one averages zeros and is never read.
+            withCodec(m_dataType, [&](auto codec) {
+                using Codec = decltype(codec);
+                for (int x = 0; x < cur.width; ++x) {
+                    const int xlo = x * ratio;
+                    const int xhi = std::min(xlo + ratio, prev.width);
+                    const double n = static_cast<double>((xhi - xlo) * (hi - lo));
+                    uint8_t* dst = cur.data.data() + (static_cast<size_t>(j) * cur.width + x) * pixelBytes;
+                    for (size_t c = 0; c < channels; ++c) {
+                        double sum = 0.0;
+                        for (int r = lo; r < hi; ++r) {
+                            for (int xx = xlo; xx < xhi; ++xx) {
+                                sum += Codec::load(prev.data.data()
+                                                   + (static_cast<size_t>(r) * prev.width + xx) * pixelBytes
+                                                   + c * sampleBytes);
                             }
-                            Codec::store(dst + c * sampleBytes, sum / n);
                         }
+                        Codec::store(dst + c * sampleBytes, sum / n);
                     }
-                });
-            }
+                }
+            });
             ++cur.completedRows;
         }
     }
@@ -416,13 +456,21 @@ void BuiltLevelAccumulator::propagate()
 BuiltRegionState BuiltLevelAccumulator::regionState(int residentIndex, int y0, int y1) const
 {
     const Level& level = m_levels.at(static_cast<size_t>(residentIndex));
+    return regionState(residentIndex, 0, y0, level.width, y1);
+}
+
+BuiltRegionState BuiltLevelAccumulator::regionState(int residentIndex, int x0, int y0, int x1, int y1) const
+{
+    const Level& level = m_levels.at(static_cast<size_t>(residentIndex));
+    x0 = std::max(0, x0);
+    x1 = std::min(level.width, x1);
     y0 = std::max(0, y0);
     y1 = std::min(level.height, y1);
-    if (y0 >= y1) {
+    if (y0 >= y1 || x0 >= x1) {
         return BuiltRegionState::Ready;
     }
     for (int r = y0; r < y1; ++r) {
-        if (level.rowFailed[static_cast<size_t>(r)] != 0) {
+        if (spansIntersect(level.failedSpans[static_cast<size_t>(r)], x0, x1)) {
             return BuiltRegionState::Failed;
         }
     }

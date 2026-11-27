@@ -202,6 +202,14 @@ public:
         m_failY = y;
     }
 
+    // Only the chunk read starting at (x, y) answers an error tile.
+    void failChunkAt(int x, int y)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_failChunkX = x;
+        m_failChunkY = y;
+    }
+
     std::vector<BlockCall> calls() const
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -235,7 +243,7 @@ private:
         {
             std::unique_lock<std::mutex> lock(m_mutex);
             m_calls.push_back(BlockCall{x, y, w, h, tw, th, z, t, mode, live});
-            fail = (y == m_failY);
+            fail = (y == m_failY) || (x == m_failChunkX && y == m_failChunkY);
             shrink = (y == m_shrinkY);
             if (y == m_throwY) {
                 throw std::runtime_error("fake read failure");
@@ -274,6 +282,8 @@ private:
     bool m_blocking = false;
     int m_waiting = 0;
     int m_failY = -1;
+    int m_failChunkX = -1;
+    int m_failChunkY = -1;
     int m_throwY = -1;
     int m_shrinkY = -1;
     std::vector<BlockCall> m_calls;
@@ -712,6 +722,35 @@ TEST_CASE("a failed band yields error tiles and the build completes", "[infra][B
     CHECK(source.smallestBuiltLevel().isEmpty());
     CHECK(source.smallestBuiltLevel().isEmpty());
     CHECK(log.count("overview withheld because") == 1);
+}
+
+TEST_CASE("a failed chunk fails only the tiles over its own columns", "[infra][BuiltPyramidSource]")
+{
+    auto fake = std::make_shared<FakeSource>();
+    // 512-row bands, chunks of seven 256-px tiles: x = 0, 1792, 3584.
+    fake->failChunkAt(1792, 512); // level-1 columns 896..1791, rows 256..511
+    BuiltPyramidSource source(fake, kBuiltLevelBudgetBytes, 1'000'000);
+    Progress progress;
+    progress.attach(source);
+    source.start();
+    REQUIRE(progress.waitForCompletes(1));
+
+    // Level-1 tile row 1 is the failed band; only tile columns 3..6 overlap the chunk.
+    CHECK_FALSE(source.readTile(TileKey(1, 0, 1)).isError());
+    CHECK_FALSE(source.readTile(TileKey(1, 2, 1)).isError());
+    CHECK(source.readTile(TileKey(1, 3, 1)).isError());
+    CHECK(source.readTile(TileKey(1, 6, 1)).isError());
+    CHECK_FALSE(source.readTile(TileKey(1, 7, 1)).isError());
+
+    const TileData beside = source.readTile(TileKey(1, 0, 1));
+    REQUIRE(beside.width() == 256);
+    CHECK(beside.buffer()[0] == halfPixel(0, 256, 4100, 3000));
+
+    // Level 2 (/4): columns 448..895 failed, so tile column 0 is clean, 1..3 are not.
+    CHECK_FALSE(source.readTile(TileKey(2, 0, 0)).isError());
+    CHECK(source.readTile(TileKey(2, 2, 0)).isError());
+    // Still no overview: it would carry the hole.
+    CHECK(source.smallestBuiltLevel().isEmpty());
 }
 
 TEST_CASE("a mode change rebuilds in the new mode", "[infra][BuiltPyramidSource]")
