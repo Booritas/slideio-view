@@ -125,19 +125,21 @@ core::TileData BuiltPyramidSource::smallestBuiltLevel() const
     }
     const int coarsest = static_cast<int>(m_residentFactors.size()) - 1;
     const int height = m_accumulator->levelHeight(coarsest);
-    // A failed row holds zeros, which the minimap would paint as a black
-    // stripe across the slide. No overview beats a wrong one.
-    int failedRows = 0;
+    // A failed row holds zeros, and so does a row a stopped build never
+    // reached -- complete is set then too -- and the minimap would paint
+    // either as a black stripe across the slide. Only a level whose every row
+    // is Ready is an overview; no overview beats a wrong one.
+    int unreadyRows = 0;
     for (int y = 0; y < height; ++y) {
-        if (m_accumulator->regionState(coarsest, y, y + 1) == core::BuiltRegionState::Failed) {
-            ++failedRows;
+        if (m_accumulator->regionState(coarsest, y, y + 1) != core::BuiltRegionState::Ready) {
+            ++unreadyRows;
         }
     }
-    if (failedRows > 0) {
+    if (unreadyRows > 0) {
         if (!m_withheldLogged.exchange(true)) {
             spdlog::info("BuiltPyramidSource: overview withheld because {} of {} rows of the smallest built "
-                         "level failed",
-                         failedRows, height);
+                         "level failed or were never built",
+                         unreadyRows, height);
         }
         return {};
     }
@@ -494,8 +496,8 @@ void BuiltPyramidSource::run(uint64_t generation, core::ColorMode mode)
         }
         return;
     } catch (const std::exception& e) {
-        // Only a contract violation fed to the accumulator lands here; nothing
-        // may escape a std::thread.
+        // A contract violation fed to the accumulator, or an allocation failure
+        // in its per-band buffers, lands here; nothing may escape a std::thread.
         spdlog::error("BuiltPyramidSource: build in mode {} stopped: {}", modeName(mode), e.what());
     } catch (...) {
         spdlog::error("BuiltPyramidSource: build in mode {} stopped", modeName(mode));
