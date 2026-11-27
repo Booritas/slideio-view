@@ -17,6 +17,7 @@ add_library(slideio-viewer-ui STATIC
     src/CalibrationPolicy.cpp
     src/CalibrationDialog.cpp
     src/MeasurementLabel.cpp
+    src/OverviewRendering.cpp
     src/LayersPanelPolicy.cpp
     src/LayersPanel.cpp
     src/AnnotationImportSummary.cpp

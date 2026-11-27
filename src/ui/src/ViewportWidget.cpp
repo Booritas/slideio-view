@@ -4,6 +4,7 @@
 #include "slideio/viewer/ui/AnnotationShapeName.h"
 #include "slideio/viewer/ui/LayersPanelPolicy.h"
 #include "slideio/viewer/ui/MeasurementLabel.h"
+#include "slideio/viewer/ui/OverviewRendering.h"
 #include "slideio/viewer/ui/TextAnnotationLayout.h"
 
 #include "slideio/viewer/app/AnnotationEditing.h"
@@ -216,6 +217,10 @@ void main()
 )glsl";
 
 using DataType = slideio::viewer::core::DataType;
+using slideio::viewer::ui::OverviewRenderer;
+using slideio::viewer::ui::mapPixelNormalized;
+using slideio::viewer::ui::mapPixelToUint8;
+using slideio::viewer::ui::renderOverviewImage;
 
 constexpr int kMaxTextureUploadsPerFrame = 8;
 constexpr double kZoomInFactor = 1.25;
@@ -444,35 +449,6 @@ std::pair<double, double> dataTypeHistogramRange(DataType dt)
     }
 }
 
-// Map a pixel element from native type through [min,max] -> [0,1] for thumbnail mixing.
-double mapPixelNormalized(const uint8_t* buffer, size_t elementIndex,
-                          DataType dataType, double minVal, double maxVal)
-{
-    double value = 0.0;
-    switch (dataType) {
-    case DataType::Byte:    value = static_cast<double>(buffer[elementIndex]); break;
-    case DataType::Int8:    value = static_cast<double>(reinterpret_cast<const int8_t*>(buffer)[elementIndex]); break;
-    case DataType::UInt16:  value = static_cast<double>(reinterpret_cast<const uint16_t*>(buffer)[elementIndex]); break;
-    case DataType::Int16:   value = static_cast<double>(reinterpret_cast<const int16_t*>(buffer)[elementIndex]); break;
-    case DataType::UInt32:  value = static_cast<double>(reinterpret_cast<const uint32_t*>(buffer)[elementIndex]); break;
-    case DataType::Int32:   value = static_cast<double>(reinterpret_cast<const int32_t*>(buffer)[elementIndex]); break;
-    case DataType::Float32: value = static_cast<double>(reinterpret_cast<const float*>(buffer)[elementIndex]); break;
-    case DataType::Float64: value = static_cast<double>(reinterpret_cast<const double*>(buffer)[elementIndex]); break;
-    default: value = static_cast<double>(buffer[elementIndex]); break;
-    }
-    double range = maxVal - minVal;
-    if (range <= 0.0) return 0.0;
-    return std::clamp((value - minVal) / range, 0.0, 1.0);
-}
-
-// Map a pixel element from native type through [min,max] -> [0,255] for thumbnails
-uint8_t mapPixelToUint8(const uint8_t* buffer, size_t elementIndex,
-                        DataType dataType, double minVal, double maxVal)
-{
-    return static_cast<uint8_t>(
-        std::round(mapPixelNormalized(buffer, elementIndex, dataType, minVal, maxVal) * 255.0));
-}
-
 // Render a resampled block to an 8-bit QImage (RGB888 or Grayscale8),
 // auto-stretching each channel through the block's native data type. Without
 // this rescale, non-Byte data types (e.g., UInt16) produce distorted thumbnails
@@ -575,150 +551,6 @@ QImage tileDataToQImage(const slideio::viewer::core::TileData& block,
     }
 
     return out;
-}
-
-// Converts native-type pixels to the minimap's 8-bit image: the per-channel mix /
-// RGB / grayscale rules shared by the open-time thumbnail and the overview built
-// from the viewer-built pyramid levels, so the two cannot drift.
-//
-// Uses the same per-channel display ranges as the viewport's multi-channel render
-// path (each channel stretched independently), so the minimap and viewport show
-// matching colors. Falls back to the global range for single-channel rendering or
-// when per-channel ranges weren't detected. All visible channels are mixed with
-// ChannelInfo::colorR/G/B * intensity to mirror the viewport's channelShader path;
-// a naive src[0]->R / src[1]->G / src[2]->B copy would swap R and B on 3-channel
-// brightfield CZIs whose BGR planes SlideIO labels blue/green/red.
-class OverviewRenderer
-{
-public:
-    OverviewRenderer(const slideio::viewer::core::SlideInfo& info, double globalMin, double globalMax)
-        : m_numCh(info.numChannels)
-        , m_dt(info.channelDataType)
-        , m_isBrightfield(info.isBrightfield)
-        , m_globalMin(globalMin)
-        , m_globalMax(globalMax)
-    {
-        auto channelMinFor = [&](int ch) {
-            const size_t ch_z = static_cast<size_t>(ch);
-            if (m_numCh > 1 && ch < static_cast<int>(info.channels.size())
-                && info.channels[ch_z].displayRange.autoDetected) {
-                return info.channels[ch_z].displayRange.displayMin;
-            }
-            return globalMin;
-        };
-        auto channelMaxFor = [&](int ch) {
-            const size_t ch_z = static_cast<size_t>(ch);
-            if (m_numCh > 1 && ch < static_cast<int>(info.channels.size())
-                && info.channels[ch_z].displayRange.autoDetected) {
-                return info.channels[ch_z].displayRange.displayMax;
-            }
-            return globalMax;
-        };
-        m_rMin = channelMinFor(0); m_rMax = channelMaxFor(0);
-        m_gMin = channelMinFor(1); m_gMax = channelMaxFor(1);
-        m_bMin = channelMinFor(2); m_bMax = channelMaxFor(2);
-
-        m_useChannelMix = !(info.isBrightfield && m_numCh <= 1) && m_numCh >= 1;
-        if (m_useChannelMix) {
-            m_mix.resize(static_cast<size_t>(m_numCh));
-            for (int ch = 0; ch < m_numCh; ++ch) {
-                const size_t ch_z = static_cast<size_t>(ch);
-                ChannelMix& m = m_mix[ch_z];
-                m.minVal = channelMinFor(ch);
-                m.maxVal = channelMaxFor(ch);
-                if (ch < static_cast<int>(info.channels.size())) {
-                    const auto& chInfo = info.channels[ch_z];
-                    if (!chInfo.visible) continue;
-                    float intensity = std::clamp(chInfo.intensity, 0.0f, 4.0f);
-                    m.r = chInfo.colorR * intensity;
-                    m.g = chInfo.colorG * intensity;
-                    m.b = chInfo.colorB * intensity;
-                    m.active = true;
-                }
-            }
-        }
-    }
-
-    QImage::Format format() const
-    {
-        return (m_useChannelMix || m_numCh >= 3) ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
-    }
-
-    // Writes the pixel at column x of scanline `row`; srcElem is the element
-    // index of the pixel's first channel in `src`, srcCh its channel count.
-    void writePixel(uint8_t* row, int x, const uint8_t* src, size_t srcElem, int srcCh) const
-    {
-        if (m_useChannelMix) {
-            uint8_t* dst = row + x * 3;
-            float accR = 0.0f, accG = 0.0f, accB = 0.0f;
-            const int upTo = std::min(m_numCh, srcCh);
-            for (int ch = 0; ch < upTo; ++ch) {
-                const ChannelMix& m = m_mix[static_cast<size_t>(ch)];
-                if (!m.active) continue;
-                float v = static_cast<float>(mapPixelNormalized(
-                    src, srcElem + static_cast<size_t>(ch), m_dt, m.minVal, m.maxVal));
-                accR += v * m.r;
-                accG += v * m.g;
-                accB += v * m.b;
-            }
-            dst[0] = static_cast<uint8_t>(std::clamp(accR * 255.0f, 0.0f, 255.0f));
-            dst[1] = static_cast<uint8_t>(std::clamp(accG * 255.0f, 0.0f, 255.0f));
-            dst[2] = static_cast<uint8_t>(std::clamp(accB * 255.0f, 0.0f, 255.0f));
-        } else if (m_numCh >= 3) {
-            uint8_t* dst = row + x * 3;
-            dst[0] = mapPixelToUint8(src, srcElem + 0, m_dt, m_rMin, m_rMax);
-            dst[1] = mapPixelToUint8(src, srcElem + 1, m_dt, m_gMin, m_gMax);
-            dst[2] = mapPixelToUint8(src, srcElem + 2, m_dt, m_bMin, m_bMax);
-        } else {
-            row[x] = mapPixelToUint8(src, srcElem, m_dt, m_globalMin, m_globalMax);
-        }
-    }
-
-    // Renders a whole block (width x height pixels, block.numChannels() channels).
-    QImage render(const slideio::viewer::core::TileData& block) const
-    {
-        if (block.isEmpty() || block.isError()) return {};
-        const int w = block.width();
-        const int h = block.height();
-        if (w <= 0 || h <= 0) return {};
-        QImage img(w, h, format());
-        img.fill(m_isBrightfield ? Qt::white : Qt::black);
-        const uint8_t* src = block.buffer().data();
-        const int srcCh = block.numChannels();
-        for (int y = 0; y < h; ++y) {
-            uint8_t* row = img.scanLine(y);
-            for (int x = 0; x < w; ++x) {
-                writePixel(row, x, src, static_cast<size_t>((y * w + x) * srcCh), srcCh);
-            }
-        }
-        return img;
-    }
-
-private:
-    struct ChannelMix
-    {
-        double minVal = 0.0;
-        double maxVal = 1.0;
-        float r = 1.0f, g = 1.0f, b = 1.0f;  // colorR/G/B * intensity, premultiplied
-        bool active = false;
-    };
-
-    int m_numCh;
-    DataType m_dt;
-    bool m_isBrightfield;
-    double m_globalMin, m_globalMax;
-    double m_rMin = 0, m_rMax = 0, m_gMin = 0, m_gMax = 0, m_bMin = 0, m_bMax = 0;
-    bool m_useChannelMix = false;
-    std::vector<ChannelMix> m_mix;
-};
-
-// The overview of a block as the minimap shows it, from SlideInfo alone: the
-// global range is the slide's display range. (The open-time path passes its own
-// local global range to OverviewRenderer directly.)
-QImage renderOverviewImage(const slideio::viewer::core::TileData& block,
-                           const slideio::viewer::core::SlideInfo& info)
-{
-    return OverviewRenderer(info, info.displayRange.displayMin, info.displayRange.displayMax).render(block);
 }
 
 // Fallback used when readBlock fails (e.g., a single corrupted tile at the
