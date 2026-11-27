@@ -17,6 +17,8 @@ public:
     int slideHeight() const;
     int numLevels() const;
     const LevelInfo& levelInfo(int level) const;
+    /// Every level, stored then built, indexed by level.
+    const std::vector<LevelInfo>& levels() const;
 
     int bestLevelForScale(double viewportScale) const;
 

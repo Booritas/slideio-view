@@ -37,6 +37,11 @@ const LevelInfo& TilePyramid::levelInfo(int level) const
     return m_levels[static_cast<size_t>(level)];
 }
 
+const std::vector<LevelInfo>& TilePyramid::levels() const
+{
+    return m_levels;
+}
+
 int TilePyramid::bestLevelForScale(double viewportScale) const
 {
     if (m_levels.empty()) {

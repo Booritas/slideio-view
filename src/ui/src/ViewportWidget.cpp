@@ -4757,6 +4757,14 @@ void ViewportWidget::paintGL()
     core::CoordinateSystem coordSystem(*m_impl->pyramid);
     int tilesRendered = 0;
     int tilesSkipped = 0;
+    // The finer ready tiles drawn in place of a not-ready built one (spec
+    // 2026-11-27 5.8). The controller has requested them; only those already
+    // uploaded or cached are drawn, each at its own screen rect.
+    const auto standInsFor = [this](const core::TileKey& key) {
+        return core::readyStandIns(m_impl->pyramid->levels(), key, [this](const core::TileKey& k) {
+            return m_impl->slideSource->isTileReady(k);
+        });
+    };
 
     if (m_impl->slideInfo.isBrightfield && m_impl->slideInfo.numChannels <= 1) {
         // --- Single-channel brightfield rendering path ---
@@ -4867,11 +4875,36 @@ void ViewportWidget::paintGL()
                 } else {
                     // A built tile whose rows are not accumulated yet is not a
                     // skipped tile: counting it would re-arm the 16 ms repaint
-                    // for the whole build. Its area shows the background until
+                    // for the whole build. Its finer ready stand-ins are drawn
+                    // instead, and what none covers shows the background until
                     // the build's progress callback requests it (spec
-                    // 2026-11-27 5.4).
+                    // 2026-11-27 5.4, 5.8).
                     if (m_impl->slideSource->isTileReady(key)) {
                         ++tilesSkipped;
+                        continue;
+                    }
+                    for (const auto& standIn : standInsFor(key)) {
+                        GLuint standInTex = 0;
+                        auto standInIt = m_impl->textures.find(standIn);
+                        if (standInIt != m_impl->textures.end()) {
+                            standInTex = standInIt->second;
+                        } else {
+                            auto standInData = m_impl->tileCache->lookup(standIn);
+                            if (!standInData || standInData->isEmpty() || standInData->isError()) {
+                                continue;
+                            }
+                            standInTex = m_impl->uploadTileTexture(*standInData);
+                            m_impl->textures[standIn] = standInTex;
+                        }
+                        const auto standInRect = coordSystem.tileScreenRect(standIn, viewport);
+                        m_impl->tileShader->setUniformValue("uScreenRect",
+                            static_cast<float>(standInRect.x),
+                            static_cast<float>(standInRect.y),
+                            static_cast<float>(standInRect.width),
+                            static_cast<float>(standInRect.height));
+                        m_impl->gl->glBindTexture(GL_TEXTURE_2D, standInTex);
+                        m_impl->gl->glDrawArrays(GL_TRIANGLES, 0, 6);
+                        ++tilesRendered;
                     }
                     continue;
                 }
@@ -5038,12 +5071,27 @@ void ViewportWidget::paintGL()
 
             auto texIt = m_impl->fluorescenceTextures.find(key);
             if (texIt == m_impl->fluorescenceTextures.end()) {
-                // Cache first; a not-ready built tile is not skipped, see the
-                // brightfield loop.
+                // Cache first; a not-ready built tile is not skipped and its
+                // ready finer stand-ins are drawn instead, see the brightfield
+                // loop.
                 auto tileData = m_impl->tileCache->lookup(key);
                 if (!tileData || tileData->isEmpty()) {
                     if (m_impl->slideSource->isTileReady(key)) {
                         ++tilesSkipped;
+                        continue;
+                    }
+                    for (const auto& standIn : standInsFor(key)) {
+                        auto standInIt = m_impl->fluorescenceTextures.find(standIn);
+                        if (standInIt == m_impl->fluorescenceTextures.end()) {
+                            auto standInData = m_impl->tileCache->lookup(standIn);
+                            if (!standInData || standInData->isEmpty() || standInData->isError()) {
+                                continue;
+                            }
+                            m_impl->fluorescenceTextures[standIn] = m_impl->uploadTileChannelTextures(*standInData);
+                            standInIt = m_impl->fluorescenceTextures.find(standIn);
+                        }
+                        drawFluorescenceTile(standInIt->second, coordSystem.tileScreenRect(standIn, viewport));
+                        ++tilesRendered;
                     }
                     continue;
                 }

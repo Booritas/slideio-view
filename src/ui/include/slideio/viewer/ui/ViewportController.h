@@ -49,7 +49,9 @@ public:
     std::vector<core::TileKey> visibleTileKeys() const;
 
     /// Keys for which `isReady` is false are not requested by
-    /// requestVisibleTiles(). Unset means every key is requested.
+    /// requestVisibleTiles(); their ready finer stand-ins
+    /// (core::readyStandIns) are requested in their place. Unset means every
+    /// key is requested.
     void setTileReadyPredicate(std::function<bool(const core::TileKey&)> isReady);
 
     void requestVisibleTiles();

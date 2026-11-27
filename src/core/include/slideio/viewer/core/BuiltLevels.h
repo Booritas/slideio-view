@@ -57,8 +57,17 @@ struct TileSlideRect
 /// pixels converted by 1/scale and rounded, then clamped to the slide.
 TileSlideRect tileSlideRect(const LevelInfo& level, int column, int row, int slideWidth, int slideHeight);
 
-/// The keys for which isReady is true, in their original order.
-std::vector<TileKey> requestableTiles(const std::vector<TileKey>& keys,
-                                      const std::function<bool(const TileKey&)>& isReady);
+/// The ready keys that stand in for `key` while it is not ready (§5.8 of the
+/// built-pyramid-levels design). Returns {key} when `key` is ready or its level
+/// is not a resident built level -- stored and virtual levels are always ready,
+/// and descending into them would cost full-resolution decodes. Otherwise
+/// `key` is replaced by its 2x2 children at the next finer level, clipped at
+/// that level's right and bottom edge, provided that level is resident and
+/// built: a ready child is emitted, a not-ready one is descended into, and a
+/// not-ready tile at the finest resident level is dropped. Depth-first,
+/// children in row-major order; every key keeps `key`'s z, t and colour mode.
+/// An out-of-range level yields nothing.
+std::vector<TileKey> readyStandIns(const std::vector<LevelInfo>& levels, const TileKey& key,
+                                   const std::function<bool(const TileKey&)>& isReady);
 
 } // namespace slideio::viewer::core

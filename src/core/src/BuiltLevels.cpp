@@ -117,15 +117,56 @@ TileSlideRect tileSlideRect(const LevelInfo& level, int column, int row, int sli
     return r;
 }
 
-std::vector<TileKey> requestableTiles(const std::vector<TileKey>& keys,
-                                      const std::function<bool(const TileKey&)>& isReady)
+namespace
 {
-    std::vector<TileKey> out;
-    for (const TileKey& key : keys) {
-        if (isReady(key)) {
-            out.push_back(key);
+
+bool isResidentBuilt(const std::vector<LevelInfo>& levels, int level)
+{
+    return level >= 0 && level < static_cast<int>(levels.size()) && levels[static_cast<size_t>(level)].built
+        && levels[static_cast<size_t>(level)].resident;
+}
+
+void collectReadyChildren(const std::vector<LevelInfo>& levels, const TileKey& key,
+                          const std::function<bool(const TileKey&)>& isReady, std::vector<TileKey>& out)
+{
+    const int finer = key.level() - 1;
+    if (!isResidentBuilt(levels, finer)) {
+        return; // the finest resident level: a not-ready tile here is dropped
+    }
+    const LevelInfo& child = levels[static_cast<size_t>(finer)];
+    for (int dy = 0; dy < 2; ++dy) {
+        const int row = 2 * key.row() + dy;
+        if (row >= child.tilesY) {
+            continue;
+        }
+        for (int dx = 0; dx < 2; ++dx) {
+            const int column = 2 * key.column() + dx;
+            if (column >= child.tilesX) {
+                continue;
+            }
+            const TileKey childKey(finer, column, row, key.zIndex(), key.tFrame(), key.colorMode());
+            if (isReady(childKey)) {
+                out.push_back(childKey);
+            } else {
+                collectReadyChildren(levels, childKey, isReady, out);
+            }
         }
     }
+}
+
+} // namespace
+
+std::vector<TileKey> readyStandIns(const std::vector<LevelInfo>& levels, const TileKey& key,
+                                   const std::function<bool(const TileKey&)>& isReady)
+{
+    if (key.level() < 0 || key.level() >= static_cast<int>(levels.size())) {
+        return {};
+    }
+    if (!isResidentBuilt(levels, key.level()) || isReady(key)) {
+        return {key};
+    }
+    std::vector<TileKey> out;
+    collectReadyChildren(levels, key, isReady, out);
     return out;
 }
 
