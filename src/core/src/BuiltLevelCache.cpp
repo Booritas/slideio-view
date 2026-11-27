@@ -232,8 +232,11 @@ std::vector<std::string> expiredCacheEntries(const std::vector<CacheEntryFacts>&
 
 bool isSingleFileDriver(std::string_view driverId)
 {
-    static constexpr std::string_view kDrivers[] = {"GDAL",  "SVS", "PHTIFF", "NDPI", "OMETIFF", "QPTIFF",
-                                                    "SCN",   "BIF", "CZI",    "ZVI",  "LIF",     "ND2"};
+    // Not OMETIFF: its TiffData elements can name other files by
+    // UUID/@FileName, and the key's size and modification time describe only
+    // the file opened, so a change to a companion would serve stale levels.
+    static constexpr std::string_view kDrivers[] = {"GDAL", "SVS", "PHTIFF", "NDPI", "QPTIFF", "SCN",
+                                                    "BIF",  "CZI", "ZVI",    "LIF",  "ND2"};
     for (auto d : kDrivers)
     {
         if (d == driverId)

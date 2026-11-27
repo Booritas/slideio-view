@@ -224,11 +224,13 @@ TEST_CASE("builtLevelCacheApplies", "[BuiltLevelCache]")
     CHECK(!flipped([](auto& f) { f.slideId.clear(); }));
     CHECK(!flipped([](auto& f) { f.hadOpenTimeOverview = true; }));
 
-    for (const char* d : {"GDAL", "SVS", "PHTIFF", "NDPI", "OMETIFF", "QPTIFF", "SCN", "BIF", "CZI", "ZVI", "LIF", "ND2"})
+    for (const char* d : {"GDAL", "SVS", "PHTIFF", "NDPI", "QPTIFF", "SCN", "BIF", "CZI", "ZVI", "LIF", "ND2"})
     {
         INFO(d);
         CHECK(isSingleFileDriver(d));
     }
+    // An OME-TIFF can reference companion files the key does not describe.
+    CHECK(!isSingleFileDriver("OMETIFF"));
     CHECK(!isSingleFileDriver("gdal"));
     CHECK(!isSingleFileDriver("DCM"));
     CHECK(!isSingleFileDriver(""));

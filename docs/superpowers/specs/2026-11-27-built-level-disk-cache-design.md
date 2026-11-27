@@ -232,8 +232,11 @@ when all of these hold, null otherwise:
 - caching is enabled;
 - the path is a regular file and the driver is a single-file format — an
   allowlist kept beside the cache code (`GDAL`, `SVS`, `PHTIFF`, `NDPI`,
-  `OMETIFF`, `QPTIFF`, `SCN`, `BIF`, `CZI`, `ZVI`, `LIF`, `ND2`), so a driver
-  added later is excluded until someone decides;
+  `QPTIFF`, `SCN`, `BIF`, `CZI`, `ZVI`, `LIF`, `ND2`), so a driver
+  added later is excluded until someone decides. `OMETIFF` was on it and was
+  removed in review (2026-11-27): SlideIO's OME-TIFF driver opens the files a
+  `TiffData` names by `UUID/@FileName`, and the key's file size and
+  modification time describe only the file opened;
 - the slide ID is not empty;
 - the open produced no open-time overview: the open-time pass returned no
   thumbnail, the same signal that decides whether a built overview is
