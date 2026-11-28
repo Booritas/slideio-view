@@ -34,6 +34,10 @@ constexpr KnownDriver kKnownDrivers[] = {
     {"ND2",     "Nikon ND2",           "nd2"},
     {"NDPI",    "Hamamatsu NDPI",      "ndpi"},
     {"OMETIFF", "OME-TIFF",            "ome.tif ome.tiff"},
+    // Philips files carry the generic *.tif/*.tiff extension, so auto-detect
+    // relies on SlideIO sniffing the XML description; this entry lets the user
+    // force the driver when that fails or when GDAL would win.
+    {"PHTIFF",  "Philips TIFF",        "tif tiff"},
     {"QPTIFF",  "PerkinElmer QPTIFF",  "qptiff"},
     {"SCN",     "Leica SCN",           "scn"},
     {"SVS",     "Aperio SVS",          "svs"},

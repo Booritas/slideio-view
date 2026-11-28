@@ -2,6 +2,7 @@
 
 #include "slideio/viewer/core/AnnotationDocument.h"
 
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -71,5 +72,23 @@ struct ParseResult
 /// Parses what serializeAnnotationDocument produces. Never throws: nlohmann's
 /// exceptions are caught and turned into a ParseError.
 ParseResult parseAnnotationDocument(std::string_view json);
+
+/// The identity and provenance at the head of a saved annotation file.
+struct AnnotationFileHeader
+{
+    std::string slideId;
+    int sceneIndex = 0;
+    /// The slide's path as it was opened when the file was written; may be empty.
+    std::string path;
+    std::string fileName;
+};
+
+/// Reads `slideId`, `sceneIndex` and `slide.path`/`slide.fileName` from the
+/// head of a saved annotation file, stopping at the first array at top level,
+/// which serializeAnnotationDocument writes after them. `text` may therefore be
+/// only the file's first few kilobytes. Absent when slideId or sceneIndex is
+/// missing before that point -- including a hand-edited file that moved them
+/// below its annotations, which is then simply not recognised. Never throws.
+std::optional<AnnotationFileHeader> peekAnnotationFileHeader(std::string_view text);
 
 } // namespace slideio::viewer::core

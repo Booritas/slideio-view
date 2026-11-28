@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "slideio/viewer/infra/SlideIOAdapter.h"
+#include "slideio/viewer/core/BuiltLevelCache.h"
 #include "slideio/viewer/core/ColorManagement.h"
 #include "slideio/viewer/core/ColorProfileOverride.h"
 #include "slideio/viewer/core/Types.h"
@@ -317,6 +318,52 @@ TEST_CASE("a per-slide override displaces an embedded profile",
     REQUIRE(overridden.description == "GIMP built-in sRGB");
 }
 
+TEST_CASE("the bound profile's fingerprint names the bytes the managed scene uses",
+          "[infra][ColorManagement][cache]")
+{
+    const std::string path = imagePath("svs/JP2K-33003-1.svs");
+    if (!haveImage(path)) { SKIP("test image corpus not available"); }
+    const std::string donorPath = imagePath("gdal/colors.png");
+    if (!haveImage(donorPath)) { SKIP("test image corpus not available"); }
+
+    infra::SlideIOAdapter donor(donorPath);
+    const std::vector<uint8_t> foreignProfile = donor.embeddedProfileBytes();
+    REQUIRE_FALSE(foreignProfile.empty());
+
+    core::SuppliedColorProfile asDefault;
+    asDefault.bytes = foreignProfile;
+    asDefault.isSlideOverride = false;
+    core::SuppliedColorProfile asOverride;
+    asOverride.bytes = foreignProfile;
+    asOverride.isSlideOverride = true;
+
+    infra::SlideIOAdapter withDefault(path, 0, "", asDefault);
+    infra::SlideIOAdapter withOverride(path, 0, "", asOverride);
+    REQUIRE(withDefault.slideInfo().colorManagement == core::ColorManagementAvailability::Available);
+    REQUIRE(withOverride.slideInfo().colorManagement == core::ColorManagementAvailability::Available);
+
+    // A default does not displace the embedded profile, so the embedded bytes are bound.
+    const std::string embedded = core::colorProfileFingerprint(withDefault.embeddedProfileBytes());
+    REQUIRE_FALSE(embedded.empty());
+    CHECK(withDefault.boundColorProfileFingerprint() == embedded);
+    // An override displaces it.
+    CHECK(withOverride.boundColorProfileFingerprint() == core::colorProfileFingerprint(foreignProfile));
+    CHECK(withOverride.boundColorProfileFingerprint() != embedded);
+
+    const std::string tag = infra::SlideIOAdapter::managedRenditionTag();
+    CHECK(tag.rfind("sRGB/", 0) == 0);
+    CHECK(tag.size() > 5);
+}
+
+TEST_CASE("a slide without a managed scene has no bound fingerprint", "[infra][ColorManagement][cache]")
+{
+    const std::string path = imagePath("gdal/img_2448x2448_3x8bit_SRC_RGB_ducks.png");
+    if (!haveImage(path)) { SKIP("test image corpus not available"); }
+    infra::SlideIOAdapter adapter(path);
+    REQUIRE(adapter.slideInfo().colorManagement == core::ColorManagementAvailability::NoProfile);
+    CHECK(adapter.boundColorProfileFingerprint().empty());
+}
+
 TEST_CASE("an override changes the pixels and the reported origin",
           "[infra][ColorManagement][override]")
 {
@@ -368,4 +415,38 @@ TEST_CASE("an override changes the pixels and the reported origin",
     REQUIRE(withDefault.slideInfo().colorProfileOrigin
             == core::ColorProfileOrigin::Library);
     REQUIRE_FALSE(withDefault.slideInfo().displacedEmbeddedProfile);
+}
+
+TEST_CASE("a mode-explicit block read follows the mode it is given, not the adapter's",
+          "[infra][ColorManagement]")
+{
+    const std::string path = imagePath("svs/JP2K-33003-1.svs");
+    if (!haveImage(path)) { SKIP("test image corpus not available"); }
+
+    infra::SlideIOAdapter adapter(path, 0, "");
+    REQUIRE(adapter.slideInfo().colorManagement == core::ColorManagementAvailability::Available);
+
+    const int w = adapter.slideInfo().width;
+    const int h = adapter.slideInfo().height;
+
+    adapter.setColorMode(core::ColorMode::Raw);
+    const core::TileData managedWhileRaw =
+        adapter.readBlock(0, 0, w, h, 256, 256, 0, 0, core::ColorMode::Managed);
+    const core::TileData rawWhileRaw = adapter.readBlock(0, 0, w, h, 256, 256, 0, 0, core::ColorMode::Raw);
+    // The mode-less overload follows the adapter's own mode.
+    const core::TileData defaultWhileRaw = adapter.readBlock(0, 0, w, h, 256, 256);
+
+    adapter.setColorMode(core::ColorMode::Managed);
+    const core::TileData managedWhileManaged =
+        adapter.readBlock(0, 0, w, h, 256, 256, 0, 0, core::ColorMode::Managed);
+    const core::TileData defaultWhileManaged = adapter.readBlock(0, 0, w, h, 256, 256);
+
+    REQUIRE_FALSE(managedWhileRaw.isError());
+    REQUIRE_FALSE(rawWhileRaw.isError());
+    REQUIRE_FALSE(managedWhileManaged.isError());
+    REQUIRE(managedWhileRaw.buffer().size() == managedWhileManaged.buffer().size());
+    REQUIRE(countDifferingBytes(managedWhileRaw.buffer(), managedWhileManaged.buffer()) == 0);
+    REQUIRE(countDifferingBytes(managedWhileRaw.buffer(), rawWhileRaw.buffer()) > 0);
+    REQUIRE(countDifferingBytes(defaultWhileRaw.buffer(), rawWhileRaw.buffer()) == 0);
+    REQUIRE(countDifferingBytes(defaultWhileManaged.buffer(), managedWhileManaged.buffer()) == 0);
 }

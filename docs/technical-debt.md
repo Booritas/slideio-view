@@ -100,3 +100,87 @@ the three below; step 3 was judged not worth its cost.*
 - **Fix:** read as `double`, check it against the serializer's range (the range
   check would have to accept a double, or the bounds be exposed), then narrow.
   Small.
+
+## Viewport rendering and built pyramid levels
+
+### TD-5. GPU textures are released only wholesale
+
+*From the built-pyramid-levels design (2026-11-27), section 9.*
+
+- **What:** `ViewportWidget::Impl::textures` only grows while a slide is open.
+  It is emptied wholesale, by `clearAllTextures` on a slide close, a reopen
+  or a Z/T change, and by `releaseTexturesOfOtherMode` on a colour-mode
+  change. `Impl::deleteTexture` exists but **has no callers**, so no single
+  texture is ever evicted, and a tile evicted from the `LruTileCache` keeps
+  its texture.
+- **Cost today:** built levels removed the worst case. A zoomed-out frame of
+  a pyramid-less slide is now about 50 textures rather than 44 000, and before
+  that change one zoomed-out pass of `PIT_01_00248_01.tiff` put ~8.6 GB of
+  256x256 textures on a 4 GB GPU. But a long full-resolution pan across any
+  large slide still accumulates one texture per tile it has ever drawn (192 KB
+  for an 8-bit RGB tile of 256x256) until the slide is closed. Nothing
+  bounds it.
+- **Risk:** on a small GPU a long session on one slide ends in driver paging
+  or failed uploads, which `paintGL` reports as skipped tiles. That looks like
+  a slow slide, not a memory problem.
+- **Fix:** give the texture map an LRU of its own with a byte budget (or
+  evict a texture when its tile leaves the cache), and call `deleteTexture`
+  from it. The trap is that `paintGL` uses a texture uploaded earlier in the
+  same frame, so eviction must never take a key in the current frame's
+  visible set. Medium: one class, plus a budget to choose.
+
+### TD-6. An unreliable source level leaves the zoomed-out view blank
+
+*From the final review of built pyramid levels, ruling F2 (2026-11-27).*
+
+- **What:** `infra::BuiltPyramidSource` reads its source level (the coarsest
+  stored level) with mode-explicit `readBlock` calls, which do not pass
+  through `SlideIOAdapter::readTile`'s fallback. That fallback reads a level
+  marked unreliable from a finer level and box-filters it down, and it exists
+  for SVS files whose tile-offset table is corrupt at one level. When the
+  source level is marked (`addOnLevelMarkedUnreliable`), the build is
+  abandoned. Every resident tile not built yet becomes an error tile, and no
+  minimap overview is published.
+- **Cost today:** on such a file, every zoom at which a built level is chosen
+  shows error tiles where the slide was drawn before the feature, through the
+  fallback. Zooming in to a stored level still works. No file in the corpus
+  has been seen to trigger it.
+- **Why it is this way:** the alternative was to build from the fallback's
+  output, or to keep accumulating bands the level returned. A level marked
+  unreliable returns data from the wrong file offsets without failing, so
+  building from it can move tissue, which the design's anti-goals rank above
+  showing a zoomed-out view.
+- **Fix:** when the source level is marked, restart the build from the next
+  finer reliable stored level. The built levels' factors are relative to the
+  source level, so this means re-planning with a different source and a
+  larger read (four times the pixels per step), or reading each band through
+  the adapter's fallback arithmetic. Medium, and only worth doing once such a
+  file is in hand to test against.
+
+### TD-7. A cache folder on a dead network share can freeze close and colour toggle
+
+*From the review of the built-level disk cache (2026-11-27).*
+
+- **What:** closing a slide, switching scene and toggling colour management
+  all cancel `infra::BuiltPyramidSource`'s worker and join it on the UI
+  thread (`stopWorkerLocked`). The worker polls the cancel flag between
+  blocks, but while it is inside a filesystem call of
+  `infra::BuiltLevelDiskCache` (`QFileInfo::isDir`, `QFile::open`, `mkpath`,
+  `rename`) nothing can interrupt it. When the cache folder is on an SMB
+  share that has dropped, one such call lasts until the OS gives up, and the
+  UI thread waits with it.
+- **Cost today:** only with the cache enabled (it is off by default) and its
+  folder on a network share that drops while a slide with built levels is
+  open, loading or saving. The window freezes for the SMB timeout (tens of
+  seconds) and then recovers; nothing is lost or corrupted. The Preferences
+  tooltip already asks for local storage.
+- **Why it is this way:** the worker holds `this`, so the join cannot simply
+  be skipped or the thread detached. Probing the folder before attaching the
+  store only moves the same wait onto the open and does not cover a share
+  that drops after the open.
+- **Fix:** run the store's I/O on a thread that owns nothing of the source --
+  copy the key, description and level bytes in, hand the rasters back
+  through a shared, generation-tagged slot -- so cancelling can abandon a
+  call in flight and the join no longer waits on the filesystem. A detached
+  load then has to be prevented from writing into a newer build, which the
+  generation check already does for chunks. Medium.

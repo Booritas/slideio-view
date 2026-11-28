@@ -29,6 +29,9 @@ add_executable(slideio-viewer-core-tests
     core/AnnotationLayerTest.cpp
     core/WorkspaceSwitchPolicyTest.cpp
     core/LevelRasterTest.cpp
+    core/BuiltLevelsTest.cpp
+    core/BuiltLevelCacheTest.cpp
+    core/BuiltLevelAccumulatorTest.cpp
     core/AnnotationTest.cpp
     core/Iso8601Test.cpp
     core/AnnotationSerializationTest.cpp
@@ -77,6 +80,8 @@ add_executable(slideio-viewer-infra-tests
     infra/QSettingsResultsSettingsStoreTest.cpp
     infra/QSettingsAnnotationCategoryStoreTest.cpp
     infra/JsonAnnotationRepositoryTest.cpp
+    infra/BuiltPyramidSourceTest.cpp
+    infra/BuiltLevelDiskCacheTest.cpp
     infra/ProcessorDataLinkTest.cpp
     infra/ProcessorWorkspaceSourceTest.cpp
     infra/support/ProcessorFixture.cpp
@@ -86,7 +91,7 @@ target_link_libraries(slideio-viewer-infra-tests
     # slideio-processor-data for ProcessorDataLinkTest and the ProcessorFixture
     # support code, which call it directly;
     # infra links it PRIVATE and never exposes it.
-    PRIVATE slideio-viewer-infra Catch2::Catch2WithMain Qt6::Core slideio-processor-data
+    PRIVATE slideio-viewer-infra Catch2::Catch2WithMain Qt6::Core spdlog::spdlog slideio-processor-data
 )
 
 add_test(NAME infra-tests COMMAND slideio-viewer-infra-tests)
@@ -94,12 +99,14 @@ add_test(NAME infra-tests COMMAND slideio-viewer-infra-tests)
 # UI layer tests
 add_executable(slideio-viewer-ui-tests
     ui/AboutInfoTest.cpp
+    ui/BuiltLevelCacheSettingsTest.cpp
     ui/AnnotationCountExportTest.cpp
     ui/CsvFormatTest.cpp
     ui/AnnotationMeasurementExportTest.cpp
     ui/TextAnnotationLayoutTest.cpp
     ui/CalibrationPolicyTest.cpp
     ui/MeasurementLabelTest.cpp
+    ui/OverviewRenderingTest.cpp
     ui/LayersPanelPolicyTest.cpp
     ui/ResultsPaintPolicyTest.cpp
     ui/ResultsPanelTextTest.cpp

@@ -1,7 +1,10 @@
 #include "slideio/viewer/ui/ViewportController.h"
 
+#include "slideio/viewer/core/BuiltLevels.h"
+
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 namespace slideio::viewer::ui
 {
@@ -127,6 +130,11 @@ std::vector<core::TileKey> ViewportController::visibleTileKeys() const
     return keys;
 }
 
+void ViewportController::setTileReadyPredicate(std::function<bool(const core::TileKey&)> isReady)
+{
+    m_isTileReady = std::move(isReady);
+}
+
 void ViewportController::requestVisibleTiles()
 {
     if (!m_coordSystem || !m_scheduler) {
@@ -136,6 +144,24 @@ void ViewportController::requestVisibleTiles()
     m_scheduler->cancelAll();
 
     auto visibleKeys = visibleTileKeys();
+    if (m_isTileReady && m_pyramid) {
+        // A built tile whose rows are not accumulated yet would only come back
+        // pending; it is requested by the build's progress callback instead.
+        // Meanwhile its ready finer stand-ins are requested in its place, so
+        // the view fills from the first completed band (design §5.8).
+        const auto& levels = m_pyramid->levels();
+        std::vector<core::TileKey> mapped;
+        std::unordered_set<core::TileKey> seen;
+        mapped.reserve(visibleKeys.size());
+        for (const auto& key : visibleKeys) {
+            for (const auto& standIn : core::readyStandIns(levels, key, m_isTileReady)) {
+                if (seen.insert(standIn).second) {
+                    mapped.push_back(standIn);
+                }
+            }
+        }
+        visibleKeys = std::move(mapped);
+    }
 
     std::vector<infra::TileRequest> visibleRequests;
     visibleRequests.reserve(visibleKeys.size());

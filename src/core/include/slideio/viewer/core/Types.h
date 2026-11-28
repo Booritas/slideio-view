@@ -225,6 +225,15 @@ struct LevelInfo
     /// slide that does report a tile size is genuinely tiled; only the
     /// substitution of a default can make it false.
     bool nativelyTiled = true;
+    /// True for a level this application derives from the coarsest stored one
+    /// rather than one the file stores. Built levels come after the stored ones.
+    bool built = false;
+    /// Built levels only: whether the level's pixels are held in memory, filled
+    /// by the background build (true), or read on demand through SlideIO from
+    /// the slide, one block read per tile (false).
+    bool resident = false;
+    /// Built levels only: downsample factor relative to the source stored level.
+    int builtFactor = 1;
 };
 
 /// Where a scene's ICC colour profile came from. Mirrors slideio::ColorProfileSource.

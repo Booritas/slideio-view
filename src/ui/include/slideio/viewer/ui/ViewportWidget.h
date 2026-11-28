@@ -23,6 +23,7 @@ class QPainter;
 namespace slideio::viewer::core
 {
 class Annotation;
+class IBuiltLevelStore;
 }
 
 namespace slideio::viewer::app
@@ -131,6 +132,9 @@ public:
 
     void setChannelSettings(const std::vector<core::ChannelInfo>& channels);
     const core::SlideInfo& slideInfo() const;
+    /// True while the open slide's viewer-built levels are still being built in
+    /// the current colour mode; false with no slide or nothing to build.
+    bool builtOverviewPending() const;
 
     void setZSlice(int zIndex);
     void setTFrame(int tFrame);
@@ -141,6 +145,11 @@ public:
     // default, plus the per-slide overrides by slide id. Snapshotted by
     // MainWindow on the UI thread; the open threads capture it by value.
     void setColorProfilePolicy(ColorProfilePolicy policy);
+
+    // The built-level disk cache for slides opened from now on; null turns
+    // caching off. Read on the UI thread when an open starts and copied into
+    // the open's worker, so a change never reaches a slide already open.
+    void setBuiltLevelStore(std::shared_ptr<core::IBuiltLevelStore> store);
 
     // Why a configured override could not be used on the slide now showing.
     // Empty when none was configured or it was fine.
@@ -239,6 +248,12 @@ signals:
     void aboutToCloseSlide();
     void slideClosed();
     void thumbnailReady(const QImage& thumbnail);
+    /// The overview a slide with viewer-built levels and no open-time thumbnail
+    /// gets once their build completes (spec 2026-11-27 section 5.5). A null
+    /// image means the build ended with no overview to show -- rows failed, or
+    /// the source level was unreliable -- and the minimap stays unavailable.
+    /// Emitted from onBuiltLevelsComplete().
+    void builtOverviewReady(const QImage& thumbnail);
     void errorOccurred(const std::string& message);
     void sceneThumbnailReady(int sceneIndex, bool isAuxiliary, const std::string& name, const QImage& thumbnail);
     void loadingStarted(const QString& displayName);
@@ -378,6 +393,12 @@ private:
     /// from the per-frame setGeometry that drives the live preview.
     void pushMoveCommand(const std::string& id, const std::optional<core::Annotation>& original);
     void installSceneOpenResult(uint64_t opId, SceneOpenResult result);
+
+    /// Runs on the UI thread once the slide on screen has finished building
+    /// its viewer-built levels, after the tiles were re-requested and a frame
+    /// scheduled. Rendering the overview and emitting builtOverviewReady are
+    /// left to it.
+    void onBuiltLevelsComplete();
 
     // Drops the GPU textures of every tile not in `keep`'s colour mode so the
     // other rendition's CPU-cached tiles can be re-uploaded on demand instead

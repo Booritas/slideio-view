@@ -9,6 +9,7 @@
 #include "slideio/viewer/infra/Prefetcher.h"
 #include "slideio/viewer/infra/TileLoadScheduler.h"
 
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -47,6 +48,12 @@ public:
 
     std::vector<core::TileKey> visibleTileKeys() const;
 
+    /// Keys for which `isReady` is false are not requested by
+    /// requestVisibleTiles(); their ready finer stand-ins
+    /// (core::readyStandIns) are requested in their place. Unset means every
+    /// key is requested.
+    void setTileReadyPredicate(std::function<bool(const core::TileKey&)> isReady);
+
     void requestVisibleTiles();
 
     void screenToSlide(double sx, double sy, double& slideX, double& slideY) const;
@@ -74,6 +81,7 @@ private:
     int m_zIndex = 0;
     int m_tFrame = 0;
     core::ColorMode m_colorMode = core::ColorMode::Raw;
+    std::function<bool(const core::TileKey&)> m_isTileReady;
 };
 
 } // namespace slideio::viewer::ui

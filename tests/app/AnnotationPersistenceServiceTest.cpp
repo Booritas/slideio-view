@@ -53,6 +53,20 @@ public:
         return "/fake/" + key.slideId + ".s" + std::to_string(key.sceneIndex) + ".json";
     }
 
+    [[nodiscard]] std::vector<core::StoredAnnotationFile>
+    filesNamingSlidePath(const std::string& slidePath) const override
+    {
+        std::vector<core::StoredAnnotationFile> found;
+        for (const core::StoredAnnotationFile& file : storedFiles) {
+            if (file.header.path == slidePath) {
+                found.push_back(file);
+            }
+        }
+        return found;
+    }
+
+    /// What filesNamingSlidePath searches.
+    std::vector<core::StoredAnnotationFile> storedFiles;
     int loadCount = 0;
     int saveCount = 0;
     int lockCount = 0;
@@ -124,6 +138,66 @@ TEST_CASE("a slide with no annotation file is active with an empty model",
 
     REQUIRE(service.isActive());
     REQUIRE(model.annotations().empty());
+}
+
+TEST_CASE("files recording this slide's path under another identity are reported, never loaded",
+          "[app][AnnotationPersistenceService]")
+{
+    FakeRepository repository;
+    repository.nextLoad.status = core::LoadStatus::NotFound;
+    const std::string path = provenance().path;
+    repository.storedFiles = {
+        {"/ws/old-id.s0.annotations.json", {"old-id", 0, path, "case001_HE.svs"}},
+        {"/ws/old-id.s2.annotations.json", {"old-id", 2, path, "case001_HE.svs"}},
+        // Another scene of the identity now open: not lost, not reported.
+        {"/ws/new-id.s1.annotations.json", {"new-id", 1, path, "case001_HE.svs"}},
+        {"/ws/other.s0.annotations.json", {"other", 0, "D:/data/elsewhere.svs", "elsewhere.svs"}},
+    };
+
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+    QString reportedPath;
+    QStringList reported;
+    int reports = 0;
+    QObject::connect(&service, &AnnotationPersistenceService::annotationsUnderOtherIdentity, &service,
+                     [&](const QString& slidePath, const QStringList& files) {
+                         ++reports;
+                         reportedPath = slidePath;
+                         reported = files;
+                     });
+    service.beginSlide({"new-id", 0}, provenance());
+
+    REQUIRE(reports == 1);
+    CHECK(reportedPath == QString::fromStdString(path));
+    CHECK(reported == QStringList{"/ws/old-id.s0.annotations.json", "/ws/old-id.s2.annotations.json"});
+    // Nothing was loaded from them, and the scene starts empty and editable.
+    CHECK(repository.loadCount == 1);
+    CHECK(model.annotations().empty());
+    CHECK(service.isActive());
+}
+
+TEST_CASE("no report when the scene's own file loads or nothing else names the path",
+          "[app][AnnotationPersistenceService]")
+{
+    FakeRepository repository;
+    repository.storedFiles = {{"/ws/old-id.s0.annotations.json", {"old-id", 0, provenance().path, "x"}}};
+    AnnotationModel model;
+    AnnotationPersistenceService service(repository, model);
+    int reports = 0;
+    QObject::connect(&service, &AnnotationPersistenceService::annotationsUnderOtherIdentity, &service,
+                     [&](const QString&, const QStringList&) { ++reports; });
+
+    // The scene has a file of its own: the scan never runs.
+    repository.nextLoad = loadedWith("new-id", 0, {rectangle("a1")});
+    service.beginSlide({"new-id", 0}, provenance());
+    CHECK(reports == 0);
+
+    // No file, and no other file records this path.
+    repository.storedFiles.clear();
+    repository.nextLoad = core::LoadResult{};
+    repository.nextLoad.status = core::LoadStatus::NotFound;
+    service.beginSlide({"new-id", 1}, provenance());
+    CHECK(reports == 0);
 }
 
 TEST_CASE("loading does not mark the model dirty", "[app][AnnotationPersistenceService]")

@@ -4,6 +4,7 @@
 #include "slideio/viewer/ui/AnnotationShapeName.h"
 #include "slideio/viewer/ui/LayersPanelPolicy.h"
 #include "slideio/viewer/ui/MeasurementLabel.h"
+#include "slideio/viewer/ui/OverviewRendering.h"
 #include "slideio/viewer/ui/ResultsPaintPolicy.h"
 #include "slideio/viewer/ui/TextAnnotationLayout.h"
 
@@ -17,6 +18,9 @@
 #include "slideio/viewer/core/AnnotationDecoration.h"
 #include "slideio/viewer/core/AnnotationGeometry.h"
 #include "slideio/viewer/core/BoxResize.h"
+#include "slideio/viewer/core/BuiltLevels.h"
+#include "slideio/viewer/core/BuiltLevelCache.h"
+#include "slideio/viewer/core/IBuiltLevelStore.h"
 #include "slideio/viewer/core/VertexEditing.h"
 #include "slideio/viewer/core/CoordinateSystem.h"
 #include "slideio/viewer/core/DisplayRangePolicy.h"
@@ -30,12 +34,13 @@
 #include "slideio/viewer/core/TilePyramid.h"
 #include "slideio/viewer/core/TileSampling.h"
 #include "slideio/viewer/core/Types.h"
+#include "slideio/viewer/infra/BuiltPyramidSource.h"
 #include "slideio/viewer/infra/LruTileCache.h"
-#include "slideio/viewer/infra/SlideIOAdapter.h"
 #include "slideio/viewer/infra/SlideIOAdapter.h"
 #include "slideio/viewer/infra/TileLoadScheduler.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QFileInfo>
 #include <QFocusEvent>
 #include <QFontMetricsF>
@@ -48,6 +53,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPointer>
 #include <QPolygonF>
 #include <QTimer>
 #include <QOpenGLFunctions_3_3_Core>
@@ -216,6 +222,10 @@ void main()
 )glsl";
 
 using DataType = slideio::viewer::core::DataType;
+using slideio::viewer::ui::OverviewRenderer;
+using slideio::viewer::ui::mapPixelNormalized;
+using slideio::viewer::ui::mapPixelToUint8;
+using slideio::viewer::ui::renderOverviewImage;
 
 constexpr int kMaxTextureUploadsPerFrame = 8;
 constexpr double kZoomInFactor = 1.25;
@@ -444,35 +454,6 @@ std::pair<double, double> dataTypeHistogramRange(DataType dt)
     }
 }
 
-// Map a pixel element from native type through [min,max] -> [0,1] for thumbnail mixing.
-double mapPixelNormalized(const uint8_t* buffer, size_t elementIndex,
-                          DataType dataType, double minVal, double maxVal)
-{
-    double value = 0.0;
-    switch (dataType) {
-    case DataType::Byte:    value = static_cast<double>(buffer[elementIndex]); break;
-    case DataType::Int8:    value = static_cast<double>(reinterpret_cast<const int8_t*>(buffer)[elementIndex]); break;
-    case DataType::UInt16:  value = static_cast<double>(reinterpret_cast<const uint16_t*>(buffer)[elementIndex]); break;
-    case DataType::Int16:   value = static_cast<double>(reinterpret_cast<const int16_t*>(buffer)[elementIndex]); break;
-    case DataType::UInt32:  value = static_cast<double>(reinterpret_cast<const uint32_t*>(buffer)[elementIndex]); break;
-    case DataType::Int32:   value = static_cast<double>(reinterpret_cast<const int32_t*>(buffer)[elementIndex]); break;
-    case DataType::Float32: value = static_cast<double>(reinterpret_cast<const float*>(buffer)[elementIndex]); break;
-    case DataType::Float64: value = static_cast<double>(reinterpret_cast<const double*>(buffer)[elementIndex]); break;
-    default: value = static_cast<double>(buffer[elementIndex]); break;
-    }
-    double range = maxVal - minVal;
-    if (range <= 0.0) return 0.0;
-    return std::clamp((value - minVal) / range, 0.0, 1.0);
-}
-
-// Map a pixel element from native type through [min,max] -> [0,255] for thumbnails
-uint8_t mapPixelToUint8(const uint8_t* buffer, size_t elementIndex,
-                        DataType dataType, double minVal, double maxVal)
-{
-    return static_cast<uint8_t>(
-        std::round(mapPixelNormalized(buffer, elementIndex, dataType, minVal, maxVal) * 255.0));
-}
-
 // Render a resampled block to an 8-bit QImage (RGB888 or Grayscale8),
 // auto-stretching each channel through the block's native data type. Without
 // this rescale, non-Byte data types (e.g., UInt16) produce distorted thumbnails
@@ -592,9 +573,13 @@ QImage tileDataToQImage(const slideio::viewer::core::TileData& block,
 bool hasAffordableOverview(slideio::viewer::core::ISlideSource& source)
 {
     namespace core = slideio::viewer::core;
+    // The coarsest level the FILE stores: a level the viewer builds itself is
+    // not readable until its build fills it, so it says nothing about what a
+    // whole-slide read here would cost.
     auto levels = source.levels();
-    if (levels.empty()) return false;
-    const auto& lvl = levels.back();
+    const int coarsest = core::coarsestStoredLevelIndex(levels);
+    if (coarsest < 0) return false;
+    const auto& lvl = levels[static_cast<size_t>(coarsest)];
     if (lvl.width <= 0 || lvl.height <= 0) return false;
 
     const int tilesX = lvl.tilesX > 0
@@ -620,8 +605,9 @@ QImage buildCoarseLevelThumbnailFallback(slideio::viewer::core::ISlideSource& so
     // ruinous for a slide whose only level is full resolution.
     if (!hasAffordableOverview(source)) return {};
     auto levels = source.levels();
-    if (levels.empty()) return {};
-    const int coarsestLevel = static_cast<int>(levels.size()) - 1;
+    // Stored, not built: see hasAffordableOverview.
+    const int coarsestLevel = core::coarsestStoredLevelIndex(levels);
+    if (coarsestLevel < 0) return {};
     const auto& lvl = levels[static_cast<size_t>(coarsestLevel)];
     if (lvl.width <= 0 || lvl.height <= 0
         || lvl.tileWidth <= 0 || lvl.tileHeight <= 0) return {};
@@ -767,10 +753,19 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
                                       QImage& thumbnailOut)
 {
     namespace core = slideio::viewer::core;
-    int coarsestLevel = pyramid.numLevels() - 1;
+    // The coarsest level the FILE stores. Levels the viewer builds are appended
+    // after it and stay not-ready until their background build fills them, so
+    // reading one here would yield nothing; the display range is sampled from
+    // the file exactly as it was before built levels existed (spec 2026-11-27
+    // section 5.1). The tiles cached below are keyed by this level too.
+    std::vector<core::LevelInfo> pyramidLevels;
+    pyramidLevels.reserve(static_cast<size_t>(std::max(0, pyramid.numLevels())));
+    for (int i = 0; i < pyramid.numLevels(); ++i) {
+        pyramidLevels.push_back(pyramid.levelInfo(i));
+    }
+    const int coarsestLevel = core::coarsestStoredLevelIndex(pyramidLevels);
     if (coarsestLevel < 0) return;
     const auto& coarseLvl = pyramid.levelInfo(coarsestLevel);
-
     // A pyramid's coarsest level is a handful of tiles, so it gets read whole.
     // A slide with no downsampled level has only its full-resolution level:
     // a 82432x103936 WSI is a 322x406 grid of 256px tiles, and reading all
@@ -781,10 +776,13 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
                                                      core::kMaxCoarseScanTiles);
     // Separate, far more generous budget: thinning the scan only costs
     // precision, but refusing to read the level in full costs the overview
-    // image entirely, so that decision gets its own threshold.
-    const bool overviewAffordable =
-        core::planTileSampling(coarseLvl.tilesX, coarseLvl.tilesY,
-                               core::kMaxOverviewTiles).complete;
+    // image entirely, so that decision gets its own threshold. Decided the same
+    // whether or not the slide gets built levels: a coarsest stored level that
+    // is affordable here still gives an instant overview and a block-based
+    // display range, and the built overview then does not replace it (spec
+    // 2026-11-27 section 5.5; ui::shouldPublishBuiltOverview).
+    const bool overviewAffordable = core::planTileSampling(coarseLvl.tilesX, coarseLvl.tilesY,
+                                                           core::kMaxOverviewTiles).complete;
     if (!samplingPlan.complete) {
         spdlog::info("autodetect: coarsest level is {}x{} tiles -- scanning every {}x{} "
                      "({} of {} tiles), overviewAffordable={}",
@@ -1158,118 +1156,21 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
         return;
     }
 
-    // Thumbnail uses the same per-channel display ranges as the viewport's
-    // multi-channel render path (where each channel is stretched independently),
-    // so the minimap and viewport show matching colors. Falls back to global
-    // range for single-channel rendering or when per-channel ranges weren't
-    // detected.
-    auto channelMinFor = [&](int ch) {
-        const size_t ch_z = static_cast<size_t>(ch);
-        if (numCh > 1 && ch < static_cast<int>(slideInfo.channels.size())
-            && slideInfo.channels[ch_z].displayRange.autoDetected) {
-            return slideInfo.channels[ch_z].displayRange.displayMin;
-        }
-        return globalMin;
-    };
-    auto channelMaxFor = [&](int ch) {
-        const size_t ch_z = static_cast<size_t>(ch);
-        if (numCh > 1 && ch < static_cast<int>(slideInfo.channels.size())
-            && slideInfo.channels[ch_z].displayRange.autoDetected) {
-            return slideInfo.channels[ch_z].displayRange.displayMax;
-        }
-        return globalMax;
-    };
-    double rMin = channelMinFor(0), rMax = channelMaxFor(0);
-    double gMin = channelMinFor(1), gMax = channelMaxFor(1);
-    double bMin = channelMinFor(2), bMax = channelMaxFor(2);
-
-    // Mix all visible channels using ChannelInfo::colorR/G/B * intensity to
-    // mirror the viewport's channelShader path (which is taken whenever the
-    // viewport does not use its single-channel-brightfield fast path). This
-    // matters for 3-channel brightfield CZIs where SlideIO labels the BGR
-    // planes with channel colors blue/green/red — a naive src[0]→R / src[1]→G
-    // / src[2]→B copy would swap R and B and the minimap would not match the
-    // viewport.
-    const bool useChannelMix = !(slideInfo.isBrightfield && numCh <= 1) && numCh >= 1;
-    struct ChannelMix
-    {
-        double minVal = 0.0;
-        double maxVal = 1.0;
-        float r = 1.0f, g = 1.0f, b = 1.0f;  // colorR/G/B * intensity, premultiplied
-        bool active = false;
-    };
-    std::vector<ChannelMix> mix;
-    if (useChannelMix) {
-        mix.resize(static_cast<size_t>(numCh));
-        for (int ch = 0; ch < numCh; ++ch) {
-            const size_t ch_z = static_cast<size_t>(ch);
-            ChannelMix& m = mix[ch_z];
-            m.minVal = channelMinFor(ch);
-            m.maxVal = channelMaxFor(ch);
-            if (ch < static_cast<int>(slideInfo.channels.size())) {
-                const auto& chInfo = slideInfo.channels[ch_z];
-                if (!chInfo.visible) continue;
-                float intensity = std::clamp(chInfo.intensity, 0.0f, 4.0f);
-                m.r = chInfo.colorR * intensity;
-                m.g = chInfo.colorG * intensity;
-                m.b = chInfo.colorB * intensity;
-                m.active = true;
-            }
-        }
-    }
-
-    auto writeMixedPixel = [&](uint8_t* dst, const uint8_t* src, size_t srcElem, int srcCh) {
-        float accR = 0.0f, accG = 0.0f, accB = 0.0f;
-        const int upTo = std::min(numCh, srcCh);
-        for (int ch = 0; ch < upTo; ++ch) {
-            const ChannelMix& m = mix[static_cast<size_t>(ch)];
-            if (!m.active) continue;
-            float v = static_cast<float>(mapPixelNormalized(
-                src, srcElem + static_cast<size_t>(ch), dt, m.minVal, m.maxVal));
-            accR += v * m.r;
-            accG += v * m.g;
-            accB += v * m.b;
-        }
-        dst[0] = static_cast<uint8_t>(std::clamp(accR * 255.0f, 0.0f, 255.0f));
-        dst[1] = static_cast<uint8_t>(std::clamp(accG * 255.0f, 0.0f, 255.0f));
-        dst[2] = static_cast<uint8_t>(std::clamp(accB * 255.0f, 0.0f, 255.0f));
-    };
-
-    // Pass 2: build the thumbnail QImage. Read the whole slide resampled to
-    // the target thumbnail resolution via SlideIO (it picks the best pyramid
-    // level internally). This gives a sharp thumbnail even when the coarsest
-    // pyramid level itself is very small (e.g., 200x160) — much sharper than
-    // upscaling from the coarsest tiles.
-    QImage::Format imgFmt = (useChannelMix || numCh >= 3)
-        ? QImage::Format_RGB888 : QImage::Format_Grayscale8;
-    QImage thumbImg(thumbW, thumbH, imgFmt);
-    thumbImg.fill(slideInfo.isBrightfield ? Qt::white : Qt::black);
+    // The thumbnail is converted by the same OverviewRenderer the built-level
+    // overview uses, so the two cannot drift. globalMin/globalMax are locals of
+    // this function (not always equal to slideInfo.displayRange), hence passed.
+    const OverviewRenderer renderer(slideInfo, globalMin, globalMax);
 
     // blockData was read above (before display-range autodetection so its
-    // contents can serve as a fallback source for the min/max scan).
+    // contents can serve as a fallback source for the min/max scan). Read as
+    // the whole slide resampled to the target thumbnail resolution via SlideIO
+    // (it picks the best pyramid level internally), which is sharper than
+    // upscaling from very small coarsest tiles.
     if (blockUsable) {
-        const uint8_t* src = blockData.buffer().data();
-        int srcCh = blockData.numChannels();
-        for (int y = 0; y < thumbH; ++y) {
-            uint8_t* dst = thumbImg.scanLine(y);
-            for (int x = 0; x < thumbW; ++x) {
-                size_t srcElem = static_cast<size_t>((y * thumbW + x) * srcCh);
-                if (useChannelMix) {
-                    writeMixedPixel(dst + x * 3, src, srcElem, srcCh);
-                } else if (numCh >= 3) {
-                    int dstIdx = x * 3;
-                    dst[dstIdx + 0] = mapPixelToUint8(src, srcElem + 0, dt, rMin, rMax);
-                    dst[dstIdx + 1] = mapPixelToUint8(src, srcElem + 1, dt, gMin, gMax);
-                    dst[dstIdx + 2] = mapPixelToUint8(src, srcElem + 2, dt, bMin, bMax);
-                } else {
-                    dst[x] = mapPixelToUint8(src, srcElem, dt, globalMin, globalMax);
-                }
-            }
-        }
-        thumbnailOut = thumbImg;
+        thumbnailOut = renderer.render(blockData);
     } else {
         // Fallback: assemble from the coarsest tiles we already have
-        QImage levelImg(coarseLvl.width, coarseLvl.height, imgFmt);
+        QImage levelImg(coarseLvl.width, coarseLvl.height, renderer.format());
         levelImg.fill(slideInfo.isBrightfield ? Qt::white : Qt::black);
         int tileIdx = 0;
         for (int r = 0; r < coarseLvl.tilesY; ++r) {
@@ -1286,16 +1187,7 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
                     uint8_t* dst = levelImg.scanLine(tileY0 + y);
                     for (int x = 0; x < tw && (tileX0 + x) < coarseLvl.width; ++x) {
                         size_t srcElem = static_cast<size_t>((y * tw + x) * tCh);
-                        if (useChannelMix) {
-                            writeMixedPixel(dst + (tileX0 + x) * 3, src, srcElem, tCh);
-                        } else if (numCh >= 3) {
-                            int dstIdx = (tileX0 + x) * 3;
-                            dst[dstIdx + 0] = mapPixelToUint8(src, srcElem + 0, dt, rMin, rMax);
-                            dst[dstIdx + 1] = mapPixelToUint8(src, srcElem + 1, dt, gMin, gMax);
-                            dst[dstIdx + 2] = mapPixelToUint8(src, srcElem + 2, dt, bMin, bMax);
-                        } else {
-                            dst[tileX0 + x] = mapPixelToUint8(src, srcElem, dt, globalMin, globalMax);
-                        }
+                        renderer.writePixel(dst, tileX0 + x, src, srcElem, tCh);
                     }
                 }
             }
@@ -1309,12 +1201,92 @@ void readCoarseLevelAndBuildThumbnail(slideio::viewer::core::ISlideSource& slide
 
 using slideio::viewer::ui::SceneOpenResult;
 
+// The name of the scene with this index, or empty when the list has none.
+std::string sceneNameAt(const std::vector<slideio::viewer::core::SceneInfo>& scenes, int sceneIndex)
+{
+    for (const auto& scene : scenes) {
+        if (!scene.isAuxiliary && scene.index == sceneIndex) {
+            return scene.name;
+        }
+    }
+    return {};
+}
+
+// Hands the built-level disk cache to a freshly wrapped scene when caching
+// applies to it (spec 2026-11-27 built-level disk cache §4): enabled, a regular
+// file, a single-file driver, an identified slide, and no open-time overview.
+// Runs on the open's worker thread, before the build is started on the UI thread.
+// hadOpenTimeOverview is whether the open-time pass produced a thumbnail -- the
+// same signal installSceneOpenResult uses to decide whether a built overview
+// is published -- not SlideInfo::overviewAvailable, which can disagree with it.
+void attachBuiltLevelStore(slideio::viewer::infra::BuiltPyramidSource& built,
+                           const slideio::viewer::infra::SlideIOAdapter& adapter,
+                           std::shared_ptr<slideio::viewer::core::IBuiltLevelStore> store,
+                           const std::string& filePath, int sceneIndex, const std::string& slideId,
+                           const std::string& sceneName, const slideio::viewer::core::SlideInfo& info,
+                           bool hadOpenTimeOverview)
+{
+    namespace core = slideio::viewer::core;
+    namespace infra = slideio::viewer::infra;
+    if (!store) {
+        return;
+    }
+    const QFileInfo file(QString::fromStdString(filePath));
+    core::BuiltLevelCacheEligibility facts;
+    facts.enabled = true;
+    facts.regularFile = file.isFile();
+    facts.driverId = info.driverId;
+    facts.slideId = slideId;
+    facts.hadOpenTimeOverview = hadOpenTimeOverview;
+    if (!core::builtLevelCacheApplies(facts) || !built.hasBuiltLevels()) {
+        return;
+    }
+
+    const auto fileSize = static_cast<uint64_t>(file.size());
+    const int64_t fileModifiedMs = file.lastModified().toMSecsSinceEpoch();
+
+    core::BuiltLevelCacheIdentity identity;
+    identity.slideId = slideId;
+    identity.driverId = info.driverId;
+    identity.sceneIndex = sceneIndex;
+    identity.fileSize = fileSize;
+    identity.fileModifiedMs = fileModifiedMs;
+    identity.managedRenditionTag = infra::SlideIOAdapter::managedRenditionTag();
+    // No readable rendition tag: no Managed entry may be cached (Raw still is).
+    if (!identity.managedRenditionTag.empty()) {
+        identity.managedProfileFingerprint = adapter.boundColorProfileFingerprint();
+    }
+    identity.slideioVersion = infra::slideioLibraryVersion();
+
+    core::BuiltLevelCacheDescription description;
+    description.path = filePath;
+    description.fileName = file.fileName().toStdString();
+    description.driverId = info.driverId;
+    description.sceneName = sceneName;
+    description.sceneIndex = sceneIndex;
+    description.width = info.width;
+    description.height = info.height;
+    description.magnification = info.magnification;
+    // SlideInfo carries the pixel size in metres.
+    description.pixelSizeXUm = info.resolutionX * 1e6;
+    description.pixelSizeYUm = info.resolutionY * 1e6;
+    description.fileSize = fileSize;
+    description.fileModifiedMs = fileModifiedMs;
+
+    built.setLevelStore(std::move(store), std::move(identity), std::move(description));
+}
+
 // Open a scene synchronously (intended to run on a background thread). Captures
 // any exception into result.errorMsg. statusCallback (if non-null) is invoked
 // when the adapter first decides a pyramid level is unreliable, so the loading
 // overlay can change its label to indicate the slow-but-correct fallback path.
+// slideId and sceneName describe the slide for the built-level disk cache;
+// store is the viewport's cache as it was when the open started (null: off).
 SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
                               const std::string& driverId,
+                              const std::string& slideId,
+                              const std::string& sceneName,
+                              std::shared_ptr<slideio::viewer::core::IBuiltLevelStore> store,
                               std::function<void(QString)> statusCallback = {},
                               slideio::viewer::core::SuppliedColorProfile supplied = {})
 {
@@ -1323,8 +1295,16 @@ SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
     SceneOpenResult r;
     r.filePath = filePath;
     try {
-        r.slideSource = std::make_shared<infra::SlideIOAdapter>(
-            filePath, sceneIndex, driverId, std::move(supplied));
+        // A scene's source appends viewer-built coarser levels when the file's
+        // coarsest level is too large to show a zoomed-out frame in tens of
+        // tiles (spec 2026-11-27). The build is started on the UI thread when
+        // the result is installed, after the progress listener is registered;
+        // a result discarded as stale is destroyed with no thread to join.
+        // Associated images (openAuxImageSync) are never wrapped.
+        // Kept in a local so the cache identity can ask it for its bound profile.
+        auto adapter = std::make_shared<infra::SlideIOAdapter>(filePath, sceneIndex, driverId, std::move(supplied));
+        auto built = std::make_shared<infra::BuiltPyramidSource>(adapter);
+        r.slideSource = built;
         {
             r.slideInfo = r.slideSource->slideInfo();
             auto levels = r.slideSource->levels();
@@ -1343,6 +1323,9 @@ SceneOpenResult openSceneSync(const std::string& filePath, int sceneIndex,
         } catch (const std::exception& ex) {
             spdlog::warn("openSceneSync: thumbnail/coarse-cache pass failed: {}", ex.what());
         }
+
+        attachBuiltLevelStore(*built, *adapter, std::move(store), filePath, sceneIndex, slideId, sceneName,
+                              r.slideInfo, !r.thumbnail.isNull());
 
         // Apply fallback display range if auto-detection didn't yield one. A
         // slide shown at its native range is not marked detected on purpose.
@@ -1468,6 +1451,9 @@ struct ViewportWidget::Impl
     std::unique_ptr<ViewportController> controller;
     core::SlideInfo slideInfo;
     bool slideOpen = false;
+    // Whether the open produced a thumbnail of its own. A built overview never
+    // replaces one (spec 2026-11-27 section 5.5).
+    bool openTimeOverview = false;
     std::string currentFilePath;
     std::string currentDriverId;  // empty for auto-detect
     // The driver the *file* was opened with, recorded by openSlide, which is the
@@ -1490,6 +1476,10 @@ struct ViewportWidget::Impl
     // Snapshotted by MainWindow on the UI thread, captured by value into the
     // background open threads below.
     ColorProfilePolicy colorProfilePolicy;
+
+    // The built-level disk cache for slides opened from now on; null when off.
+    // Read only on the UI thread; each open copies it into its worker.
+    std::shared_ptr<core::IBuiltLevelStore> builtLevelStore;
 
     // Why a configured override could not be used on the slide now showing.
     // Installed from the winning open result, so a problem belonging to an
@@ -2444,7 +2434,8 @@ void ViewportWidget::openSlide(const std::string& filePath, const std::string& d
     };
 
     ColorProfilePolicy policy = m_impl->colorProfilePolicy;
-    std::thread([this, opId, filePath, driverId, statusCallback, policy]() {
+    std::thread([this, opId, filePath, driverId, statusCallback, policy,
+                 store = m_impl->builtLevelStore]() {
         // Enumerated before the scene is opened, not after: the slide's
         // identity is derived from this list, and the adapter needs the
         // profile that identity selects at construction time. The scene panel
@@ -2484,7 +2475,9 @@ void ViewportWidget::openSlide(const std::string& filePath, const std::string& d
             ? std::string{}
             : core::computeSlideId(scenesForIdentity, contentSize.value_or(0));
 
-        SceneOpenResult result = openSceneSync(filePath, 0, driverId, statusCallback, supplied);
+        const std::string sceneName = sceneNameAt(scenes, 0);
+        SceneOpenResult result =
+            openSceneSync(filePath, 0, driverId, slideId, sceneName, store, statusCallback, supplied);
         result.scenes = std::move(scenes);
         result.auxImages = std::move(auxImages);
         result.colorProfileProblem = std::move(problem);
@@ -2735,7 +2728,7 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
 
     ColorProfilePolicy policy = m_impl->colorProfilePolicy;
     std::thread([this, opId, filePath, sceneIndex, driverId, statusCallback,
-                 policy, scenesForIdentity]() {
+                 policy, scenesForIdentity, store = m_impl->builtLevelStore]() {
         const std::optional<uint64_t> contentSize = slideContentSize(filePath);
         if (!contentSize) {
             spdlog::debug("openScene: could not size '{}'; slide will not be identified", filePath);
@@ -2751,11 +2744,14 @@ void ViewportWidget::openScene(const std::string& filePath, int sceneIndex,
         const core::SuppliedColorProfile supplied =
             resolveColorProfileForOpen(policy, scenesForResolve, contentSize.value_or(0), problem);
 
-        SceneOpenResult result = openSceneSync(filePath, sceneIndex, driverId,
-                                               statusCallback, supplied);
-        result.colorProfileProblem = std::move(problem);
-        result.slideId = scenesForResolve.empty() ? std::string{}
+        // Computed before the open: the built-level cache is keyed by it.
+        std::string slideId = scenesForResolve.empty() ? std::string{}
             : core::computeSlideId(scenesForResolve, contentSize.value_or(0));
+        const std::string sceneName = sceneNameAt(scenesForIdentity, sceneIndex);
+        SceneOpenResult result = openSceneSync(filePath, sceneIndex, driverId, slideId, sceneName,
+                                               store, statusCallback, supplied);
+        result.colorProfileProblem = std::move(problem);
+        result.slideId = std::move(slideId);
         QMetaObject::invokeMethod(this,
             [this, opId, r = std::move(result)]() mutable {
                 installSceneOpenResult(opId, std::move(r));
@@ -2804,6 +2800,7 @@ void ViewportWidget::closeSlide()
     }
 
     m_impl->slideOpen = false;
+    m_impl->openTimeOverview = false;
     // Belongs to the slide that was showing; there is no slide now. A stale
     // identity would be worse than none: it would let a later caller believe
     // the slide now open is the one this id was computed for.
@@ -2941,6 +2938,7 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
     m_impl->tileCache = std::move(result.tileCache);
     m_impl->pyramid = std::move(result.pyramid);
     m_impl->slideInfo = std::move(result.slideInfo);
+    m_impl->openTimeOverview = !result.thumbnail.isNull();
     if (!result.scenes.empty()) {
         m_impl->slideInfo.scenes = std::move(result.scenes);
     } else if (!carriedScenes.empty()) {
@@ -2977,7 +2975,54 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
     m_impl->currentTFrame = 0;
     m_impl->controller->setZT(m_impl->currentZSlice, m_impl->currentTFrame);
     m_impl->controller->setScheduler(m_impl->scheduler);
+    {
+        // A built tile is not requested until its rows are accumulated
+        // (spec 2026-11-27 section 5.4). Weak, so the controller never keeps a
+        // closed slide's source alive.
+        std::weak_ptr<core::ISlideSource> weakSource = m_impl->slideSource;
+        m_impl->controller->setTileReadyPredicate([weakSource](const core::TileKey& key) {
+            const auto source = weakSource.lock();
+            return source && source->isTileReady(key);
+        });
+    }
     m_impl->controller->requestVisibleTiles();
+
+    // Built levels fill in the background. The listener runs on the build's
+    // worker thread after every band, so it only queues a call to the UI
+    // thread; there the call is dropped if the widget is gone or the source it
+    // was registered on is no longer the one on screen -- a band from a slide
+    // that has since been closed, or replaced by a scene switch or a colour
+    // profile reopen. Registered here, before start() -- which waits until
+    // slideOpened below -- so the first band is not missed.
+    if (auto built = std::dynamic_pointer_cast<infra::BuiltPyramidSource>(m_impl->slideSource)) {
+        QPointer<ViewportWidget> self(this);
+        std::weak_ptr<core::ISlideSource> registeredOn = m_impl->slideSource;
+        built->addOnBuiltRowsReady([self, registeredOn](bool complete) {
+            // The application object, not the widget, is the context: it lives
+            // on the UI thread for the whole run, so this never dereferences
+            // the widget from the worker thread, and a widget destroyed in the
+            // meantime is caught by the QPointer check on the UI thread.
+            QMetaObject::invokeMethod(
+                QCoreApplication::instance(),
+                [self, registeredOn, complete]() {
+                    if (self.isNull()) {
+                        return;
+                    }
+                    const auto source = registeredOn.lock();
+                    if (!source || source != self->m_impl->slideSource) {
+                        return;
+                    }
+                    if (self->m_impl->controller) {
+                        self->m_impl->controller->requestVisibleTiles();
+                    }
+                    self->update();
+                    if (complete) {
+                        self->onBuiltLevelsComplete();
+                    }
+                },
+                Qt::QueuedConnection);
+        });
+    }
 
     m_impl->slideOpen = true;
 
@@ -3062,6 +3107,13 @@ void ViewportWidget::installSceneOpenResult(uint64_t opId, SceneOpenResult resul
         emit thumbnailReady(result.thumbnail);
     }
     emit slideOpened(result.filePath);
+    // The build starts only now: MainWindow's slideOpened handler applies the
+    // remembered colour mode, and a build started before it would be a Raw one
+    // that the switch to Managed cancels -- joining its worker on this thread --
+    // and throws away. Before start(), a mode change only moves the build's mode.
+    if (auto built = std::dynamic_pointer_cast<infra::BuiltPyramidSource>(m_impl->slideSource)) {
+        built->start();
+    }
     if (reportAvailability) {
         emit annotationsAvailableChanged(annotationsAvailable, annotationsReason);
     }
@@ -3209,6 +3261,11 @@ void ViewportWidget::setChannelSettings(const std::vector<core::ChannelInfo>& ch
 void ViewportWidget::setColorProfilePolicy(ColorProfilePolicy policy)
 {
     m_impl->colorProfilePolicy = std::move(policy);
+}
+
+void ViewportWidget::setBuiltLevelStore(std::shared_ptr<core::IBuiltLevelStore> store)
+{
+    m_impl->builtLevelStore = std::move(store);
 }
 
 // Why a configured override could not be used on the slide now showing, if it
@@ -4705,6 +4762,57 @@ void ViewportWidget::setColorMode(core::ColorMode mode)
     update();
 }
 
+void ViewportWidget::onBuiltLevelsComplete()
+{
+    // The overview of a slide with built levels and no open-time thumbnail is
+    // its smallest built level, rendered here with the channel settings the
+    // viewport holds now, so edits made since the open apply (spec 2026-11-27
+    // section 5.5). A colour-mode toggle restarts the build and lands here
+    // again on its completion; the minimap is deliberately not cleared on the
+    // toggle -- the old overview stays until this re-emission replaces it.
+    const auto built = std::dynamic_pointer_cast<infra::BuiltPyramidSource>(m_impl->slideSource);
+    if (!built) {
+        return;
+    }
+    if (m_impl->openTimeOverview) {
+        // The open already produced an overview; it stays, and the minimap
+        // was never told one was being built.
+        spdlog::debug("onBuiltLevelsComplete: nothing to publish, the open-time overview stays");
+        return;
+    }
+    if (built->builtOverviewPending()) {
+        // A stale notice: the build that posted it was replaced -- by a
+        // colour-mode toggle -- before this queued call ran. The build now
+        // running posts its own; answering this one would end the minimap's
+        // "building" notice with nothing to show.
+        spdlog::debug("onBuiltLevelsComplete: stale notice, a newer build is still running");
+        return;
+    }
+    const core::TileData raster = built->smallestBuiltLevel();
+    QImage img;
+    if (shouldPublishBuiltOverview(m_impl->openTimeOverview, raster.isEmpty() || raster.isError())) {
+        img = renderOverviewImage(raster, m_impl->slideInfo);
+    }
+    if (img.isNull()) {
+        // Withheld (failed rows), abandoned (unreliable source level) or not
+        // renderable: a null image ends the minimap's "building" notice and
+        // leaves it unavailable.
+        spdlog::debug("onBuiltLevelsComplete: no built overview to publish");
+        emit builtOverviewReady(QImage());
+        return;
+    }
+    constexpr int kMaxThumbDim = 1000;
+    if (img.width() > kMaxThumbDim || img.height() > kMaxThumbDim) {
+        img = img.scaled(kMaxThumbDim, kMaxThumbDim, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+    emit builtOverviewReady(img);
+}
+
+bool ViewportWidget::builtOverviewPending() const
+{
+    return m_impl->slideSource && m_impl->slideSource->builtOverviewPending();
+}
+
 core::ColorProfileInfo ViewportWidget::activeColorProfileInfo() const
 {
     if (!m_impl->slideSource) {
@@ -4981,6 +5089,14 @@ void ViewportWidget::paintGL()
     core::CoordinateSystem coordSystem(*m_impl->pyramid);
     int tilesRendered = 0;
     int tilesSkipped = 0;
+    // The finer ready tiles drawn in place of a not-ready built one (spec
+    // 2026-11-27 5.8). The controller has requested them; only those already
+    // uploaded or cached are drawn, each at its own screen rect.
+    const auto standInsFor = [this](const core::TileKey& key) {
+        return core::readyStandIns(m_impl->pyramid->levels(), key, [this](const core::TileKey& k) {
+            return m_impl->slideSource->isTileReady(k);
+        });
+    };
 
     if (m_impl->slideInfo.isBrightfield && m_impl->slideInfo.numChannels <= 1) {
         // --- Single-channel brightfield rendering path ---
@@ -5076,6 +5192,9 @@ void ViewportWidget::paintGL()
             if (texIt != m_impl->textures.end()) {
                 texId = texIt->second;
             } else {
+                // The cache first: a built tile cached earlier in this mode is
+                // drawn even while a rebuild for the other mode has its rows
+                // pending again (Raw -> Managed -> Raw).
                 auto tileData = m_impl->tileCache->lookup(key);
                 if (tileData && !tileData->isEmpty() && !tileData->isError()) {
                     texId = m_impl->uploadTileTexture(*tileData);
@@ -5086,7 +5205,39 @@ void ViewportWidget::paintGL()
                     // to the clear color (white for brightfield).
                     continue;
                 } else {
-                    ++tilesSkipped;
+                    // A built tile whose rows are not accumulated yet is not a
+                    // skipped tile: counting it would re-arm the 16 ms repaint
+                    // for the whole build. Its finer ready stand-ins are drawn
+                    // instead, and what none covers shows the background until
+                    // the build's progress callback requests it (spec
+                    // 2026-11-27 5.4, 5.8).
+                    if (m_impl->slideSource->isTileReady(key)) {
+                        ++tilesSkipped;
+                        continue;
+                    }
+                    for (const auto& standIn : standInsFor(key)) {
+                        GLuint standInTex = 0;
+                        auto standInIt = m_impl->textures.find(standIn);
+                        if (standInIt != m_impl->textures.end()) {
+                            standInTex = standInIt->second;
+                        } else {
+                            auto standInData = m_impl->tileCache->lookup(standIn);
+                            if (!standInData || standInData->isEmpty() || standInData->isError()) {
+                                continue;
+                            }
+                            standInTex = m_impl->uploadTileTexture(*standInData);
+                            m_impl->textures[standIn] = standInTex;
+                        }
+                        const auto standInRect = coordSystem.tileScreenRect(standIn, viewport);
+                        m_impl->tileShader->setUniformValue("uScreenRect",
+                            static_cast<float>(standInRect.x),
+                            static_cast<float>(standInRect.y),
+                            static_cast<float>(standInRect.width),
+                            static_cast<float>(standInRect.height));
+                        m_impl->gl->glBindTexture(GL_TEXTURE_2D, standInTex);
+                        m_impl->gl->glDrawArrays(GL_TRIANGLES, 0, 6);
+                        ++tilesRendered;
+                    }
                     continue;
                 }
             }
@@ -5252,15 +5403,35 @@ void ViewportWidget::paintGL()
 
             auto texIt = m_impl->fluorescenceTextures.find(key);
             if (texIt == m_impl->fluorescenceTextures.end()) {
+                // Cache first; a not-ready built tile is not skipped and its
+                // ready finer stand-ins are drawn instead, see the brightfield
+                // loop.
                 auto tileData = m_impl->tileCache->lookup(key);
-                if (!tileData || tileData->isEmpty()) {
-                    ++tilesSkipped;
+                if (tileData && tileData->isError()) {
+                    // Permanent read failure: don't retry, don't trigger the
+                    // tilesSkipped repaint storm. Tested before isEmpty(): an
+                    // error tile has no buffer, so the empty branch would take
+                    // it, count a ready tile as skipped and repaint at 60 fps.
                     continue;
                 }
-                if (tileData->isError()) {
-                    // Permanent read failure: don't retry, don't trigger
-                    // the tilesSkipped repaint storm. Region falls through
-                    // to the clear color (white for brightfield).
+                if (!tileData || tileData->isEmpty()) {
+                    if (m_impl->slideSource->isTileReady(key)) {
+                        ++tilesSkipped;
+                        continue;
+                    }
+                    for (const auto& standIn : standInsFor(key)) {
+                        auto standInIt = m_impl->fluorescenceTextures.find(standIn);
+                        if (standInIt == m_impl->fluorescenceTextures.end()) {
+                            auto standInData = m_impl->tileCache->lookup(standIn);
+                            if (!standInData || standInData->isEmpty() || standInData->isError()) {
+                                continue;
+                            }
+                            m_impl->fluorescenceTextures[standIn] = m_impl->uploadTileChannelTextures(*standInData);
+                            standInIt = m_impl->fluorescenceTextures.find(standIn);
+                        }
+                        drawFluorescenceTile(standInIt->second, coordSystem.tileScreenRect(standIn, viewport));
+                        ++tilesRendered;
+                    }
                     continue;
                 }
                 m_impl->fluorescenceTextures[key] = m_impl->uploadTileChannelTextures(*tileData);

@@ -1,0 +1,211 @@
+#pragma once
+
+#include "slideio/viewer/core/BuiltLevelCache.h"
+#include "slideio/viewer/core/BuiltLevels.h"
+#include "slideio/viewer/core/IBuiltLevelStore.h"
+#include "slideio/viewer/core/ISlideSource.h"
+#include "slideio/viewer/core/TileData.h"
+#include "slideio/viewer/core/TileKey.h"
+#include "slideio/viewer/core/Types.h"
+
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <shared_mutex>
+#include <thread>
+#include <vector>
+
+namespace slideio::viewer::core
+{
+class BuiltLevelAccumulator;
+} // namespace slideio::viewer::core
+
+namespace slideio::viewer::infra
+{
+
+// Wraps a slide source and appends viewer-built coarser levels to its pyramid
+// (spec 2026-11-27 §5.3). Stored levels forward to the inner source. A virtual
+// built level is one mode-explicit block read per tile. Resident built levels
+// are filled by one background worker that reads the coarsest stored level
+// once, band by band, in the colour mode the build belongs to; until a tile's
+// rows are accumulated, reading it answers TileData::createPending().
+//
+// slideInfo() is the inner source's, unchanged: built levels must never look
+// like levels of the file.
+//
+// Threading: the accumulator and build state sit behind a shared_mutex --
+// exclusive while the worker feeds one chunk or a build restarts, shared for
+// readers. The worker never holds it across an inner read and nobody holds it
+// across a listener call. Listeners run on the worker thread and must not call
+// setColorMode() or destroy this object from there (both join that thread).
+//
+// A band is read in chunks whose width is a whole number of the source level's
+// tiles, as many as keep one chunk within bandChunkMaxBytes (at least one tile),
+// so no source tile is decoded twice and the reads a close or a colour toggle
+// waits for stay short.
+//
+// With more than one reader (spec 2026-11-27 parallel built-level pass) the
+// worker owns that many reader threads for the build. They claim chunks in
+// band-major order, read them unlocked and park them; the worker feeds them to
+// the accumulator strictly in chunk order, exactly as one reader would, so the
+// built bytes are identical. At most 2 x readers chunks are claimed but not yet
+// fed. Readers touch only the inner source -- never the accumulator, the state
+// lock or a listener -- and the worker joins them before run() returns on
+// every path, so joining the worker joins them too. One reader reads inline on
+// the worker, with no other thread: the sequential pass.
+//
+// The source level marked unreliable by the inner source (a corrupt tile-offset
+// table, found by whichever thread read the tile) abandons the build: the
+// notification only raises a flag, the worker stops at its next chunk without
+// accumulating the one in flight, and every resident tile not already built is
+// answered as an error tile -- ready, so nothing waits on it. No overview is
+// ever published for such a source.
+class BuiltPyramidSource : public core::ISlideSource
+{
+public:
+    static constexpr int kDefaultBandChunkMaxBytes = 4 * 1024 * 1024;
+
+    // Strictly fewer than half of SlideIO's read handles for the file, which
+    // ContextPool::defaultMax() sizes to min(8, hardware threads), mirrored
+    // here because SlideIO does not install that header: max(1, (handles-1)/2),
+    // so 3 on 8 or more threads, 2 on 6, 1 on 4 or fewer. Each reader holds one
+    // handle for a whole chunk read, and the visible tiles share the rest; at
+    // half or more, panning during a build was starved of handles.
+    static int defaultBuiltPassReaders();
+    // The same rule for a given hardware thread count (0 = unknown).
+    static int builtPassReadersForThreads(unsigned hardwareThreads);
+
+    // Plans the built levels and subscribes to the inner source's unreliable-
+    // level notifications; does not start the worker. readers is clamped to >= 1.
+    explicit BuiltPyramidSource(std::shared_ptr<core::ISlideSource> inner,
+                                size_t budgetBytes = core::kBuiltLevelBudgetBytes,
+                                int bandChunkMaxBytes = kDefaultBandChunkMaxBytes,
+                                int readers = defaultBuiltPassReaders());
+    ~BuiltPyramidSource() override;
+
+    BuiltPyramidSource(const BuiltPyramidSource&) = delete;
+    BuiltPyramidSource& operator=(const BuiltPyramidSource&) = delete;
+
+    // Call before start(); a null store (the default) means no caching and
+    // behaviour exactly as before. With a store, each build first asks it for
+    // finished levels under the build's key (core::builtLevelCacheKeyFor) and,
+    // on a hit, reads nothing from the inner source. A build that completes
+    // with no failed rows, not cancelled and not abandoned, is saved under the
+    // same key. Both run on the worker thread: the load without the state lock,
+    // the save holding it shared -- setColorMode() and the destructor raise the
+    // cancel flag both poll and join before they take it exclusively.
+    void setLevelStore(std::shared_ptr<core::IBuiltLevelStore> store, core::BuiltLevelCacheIdentity identity,
+                       core::BuiltLevelCacheDescription description);
+
+    // Starts the build in the inner source's current colour mode, if there is
+    // anything resident to build. Idempotent. Kept apart from the constructor
+    // so listeners can be registered before the first band lands.
+    void start();
+
+    bool hasBuiltLevels() const;
+
+    // The coarsest resident level's whole raster once the build is complete,
+    // else an empty tile. Also empty when any of its rows failed -- a minimap
+    // with black stripes is worse than none -- or when the source level was
+    // marked unreliable.
+    core::TileData smallestBuiltLevel() const;
+
+    // The width of one band chunk for a source level of the given width and
+    // tile width, at bytesPerColumn bytes per chunk column: the largest whole
+    // number of tiles within maxBytes, at least one tile, never wider than the
+    // level. Public so the rule can be tested directly.
+    static int bandChunkWidth(int levelWidth, int tileWidth, size_t bytesPerColumn, size_t maxBytes);
+
+    core::SlideInfo slideInfo() const override;
+    std::vector<core::LevelInfo> levels() const override;
+    core::TileData readTile(const core::TileKey& key) override;
+
+    using core::ISlideSource::readBlock;
+    core::TileData readBlock(int slideX, int slideY, int slideWidth, int slideHeight, int targetWidth,
+                             int targetHeight, int zIndex = 0, int tFrame = 0) override;
+    core::TileData readBlock(int slideX, int slideY, int slideWidth, int slideHeight, int targetWidth,
+                             int targetHeight, int zIndex, int tFrame, core::ColorMode mode) override;
+
+    bool isTileReady(const core::TileKey& key) const override;
+    void addOnBuiltRowsReady(std::function<void(bool complete)> listener) override;
+    bool builtOverviewPending() const override;
+    void addOnLevelMarkedUnreliable(std::function<void(int)> listener) override;
+
+    // Forwards; a mode other than the build's cancels the running build, joins
+    // it, frees its rasters and -- if start() was called -- builds again in the
+    // new mode. Waits for at most the inner reads in flight, one chunk each.
+    void setColorMode(core::ColorMode mode) override;
+    core::ColorMode colorMode() const override;
+    core::ColorProfileInfo activeColorProfileInfo() const override;
+
+private:
+    enum class ResidentAnswer
+    {
+        Pending,
+        Failed,
+        Ready
+    };
+
+    // Caller holds m_stateMutex (shared or exclusive).
+    ResidentAnswer residentAnswerLocked(const core::TileKey& key, const core::TileSlideRect& rect) const;
+    int residentIndexOf(int level) const;
+
+    // Caller holds m_controlMutex and no worker is running.
+    void launchLocked(core::ColorMode mode);
+    // Caller holds m_controlMutex.
+    void stopWorkerLocked();
+
+    void run(uint64_t generation, core::ColorMode mode);
+    // On the worker, before any band is read. True when the build is over:
+    // the store's levels were handed over, or a newer build or a cancel
+    // superseded it meanwhile. False on a miss, to build as usual.
+    bool loadFromStore(uint64_t generation, core::ColorMode mode, const core::BuiltLevelCacheKey& key);
+    // On the worker, after a clean completion has been notified.
+    void saveToStore(uint64_t generation, core::ColorMode mode, const core::BuiltLevelCacheKey& key);
+    void notify(bool complete);
+    bool sourceUnreliable() const;
+
+    std::shared_ptr<core::ISlideSource> m_inner;
+    std::vector<core::LevelInfo> m_levels; // stored then built; fixed after construction
+    int m_storedCount = 0;
+    int m_sourceLevel = -1;
+    std::vector<int> m_residentFactors; // finest to coarsest, relative to m_sourceLevel
+    int m_slideWidth = 0;
+    int m_slideHeight = 0;
+    int m_numChannels = 0;
+    core::DataType m_dataType = core::DataType::None;
+    int m_bandChunkMaxBytes;
+    int m_readers;
+
+    // Set under m_controlMutex before start(); only read by the worker after.
+    std::shared_ptr<core::IBuiltLevelStore> m_store;
+    core::BuiltLevelCacheIdentity m_cacheIdentity;
+    core::BuiltLevelCacheDescription m_cacheDescription;
+
+    mutable std::shared_mutex m_stateMutex;
+    std::unique_ptr<core::BuiltLevelAccumulator> m_accumulator;
+    core::ColorMode m_buildMode = core::ColorMode::Raw;
+    bool m_complete = false;
+    uint64_t m_generation = 0;
+
+    std::mutex m_controlMutex; // start / setColorMode / destructor
+    std::thread m_worker;
+    bool m_started = false;
+    std::atomic<bool> m_cancel{false};
+
+    std::mutex m_listenersMutex;
+    std::vector<std::function<void(bool)>> m_listeners;
+
+    // Raised, from any thread, when the inner source marks the source level
+    // unreliable. Shared with the listener registered on the inner source, which
+    // cannot be unregistered and may outlive this object; the listener touches
+    // nothing else, so it takes no lock and joins nothing.
+    std::shared_ptr<std::atomic<bool>> m_sourceUnreliable = std::make_shared<std::atomic<bool>>(false);
+    // One info line per build when the overview is withheld for failed rows.
+    mutable std::atomic<bool> m_withheldLogged{false};
+};
+
+} // namespace slideio::viewer::infra

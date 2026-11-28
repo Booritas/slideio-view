@@ -10,6 +10,7 @@
 #include <slideio/transformer/transformer.hpp>
 #include <slideio/transformer/colormanagementwrap.hpp>
 
+#include "slideio/viewer/core/BuiltLevelCache.h"
 #include "slideio/viewer/core/ColorManagement.h"
 
 #include <spdlog/spdlog.h>
@@ -337,16 +338,56 @@ void applySuppliedProfileOrigin(const slideio::viewer::core::SuppliedColorProfil
     info.displacedEmbeddedProfile = supplied.isSlideOverride && info.colorProfileInfo.present;
 }
 
+/// The space every managed scene converts into. One constant, read both where
+/// the transform is set up and where the rendition is named for the level
+/// cache, so the two cannot disagree.
+constexpr ::slideio::ColorTarget kManagedTarget = ::slideio::ColorTarget::sRGB;
+
+const char* colorTargetName(::slideio::ColorTarget target)
+{
+    switch (target) {
+    case ::slideio::ColorTarget::sRGB:
+        return "sRGB";
+    case ::slideio::ColorTarget::LinearRGB:
+        return "LinearRGB";
+    case ::slideio::ColorTarget::Lab:
+        return "Lab";
+    case ::slideio::ColorTarget::XYZ:
+        return "XYZ";
+    }
+    return "UnknownTarget";
+}
+
+const char* renderingIntentName(::slideio::RenderingIntent intent)
+{
+    switch (intent) {
+    case ::slideio::RenderingIntent::Perceptual:
+        return "Perceptual";
+    case ::slideio::RenderingIntent::RelativeColorimetric:
+        return "RelativeColorimetric";
+    case ::slideio::RenderingIntent::Saturation:
+        return "Saturation";
+    case ::slideio::RenderingIntent::AbsoluteColorimetric:
+        return "AbsoluteColorimetric";
+    }
+    return "UnknownIntent";
+}
+
+/// outFingerprint names the profile bytes the managed scene is bound to -- the
+/// supplied ones when they are used, else the slide's embedded ones -- and is
+/// left empty when no managed scene is built or the bytes cannot be read.
 slideio::viewer::core::ColorManagementAvailability buildManagedScene(
     const std::shared_ptr<::slideio::Scene>& scene,
     const slideio::viewer::core::SlideInfo& info,
     const slideio::viewer::core::SuppliedColorProfile& supplied,
     std::shared_ptr<::slideio::Scene>& outManagedScene,
-    std::string& outDetail)
+    std::string& outDetail,
+    std::string& outFingerprint)
 {
     namespace core = slideio::viewer::core;
     outManagedScene.reset();
     outDetail.clear();
+    outFingerprint.clear();
 
     if (!core::isColorimetricForIcc(info.numChannels, info.channelDataType,
                                     info.fluorescenceHint)) {
@@ -358,9 +399,12 @@ slideio::viewer::core::ColorManagementAvailability buildManagedScene(
         return core::ColorManagementAvailability::NoProfile;
     }
 
+    const bool useSupplied = haveBytes && (supplied.isSlideOverride || !info.colorProfileInfo.present);
     try {
         ::slideio::ColorManagementWrap cm;
-        cm.setTarget(::slideio::ColorTarget::sRGB);
+        // The intent is left at the library's default; managedRenditionTag()
+        // reads that same default.
+        cm.setTarget(kManagedTarget);
         // Fail, not AssumeSRGB. The gate above guarantees only that bytes are
         // present -- embedded, or supplied bytes whose header was validated
         // when the user picked them. Supplied bytes that have since been
@@ -375,16 +419,25 @@ slideio::viewer::core::ColorManagementAvailability buildManagedScene(
         // override is the opposite case -- the user is saying this slide's own
         // profile is the wrong one -- so it displaces, which is what
         // setSourceProfileOverride has always been able to do.
-        if (haveBytes && (supplied.isSlideOverride || !info.colorProfileInfo.present)) {
+        if (useSupplied) {
             cm.setSourceProfileOverride(::slideio::ColorProfile(supplied.bytes));
         }
         outManagedScene = ::slideio::transformScene(scene, cm);
-        return core::ColorManagementAvailability::Available;
     } catch (const std::exception& ex) {
         outDetail = ex.what();
         spdlog::info("SlideIOAdapter: colour management unavailable: {}", ex.what());
         return core::ColorManagementAvailability::BindFailed;
     }
+    // Apart from the bind: a profile that cannot be re-read only costs the
+    // level cache its managed entry, never the managed view itself.
+    try {
+        outFingerprint = core::colorProfileFingerprint(useSupplied ? supplied.bytes
+                                                                   : scene->getColorProfile().getData());
+    } catch (const std::exception& ex) {
+        spdlog::info("SlideIOAdapter: bound colour profile could not be fingerprinted: {}", ex.what());
+        outFingerprint.clear();
+    }
+    return core::ColorManagementAvailability::Available;
 }
 
 slideio::viewer::core::MetadataNode convertMetadata(
@@ -670,7 +723,8 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, int sceneIndex,
     // hint, and reading it before it is set would offer colour management on
     // fluorescence slides.
     m_slideInfo.colorManagement = buildManagedScene(m_scene, m_slideInfo, supplied,
-                                                    m_managedScene, m_slideInfo.colorManagementDetail);
+                                                    m_managedScene, m_slideInfo.colorManagementDetail,
+                                                    m_boundProfileFingerprint);
     applySuppliedProfileOrigin(supplied, m_slideInfo);
     m_slideInfo.isBrightfield = !fluorescenceHint && (
         (m_slideInfo.numChannels == 1) ||
@@ -896,7 +950,8 @@ SlideIOAdapter::SlideIOAdapter(const std::string& filePath, const std::string& a
     // hint, and reading it before it is set would offer colour management on
     // fluorescence slides.
     m_slideInfo.colorManagement = buildManagedScene(m_scene, m_slideInfo, supplied,
-                                                    m_managedScene, m_slideInfo.colorManagementDetail);
+                                                    m_managedScene, m_slideInfo.colorManagementDetail,
+                                                    m_boundProfileFingerprint);
     applySuppliedProfileOrigin(supplied, m_slideInfo);
     m_slideInfo.isBrightfield = !fluorescenceHint && (
         (m_slideInfo.numChannels == 1) ||
@@ -1395,6 +1450,28 @@ std::vector<uint8_t> SlideIOAdapter::embeddedProfileBytes() const
     }
 }
 
+std::string SlideIOAdapter::boundColorProfileFingerprint() const
+{
+    return m_managedScene ? m_boundProfileFingerprint : std::string();
+}
+
+std::string SlideIOAdapter::managedRenditionTag()
+{
+    // Read from a default-constructed wrap, as buildManagedScene leaves the
+    // intent at that default: a library that changes it changes the cache key.
+    static const std::string tag = [] {
+        ::slideio::RenderingIntent intent = ::slideio::RenderingIntent::RelativeColorimetric;
+        try {
+            intent = ::slideio::ColorManagementWrap().getIntent();
+        } catch (const std::exception& ex) {
+            spdlog::warn("SlideIOAdapter: the default rendering intent could not be read: {}", ex.what());
+            return std::string();
+        }
+        return std::string(colorTargetName(kManagedTarget)) + "/" + renderingIntentName(intent);
+    }();
+    return tag;
+}
+
 const std::shared_ptr<::slideio::Scene>& SlideIOAdapter::sceneForMode(core::ColorMode mode) const
 {
     return (mode == core::ColorMode::Managed && m_managedScene) ? m_managedScene : m_scene;
@@ -1402,19 +1479,15 @@ const std::shared_ptr<::slideio::Scene>& SlideIOAdapter::sceneForMode(core::Colo
 
 const std::shared_ptr<::slideio::Scene>& SlideIOAdapter::activeScene() const
 {
-    // Only for reads that carry no colour mode of their own -- readBlock, which
-    // serves thumbnails and overviews and is never cached under a TileKey. Keyed
-    // reads must go through sceneForMode(key.colorMode()) instead, so that their
-    // pixels and the key they are filed under cannot disagree.
-    //
-    // This makes readBlock mode-dependent. Those surfaces are raw today only
-    // because of WHEN they run: every readBlock call site is at open time or on
-    // a temp adapter still in Raw, so no toggle can reach one. A caller that
-    // refreshed the minimap from a live adapter would need
-    // sceneForMode(ColorMode::Raw), not this.
+    // Only for queries that carry no colour mode of their own and describe the
+    // scene as the user currently sees it -- today activeColorProfileInfo().
+    // Pixel reads never use it: readTile goes through sceneForMode(key.
+    // colorMode()) and readBlock through sceneForMode(mode), the mode-less
+    // readBlock overload passing the current mode explicitly, so a read and the
+    // rendition it is filed under cannot disagree.
     //
     // Relaxed is sufficient: nothing here is ordered against other state, and a
-    // readBlock that straddles a toggle may legitimately return either rendition.
+    // query that straddles a toggle may legitimately describe either scene.
     return sceneForMode(m_colorMode.load(std::memory_order_relaxed));
 }
 
@@ -1432,10 +1505,18 @@ core::TileData SlideIOAdapter::readBlock(int slideX, int slideY, int slideWidth,
                                           int targetWidth, int targetHeight,
                                           int zIndex, int tFrame)
 {
+    return readBlock(slideX, slideY, slideWidth, slideHeight, targetWidth, targetHeight, zIndex, tFrame,
+                     colorMode());
+}
+
+core::TileData SlideIOAdapter::readBlock(int slideX, int slideY, int slideWidth, int slideHeight,
+                                          int targetWidth, int targetHeight,
+                                          int zIndex, int tFrame, core::ColorMode mode)
+{
     if (slideWidth <= 0 || slideHeight <= 0 || targetWidth <= 0 || targetHeight <= 0) {
         return core::TileData::createError(targetWidth, targetHeight);
     }
-    const auto& scene = activeScene();
+    const auto& scene = sceneForMode(mode);
     try {
         std::tuple<int, int, int, int> blockRect(slideX, slideY, slideWidth, slideHeight);
         std::tuple<int, int> blockSize(targetWidth, targetHeight);

@@ -14,6 +14,7 @@
 #include "slideio/viewer/core/ColorManagement.h"
 #include "slideio/viewer/core/ResultsAttachment.h"
 #include "slideio/viewer/core/SlideId.h"
+#include "slideio/viewer/infra/BuiltLevelDiskCache.h"
 #include "slideio/viewer/infra/JsonAnnotationRepository.h"
 #include "slideio/viewer/infra/ProcessorWorkspaceSource.h"
 #include "slideio/viewer/infra/QSettingsAnnotationCategoryStore.h"
@@ -33,6 +34,7 @@
 #include "slideio/viewer/ui/AnnotationSettings.h"
 #include "slideio/viewer/ui/AppPaths.h"
 #include "slideio/viewer/ui/AssociatedImageWindow.h"
+#include "slideio/viewer/ui/BuiltLevelCacheSettings.h"
 #include "slideio/viewer/ui/ChannelMixerPanel.h"
 #include "slideio/viewer/ui/ColorProfilePolicy.h"
 #include "slideio/viewer/ui/DriverFilters.h"
@@ -51,6 +53,7 @@
 #include "slideio/viewer/ui/LayersPanelPolicy.h"
 #include "slideio/viewer/ui/MetadataPanel.h"
 #include "slideio/viewer/ui/MinimapWidget.h"
+#include "slideio/viewer/ui/OverviewRendering.h"
 #include "slideio/viewer/ui/PreferencesDialog.h"
 #include "slideio/viewer/ui/StatusBarManager.h"
 #include "slideio/viewer/ui/ViewportController.h"
@@ -63,6 +66,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QCloseEvent>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
 #include <QDragEnterEvent>
@@ -89,10 +93,12 @@
 #include <QPushButton>
 #include <QRegion>
 #include <QScreen>
+#include <QSet>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QStatusBar>
 #include <QTextEdit>
+#include <QThreadPool>
 #include <QTimer>
 #include <QUrl>
 
@@ -365,10 +371,24 @@ struct MainWindow::Impl
     /// that already captured the old slide's key.
     bool slideLoadInFlight = false;
     bool saveFailureReported = false;
+    /// Slide paths already told, this session, that their annotations are
+    /// stored under another identity: once is information, every reopen is noise.
+    QSet<QString> otherIdentityNoticeShown;
 
     void buildAnnotationPersistence();
     void updateUndoActions();
     bool openPreferences();
+    /// This instance's built-level cache settings: read from QSettings once at
+    /// startup and changed only by this instance's Preferences OK (which also
+    /// writes them back), like AnnotationSettings' workspace -- the store is
+    /// shared by every instance and this copy is not.
+    BuiltLevelCacheSettings builtLevelCacheSettings;
+    /// Makes `settings` this instance's: hands the viewport the disk cache they
+    /// describe (null when disabled) and sweeps, off the UI thread, the
+    /// configured folder whatever `enabled` says and, when `previous` names
+    /// another folder, that one too. Applies to slides opened from now on.
+    void applyBuiltLevelCacheSettings(const BuiltLevelCacheSettings& settings,
+                                      const BuiltLevelCacheSettings* previous);
     /// Enables or disables everything that writes annotations, and says why not.
     /// Driven from two signals: ViewportWidget::annotationsAvailableChanged,
     /// which carries the better wording on an open or close, and
@@ -1393,9 +1413,26 @@ struct MainWindow::Impl
                 // level, so tell the minimap to explain the empty panel
                 // rather than leaving a blank grey rectangle.
                 minimapWidget->setOverviewAvailable(info.overviewAvailable);
+                // A slide with viewer-built levels and no open-time overview
+                // gets one when the build completes; until then say so. One
+                // that already has an overview keeps it, so nothing is coming.
+                minimapWidget->setOverviewBuilding(
+                    shouldShowOverviewBuilding(viewportWidget->builtOverviewPending(), info.overviewAvailable));
 
                 // Last: everything the slide check reads is set by now.
                 reattachResultsForOpenScene();
+            });
+
+        QObject::connect(viewportWidget, &ViewportWidget::builtOverviewReady, owner,
+            [this](const QImage& overview) {
+                minimapWidget->setOverviewBuilding(false);
+                if (overview.isNull()) {
+                    // The build ended with nothing to show: the minimap keeps
+                    // whatever it had, unavailable notice included.
+                    return;
+                }
+                minimapWidget->setThumbnail(overview);
+                minimapWidget->setOverviewAvailable(true);
             });
 
         QObject::connect(viewportWidget, &ViewportWidget::thumbnailReady, owner,
@@ -1982,6 +2019,40 @@ void MainWindow::Impl::buildAnnotationPersistence()
                                  .arg(message, QDir::toNativeSeparators(path)));
                      });
 
+    QObject::connect(
+        annotationPersistence.get(), &app::AnnotationPersistenceService::annotationsUnderOtherIdentity, owner,
+        [this](const QString& slidePath, const QStringList& files) {
+            // An empty slide here reads as lost clinical work, so the user is
+            // told -- once per path per session -- that the files exist and
+            // were left alone. Logged every time, for the support question.
+            spdlog::warn("No annotations for '{}' under its current identity; {} file(s) record this path "
+                         "under another: {}",
+                         slidePath.toStdString(), files.size(), files.join(QStringLiteral(", ")).toStdString());
+            if (otherIdentityNoticeShown.contains(slidePath)) {
+                return;
+            }
+            otherIdentityNoticeShown.insert(slidePath);
+            constexpr int kListed = 5;
+            QStringList shown;
+            for (int i = 0; i < files.size() && i < kListed; ++i) {
+                shown.append(QDir::toNativeSeparators(files[i]));
+            }
+            if (files.size() > kListed) {
+                shown.append(tr("... and %n more", nullptr, static_cast<int>(files.size()) - kListed));
+            }
+            QMessageBox::information(
+                owner, tr("Earlier annotations found for this file"),
+                tr("No annotations are saved for this slide as it is identified now, but the annotation "
+                   "folder holds %n file(s) saved for a slide at this same path under a different "
+                   "identity:\n\n%1\n\nThis usually means this version reads the file's scenes differently "
+                   "from the version that saved them -- a pyramidal TIFF that used to open as several "
+                   "scenes now opens as one -- or that the file at this path was replaced. They were not "
+                   "loaded, because their coordinates may belong to another scene. Nothing was changed "
+                   "or deleted.",
+                   nullptr, static_cast<int>(files.size()))
+                    .arg(shown.join(QLatin1Char('\n'))));
+        });
+
     QObject::connect(annotationPersistence.get(),
                      &app::AnnotationPersistenceService::lockedByAnother, owner,
                      [](const QString& path, const QString& holder) {
@@ -2042,14 +2113,46 @@ void MainWindow::Impl::buildAnnotationPersistence()
         });
 }
 
+void MainWindow::Impl::applyBuiltLevelCacheSettings(const BuiltLevelCacheSettings& settings,
+                                                    const BuiltLevelCacheSettings* previous)
+{
+    const QStringList sweepFolders = builtLevelCacheFoldersToSweep(settings, previous);
+    builtLevelCacheSettings = settings;
+    if (settings.enabled) {
+        const std::string folder = resolveBuiltLevelCacheFolder(settings.folder).toStdString();
+        viewportWidget->setBuiltLevelStore(std::make_shared<infra::BuiltLevelDiskCache>(folder));
+        spdlog::info("MainWindow: built-level cache on, folder '{}', retention {} days", folder,
+                     settings.retentionDays);
+    } else {
+        viewportWidget->setBuiltLevelStore(nullptr);
+    }
+
+    // Retention runs whether or not the cache is on: turning it off does not
+    // delete entries, their retention does. The sweep never creates a folder.
+    const int retentionDays = settings.retentionDays;
+    const int64_t nowSeconds = QDateTime::currentSecsSinceEpoch();
+    for (const QString& sweepFolder : sweepFolders) {
+        const std::string folder = sweepFolder.toStdString();
+        QThreadPool::globalInstance()->start([folder, retentionDays, nowSeconds]() {
+            // sweep() never throws; it deletes only key-named entries and stale temporaries.
+            const int deleted = infra::BuiltLevelDiskCache::sweep(folder, retentionDays, nowSeconds);
+            if (deleted > 0) {
+                spdlog::info("built-level cache sweep removed {} entries from '{}'", deleted, folder);
+            }
+        });
+    }
+}
+
 bool MainWindow::Impl::openPreferences()
 {
     QStringList currentCategories;
     for (const std::string& category : categoryStore->categories()) {
         currentCategories.append(QString::fromStdString(category));
     }
+    // This instance's copy, not the shared store, which another instance may
+    // have changed since (spec §5.1).
     PreferencesDialog dialog(annotationSettings->workspaceDirectory(),
-                             annotationSettings->userName(), currentCategories, owner);
+                             annotationSettings->userName(), currentCategories, builtLevelCacheSettings, owner);
     if (dialog.exec() != QDialog::Accepted) {
         return false;
     }
@@ -2067,6 +2170,20 @@ bool MainWindow::Impl::openPreferences()
 
     annotationSettings->setUserName(dialog.userName());
     annotations->setDefaultAuthor(annotationSettings->userName().toStdString());
+
+    // Before the workspace switch below, which can return early.
+    // Written only when edited: the store is shared, and this instance's copy
+    // may be older than another instance's change to it, which an OK that
+    // only renamed the user must not revert.
+    const BuiltLevelCacheSettings cacheSettings = dialog.builtLevelCacheSettings();
+    if (builtLevelCacheSettingsChanged(builtLevelCacheSettings, cacheSettings)) {
+        {
+            QSettings settings;
+            saveBuiltLevelCacheSettings(settings, cacheSettings);
+        }
+        const BuiltLevelCacheSettings previousCacheSettings = builtLevelCacheSettings;
+        applyBuiltLevelCacheSettings(cacheSettings, &previousCacheSettings);
+    }
 
     const QString entered = dialog.workspaceDirectory();
     // Resolve the entry before comparing: a cleared field means "use the
@@ -3057,6 +3174,11 @@ MainWindow::MainWindow(QWidget* parent)
     m_impl->annotations = std::make_unique<app::AnnotationModel>();
     m_impl->viewportWidget = new ViewportWidget(*m_impl->annotations, this);
     setCentralWidget(m_impl->viewportWidget);
+    {
+        QSettings settings;
+        // The only read of the store: this instance keeps its own copy from here.
+        m_impl->applyBuiltLevelCacheSettings(loadBuiltLevelCacheSettings(settings), nullptr);
+    }
 
     // Create overlay widgets as children of the viewport
     m_impl->minimapWidget = new MinimapWidget(m_impl->viewportWidget);

@@ -31,6 +31,11 @@ public:
     core::LockResult lock(const core::AnnotationKey& key) override;
     void unlock() override;
     [[nodiscard]] std::string pathFor(const core::AnnotationKey& key) const override;
+    /// Lists `<id>.s<N>.annotations.json` in the annotations folder and peeks
+    /// at the first 16 KiB of each. Paths are compared with separators
+    /// normalised, and ignoring case on Windows.
+    [[nodiscard]] std::vector<core::StoredAnnotationFile>
+    filesNamingSlidePath(const std::string& slidePath) const override;
 
     /// Where the repository is rooted.
     [[nodiscard]] const std::string& workspaceRoot() const;

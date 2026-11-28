@@ -65,6 +65,7 @@ public:
         return TileData(std::move(buffer), kTileSize, kTileSize, 3, DataType::Byte);
     }
 
+    using ISlideSource::readBlock;
     TileData readBlock(int, int, int, int, int targetWidth, int targetHeight, int, int) override
     {
         std::vector<uint8_t> buffer(static_cast<size_t>(targetWidth) * targetHeight * 3, 0);
@@ -223,4 +224,68 @@ TEST_CASE("TileLoadScheduler evicts levels found unreliable before it existed",
     REQUIRE(cache->lookup(TileKey{1, 0, 0}) == nullptr);
     // A level nobody complained about keeps its tiles.
     REQUIRE(cache->lookup(TileKey{0, 0, 0}) != nullptr);
+}
+
+namespace
+{
+
+// Answers every read as not-yet-available, the way a built level does while
+// its band has not been accumulated.
+class PendingSlideSource : public ISlideSource
+{
+public:
+    SlideInfo slideInfo() const override { return SlideInfo{}; }
+    std::vector<LevelInfo> levels() const override { return {}; }
+
+    TileData readTile(const TileKey&) override
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            ++m_reads;
+        }
+        m_condition.notify_all();
+        return TileData::createPending();
+    }
+
+    using ISlideSource::readBlock;
+    TileData readBlock(int, int, int, int, int, int, int, int) override { return TileData::createPending(); }
+
+    bool waitForReads(int count, std::chrono::milliseconds timeout)
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_condition.wait_for(lock, timeout, [this, count] { return m_reads >= count; });
+    }
+
+private:
+    std::mutex m_mutex;
+    std::condition_variable m_condition;
+    int m_reads = 0;
+};
+
+} // namespace
+
+TEST_CASE("scheduler does not cache a pending tile", "[infra][TileLoadScheduler]")
+{
+    auto source = std::make_shared<PendingSlideSource>();
+    auto cache = std::make_shared<LruTileCache>(1024 * 1024);
+
+    std::atomic<int> loaded{0};
+    TileLoadScheduler scheduler(source, cache, 1);
+    scheduler.setOnTileLoaded([&loaded](const TileKey&) { ++loaded; });
+
+    const TileKey key{0, 0, 0};
+    scheduler.requestTiles({TileRequest{key, TilePriority::Visible}});
+
+    REQUIRE(source->waitForReads(1, std::chrono::seconds(10)));
+    // The read has returned or is about to; give the worker time to (wrongly)
+    // insert before looking.
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    REQUIRE(cache->lookup(key) == nullptr);
+    REQUIRE(loaded.load() == 0);
+
+    const TileData pending = TileData::createPending();
+    REQUIRE(pending.isPending());
+    REQUIRE(pending.isEmpty());
+    REQUIRE_FALSE(pending.isError());
 }

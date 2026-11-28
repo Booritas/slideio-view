@@ -220,6 +220,51 @@ std::string JsonAnnotationRepository::pathFor(const core::AnnotationKey& key) co
     return (annotationsDirectory(m_workspaceRoot) + QLatin1Char('/') + name).toStdString();
 }
 
+namespace
+{
+
+/// A slide path in the form two spellings of one file share: forward slashes,
+/// no redundant segments, and -- on Windows only, where paths are
+/// case-insensitive -- lower case.
+QString comparablePath(const std::string& path)
+{
+    QString cleaned = QDir::cleanPath(QDir::fromNativeSeparators(QString::fromStdString(path)));
+#ifdef Q_OS_WIN
+    cleaned = cleaned.toLower();
+#endif
+    return cleaned;
+}
+
+} // namespace
+
+std::vector<core::StoredAnnotationFile>
+JsonAnnotationRepository::filesNamingSlidePath(const std::string& slidePath) const
+{
+    // The writer puts the header first; this is several times what it needs.
+    constexpr qint64 kHeadBytes = 16 * 1024;
+    std::vector<core::StoredAnnotationFile> found;
+    if (slidePath.empty()) {
+        return found;
+    }
+    const QString wanted = comparablePath(slidePath);
+    const QDir directory(annotationsDirectory(m_workspaceRoot));
+    const QStringList names =
+        directory.entryList({QStringLiteral("*.annotations.json")}, QDir::Files | QDir::Readable, QDir::Name);
+    for (const QString& name : names) {
+        QFile file(directory.filePath(name));
+        if (!file.open(QIODevice::ReadOnly)) {
+            continue;
+        }
+        const QByteArray head = file.read(kHeadBytes);
+        const auto header =
+            core::peekAnnotationFileHeader(std::string_view(head.constData(), static_cast<size_t>(head.size())));
+        if (header && !header->path.empty() && comparablePath(header->path) == wanted) {
+            found.push_back({file.fileName().toStdString(), *header});
+        }
+    }
+    return found;
+}
+
 core::LoadResult JsonAnnotationRepository::load(const core::AnnotationKey& key)
 {
     const std::string path = pathFor(key);

@@ -1,8 +1,10 @@
 #pragma once
 
 #include "slideio/viewer/core/AnnotationDocument.h"
+#include "slideio/viewer/core/AnnotationSerialization.h"
 
 #include <string>
+#include <vector>
 
 namespace slideio::viewer::core
 {
@@ -89,6 +91,13 @@ enum class LockStatus
     Unavailable,
 };
 
+/// One stored annotation file, as far as its header says.
+struct StoredAnnotationFile
+{
+    std::string filePath;
+    AnnotationFileHeader header;
+};
+
 struct LockResult
 {
     LockStatus status = LockStatus::Unavailable;
@@ -138,6 +147,19 @@ public:
     /// Where `key` lives, whether or not anything is there. Exists so an error
     /// message can name a real path without the caller rebuilding the naming rule.
     [[nodiscard]] virtual std::string pathFor(const AnnotationKey& key) const = 0;
+
+    /// Every stored annotation file whose recorded slide path is `slidePath`,
+    /// whatever key it is stored under. Used only to TELL the user when a
+    /// file's annotations exist under another slide identity -- a SlideIO
+    /// upgrade that reads a file's scenes differently changes its slide ID --
+    /// never to load them: a recorded path is provenance, not identity (see
+    /// SlideProvenance). Reads only the head of each file. The default finds
+    /// nothing, for a store that cannot list its files.
+    [[nodiscard]] virtual std::vector<StoredAnnotationFile> filesNamingSlidePath(const std::string& slidePath) const
+    {
+        (void)slidePath;
+        return {};
+    }
 
 protected:
     IAnnotationRepository() = default;

@@ -21,6 +21,9 @@ add_library(slideio-viewer-core STATIC
     src/Calibration.cpp
     src/AnnotationLayer.cpp
     src/LevelRaster.cpp
+    src/BuiltLevels.cpp
+    src/BuiltLevelCache.cpp
+    src/BuiltLevelAccumulator.cpp
     src/WorkspaceSwitchPolicy.cpp
     src/Annotation.cpp
     src/Iso8601.cpp

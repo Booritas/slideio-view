@@ -4,6 +4,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 
 #include <chrono>
 #include <functional>
@@ -147,11 +148,21 @@ signals:
     /// The annotations are on screen and nothing may be written to them. Fired
     /// from beginSlide, before activeChanged.
     void lockedByAnother(const QString& path, const QString& holder);
+    /// beginSlide found no file for this scene, but the workspace holds files
+    /// recording this slide's path under another key: most likely the slide
+    /// ID changed because a SlideIO upgrade reads the file's scenes
+    /// differently, or the file at this path was replaced. Never loaded -- a
+    /// recorded path is provenance, not identity -- only reported, so the user
+    /// does not take an empty slide for lost work. `files` are their paths.
+    void annotationsUnderOtherIdentity(const QString& slidePath, const QStringList& files);
 
 private:
     void onAutosaveTick();
     void onModelCleared();
     void setActive(bool active);
+    /// Emits annotationsUnderOtherIdentity when the workspace holds files that
+    /// record `provenance.path` under a key other than `key`.
+    void reportOtherIdentities(const core::AnnotationKey& key, const core::SlideProvenance& provenance);
 
     core::IAnnotationRepository& m_repository;
     AnnotationModel& m_model;

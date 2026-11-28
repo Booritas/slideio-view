@@ -17,6 +17,7 @@ public:
         , m_numChannels(0)
         , m_dataType(DataType::None)
         , m_isError(false)
+        , m_isPending(false)
     {
     }
 
@@ -27,6 +28,7 @@ public:
         , m_numChannels(numChannels)
         , m_dataType(dataType)
         , m_isError(false)
+        , m_isPending(false)
     {
     }
 
@@ -38,6 +40,9 @@ public:
     int numChannels() const { return m_numChannels; }
     DataType dataType() const { return m_dataType; }
     bool isError() const { return m_isError; }
+    // A pending tile is a read with no answer YET: empty, not an error, and
+    // never cached -- the caller asks again once the source reports it ready.
+    bool isPending() const { return m_isPending; }
 
     void setWidth(int w) { m_width = w; }
     void setHeight(int h) { m_height = h; }
@@ -53,6 +58,13 @@ public:
     bool isEmpty() const
     {
         return m_buffer.empty();
+    }
+
+    static TileData createPending()
+    {
+        TileData tile;
+        tile.m_isPending = true;
+        return tile;
     }
 
     static TileData createError(int w, int h)
@@ -73,6 +85,7 @@ private:
     int m_numChannels;
     DataType m_dataType;
     bool m_isError;
+    bool m_isPending;
 };
 
 } // namespace slideio::viewer::core

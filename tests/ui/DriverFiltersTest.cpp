@@ -114,6 +114,23 @@ TEST_CASE("availableDriverFilters offers BIF, LIF and ND2 files", "[ui][DriverFi
     REQUIRE(extensionsOf("ND2") == QStringList{QStringLiteral("nd2")});
 }
 
+TEST_CASE("availableDriverFilters offers the Philips TIFF driver", "[ui][DriverFilters]")
+{
+    // Philips files share *.tif/*.tiff with GDAL, so this filter is the only way
+    // to force the PHTIFF driver from the Open dialog.
+    const QList<DriverFilter> filters = availableDriverFilters();
+    const auto it = std::find_if(filters.begin(), filters.end(), [](const DriverFilter& f) {
+        return f.driverId == QStringLiteral("PHTIFF");
+    });
+    REQUIRE(it != filters.end());
+    REQUIRE(it->extensions == (QStringList{QStringLiteral("tif"), QStringLiteral("tiff")}));
+
+    // The shared extensions must not be listed twice under "All Supported Slides".
+    const QStringList& all = filters.first().extensions;
+    REQUIRE(all.count(QStringLiteral("tif")) == 1);
+    REQUIRE(all.count(QStringLiteral("tiff")) == 1);
+}
+
 TEST_CASE("isDicomDriverAvailable agrees with the driver list", "[ui][DriverFilters]")
 {
     bool inFilterList = false;

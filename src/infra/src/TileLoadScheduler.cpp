@@ -174,6 +174,12 @@ void TileLoadScheduler::workerLoop()
         spdlog::trace("TileLoadScheduler: reading tile {}", request.key.toString());
         core::TileData tileData = m_slideSource->readTile(request.key);
 
+        // A pending tile has no answer yet: cache nothing and notify nobody, so
+        // the next request for it reaches the source again.
+        if (tileData.isPending()) {
+            continue;
+        }
+
         // Insert into cache (even error tiles, so we don't retry endlessly)
         auto tilePtr = std::make_shared<core::TileData>(std::move(tileData));
         m_tileCache->insert(request.key, tilePtr);

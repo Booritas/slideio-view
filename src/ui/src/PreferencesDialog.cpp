@@ -1,20 +1,24 @@
 #include "slideio/viewer/ui/PreferencesDialog.h"
 
+#include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFormLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QVBoxLayout>
 
 namespace slideio::viewer::ui
 {
 
 PreferencesDialog::PreferencesDialog(const QString& workspaceDirectory, const QString& userName,
-                                     const QStringList& categories, QWidget* parent)
+                                     const QStringList& categories,
+                                     const BuiltLevelCacheSettings& cacheSettings, QWidget* parent)
     : QDialog(parent)
 {
     setWindowTitle(tr("Preferences"));
@@ -47,6 +51,37 @@ PreferencesDialog::PreferencesDialog(const QString& workspaceDirectory, const QS
         this);
     note->setWordWrap(true);
 
+    // Built level cache. Off by default; a change applies to the next slide opened.
+    auto* cacheGroup = new QGroupBox(tr("Built level cache"), this);
+    cacheGroup->setToolTip(
+        tr("Speeds up reopening large slides that have no stored overview. Entries hold image pixels and "
+           "the slide's file path; keep the folder on local, access-controlled storage. Turning the cache off "
+           "does not delete entries; they are deleted when their retention runs out."));
+    m_cacheEnabledBox = new QCheckBox(tr("Cache built levels on disk"), cacheGroup);
+    m_cacheEnabledBox->setChecked(cacheSettings.enabled);
+    m_cacheFolderEdit = new QLineEdit(cacheSettings.folder, cacheGroup);
+    m_cacheFolderEdit->setPlaceholderText(defaultBuiltLevelCacheFolder());
+    m_cacheBrowseButton = new QPushButton(tr("Browse..."), cacheGroup);
+    connect(m_cacheBrowseButton, &QPushButton::clicked, this, &PreferencesDialog::browseForCacheFolder);
+    m_cacheDaysSpin = new QSpinBox(cacheGroup);
+    m_cacheDaysSpin->setRange(clampCacheRetentionDays(0), clampCacheRetentionDays(1000000));
+    m_cacheDaysSpin->setSuffix(tr(" days"));
+    m_cacheDaysSpin->setValue(clampCacheRetentionDays(cacheSettings.retentionDays));
+    // The folder and the retention stay editable with the cache off: the sweep
+    // still visits that folder and deletes by that retention, and shortening it
+    // is how entries left behind are purged sooner.
+    m_cacheDaysSpin->setToolTip(
+        tr("Entries unused for this long are deleted, whether or not the cache is on."));
+
+    auto* cacheFolderRow = new QHBoxLayout;
+    cacheFolderRow->addWidget(m_cacheFolderEdit, 1);
+    cacheFolderRow->addWidget(m_cacheBrowseButton);
+
+    auto* cacheForm = new QFormLayout(cacheGroup);
+    cacheForm->addRow(m_cacheEnabledBox);
+    cacheForm->addRow(tr("Folder:"), cacheFolderRow);
+    cacheForm->addRow(tr("Keep for:"), m_cacheDaysSpin);
+
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -54,6 +89,7 @@ PreferencesDialog::PreferencesDialog(const QString& workspaceDirectory, const QS
     auto* layout = new QVBoxLayout(this);
     layout->addLayout(form);
     layout->addWidget(note);
+    layout->addWidget(cacheGroup);
     layout->addWidget(buttons);
 }
 
@@ -70,6 +106,25 @@ QString PreferencesDialog::userName() const
 QStringList PreferencesDialog::categories() const
 {
     return m_categoriesEdit->toPlainText().split('\n', Qt::SkipEmptyParts);
+}
+
+BuiltLevelCacheSettings PreferencesDialog::builtLevelCacheSettings() const
+{
+    BuiltLevelCacheSettings value;
+    value.enabled = m_cacheEnabledBox->isChecked();
+    value.folder = m_cacheFolderEdit->text().trimmed();
+    value.retentionDays = clampCacheRetentionDays(m_cacheDaysSpin->value());
+    return value;
+}
+
+void PreferencesDialog::browseForCacheFolder()
+{
+    const QString start = resolveBuiltLevelCacheFolder(m_cacheFolderEdit->text());
+    const QString chosen =
+        QFileDialog::getExistingDirectory(this, tr("Choose the built level cache folder"), start);
+    if (!chosen.isEmpty()) {
+        m_cacheFolderEdit->setText(chosen);
+    }
 }
 
 void PreferencesDialog::browseForWorkspace()

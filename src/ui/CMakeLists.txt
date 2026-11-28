@@ -17,6 +17,7 @@ add_library(slideio-viewer-ui STATIC
     src/CalibrationPolicy.cpp
     src/CalibrationDialog.cpp
     src/MeasurementLabel.cpp
+    src/OverviewRendering.cpp
     src/LayersPanelPolicy.cpp
     src/ResultsPaintPolicy.cpp
     src/ResultsPanelText.cpp
@@ -31,6 +32,7 @@ add_library(slideio-viewer-ui STATIC
     src/AnnotationPropertiesPanel.cpp
     src/AnnotationSettings.cpp
     src/AppPaths.cpp
+    src/BuiltLevelCacheSettings.cpp
     src/AssociatedImageWindow.cpp
     src/ColorProfilePolicy.cpp
     src/DriverFilters.cpp
